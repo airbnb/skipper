@@ -1,0 +1,89 @@
+---
+title: Observability & Admin UI
+description: Enable the built-in admin UI to inspect and recover workflows, and wire up metrics to monitor the engine.
+section: Guides
+order: 19
+---
+
+Skipper ships with a built-in **admin UI** for inspecting and recovering workflow instances,
+plus a pluggable metrics hook for monitoring the engine itself.
+
+## Enabling the Admin UI
+
+The admin UI is a standard JAX-RS resource — `AdminResource`, served under the path
+`/skipper/admin`. Obtain it from your `SkipperRuntime` (see the
+**[Quickstart](/docs/quickstart/)**) and register it with your application's JAX-RS / HTTP
+server alongside your other resources:
+
+```kotlin
+val runtime = SkipperRuntime(config)
+
+// AdminResource is a JAX-RS resource — register it with your server's JAX-RS runtime
+// (Jersey, Dropwizard, RESTEasy, …).
+val admin = runtime.adminResource.get()
+jaxrs.register(admin)
+```
+
+```java
+SkipperRuntime runtime = new SkipperRuntime(config);
+
+// AdminResource is a JAX-RS resource — register it with your server's JAX-RS runtime
+// (Jersey, Dropwizard, RESTEasy, …).
+AdminResource admin = runtime.getAdminResource().get();
+jaxrs.register(admin);
+```
+
+Because it is a plain JAX-RS resource, it drops into any JAX-RS-compatible stack — there is
+nothing Skipper-specific about how you mount it.
+
+Then open the UI in a browser:
+
+```
+http://<your-service-host>/skipper/admin/
+```
+
+For a service running remotely, forward its port to your machine first, then open the path
+locally.
+
+## What the Admin UI gives you
+
+The UI — and the JSON API behind it — lets you:
+
+- View dashboard stats and search workflow instances by type and status.
+- Inspect a single instance's status and history — `GET /skipper/admin/workflows/{id}`.
+- Cancel a running instance — `POST /skipper/admin/workflows/{id}/cancel`.
+- Review workflows that exhausted their retries and the scheduler **dead-letter queue**, and
+  requeue stuck tasks.
+- List and **replay durable [signals](/docs/signals-and-queries/)**:
+
+```
+GET  /skipper/admin/workflows/{id}/signals
+POST /skipper/admin/workflows/{id}/signals/{signalId}/replay
+```
+
+These endpoints back the same operations available programmatically through
+**[`WorkflowsService`](/docs/instance-management/)**.
+
+## Metrics
+
+Skipper reports engine metrics through a pluggable `Metrics` interface. It is a **no-op by
+default**, so to collect metrics, supply an implementation on the config before creating the
+runtime:
+
+```kotlin
+config.metrics = ComponentFactory { MyMetrics() }
+```
+
+```java
+config.setMetrics(() -> new MyMetrics());
+```
+
+Your implementation receives metrics covering actions, the scheduler, storage, and overall
+workflow throughput — forward them to your existing pipeline and dashboards to track:
+
+- Workflow counts by status (running, waiting, completed, errored).
+- Action execution and failure rates.
+- Scheduler and storage latency and error rates.
+
+Watching workflow status counts and the size of the dead-letter queue is usually the fastest
+way to spot a problem in production.

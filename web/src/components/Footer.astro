@@ -1,0 +1,65 @@
+---
+import Wordmark from './Wordmark.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const columns = [
+  {
+    title: 'Docs',
+    links: [
+      { label: 'Introduction', href: `${base}/docs/` },
+      { label: 'Quickstart', href: `${base}/docs/#quickstart` },
+      { label: 'Core Concepts', href: `${base}/docs/#concepts` },
+      { label: 'Your First Workflow', href: `${base}/docs/#first-workflow` },
+    ],
+  },
+  {
+    title: 'Reference',
+    links: [
+      { label: 'Annotations', href: `${base}/docs/reference/annotations/` },
+      { label: 'Core types', href: `${base}/docs/reference/core-types/` },
+      { label: 'Examples', href: `${base}/examples/` },
+    ],
+  },
+  {
+    title: 'Community',
+    links: [
+      { label: 'Contributing', href: `${base}/community/#contributing` },
+      { label: 'Discussions', href: `${base}/community/#discussions` },
+      { label: 'Code of Conduct', href: `${base}/community/#coc` },
+    ],
+  },
+  {
+    title: 'Project',
+    links: [
+      { label: 'GitHub', href: 'https://github.com/' },
+      { label: 'License (Apache 2.0)', href: `${base}/community/#license` },
+      { label: 'Roadmap', href: `${base}/community/#roadmap` },
+    ],
+  },
+];
+---
+<footer class="footer">
+  <div class="container">
+    <div class="footer__grid">
+      <div>
+        <div class="footer__brand">
+          <img class="footer__mark" src={`${base}/brand/skipper-mark-white.svg`} alt="" aria-hidden="true" />
+          <Wordmark class="footer__wordmark" />
+        </div>
+        <p class="footer__tag">A lightweight, embeddable workflow engine for durable execution on the JVM.</p>
+      </div>
+      {columns.map((col) => (
+        <div>
+          <h4>{col.title}</h4>
+          <ul>
+            {col.links.map((l) => <li><a href={l.href}>{l.label}</a></li>)}
+          </ul>
+        </div>
+      ))}
+    </div>
+    <div class="footer__bottom">
+      <span>Licensed under Apache 2.0. &copy; {new Date().getFullYear()} The Skipper Authors.</span>
+      <span>An Airbnb Engineering open-source project.</span>
+    </div>
+  </div>
+</footer>

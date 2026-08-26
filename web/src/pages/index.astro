@@ -1,0 +1,314 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Icon from '../components/Icon.astro';
+import LangTabs from '../components/LangTabs.astro';
+import Logo from '../components/Logo.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const GITHUB = 'https://github.com/'; // TODO: public repo URL (pending OSS branding)
+
+const heroKotlin = `class CheckoutWorkflow : Workflow() {
+  private val payments = actions<PaymentActions>()
+  private val email = actions<EmailActions>()
+
+  @WorkflowMethod
+  suspend fun checkout(order: Order): Receipt {
+    // Charged once — even if the workflow resumes later.
+    val charge = payments.charge(order)
+    // Retried automatically until it succeeds.
+    email.sendReceipt(order, charge)
+    return Receipt(charge.id)
+  }
+}`;
+
+const heroJava = `public class CheckoutWorkflow extends Workflow {
+  private final PaymentActions payments = actions(PaymentActions.class);
+  private final EmailActions email = actions(EmailActions.class);
+
+  @WorkflowMethod(returnType = Receipt.class)
+  public CompletableFuture<Receipt> checkout(Order order) {
+    // Charged once — even if the workflow resumes later.
+    Charge charge = payments.charge(order);
+    // Retried automatically until it succeeds.
+    email.sendReceipt(order, charge);
+    return CompletableFuture.completedFuture(new Receipt(charge.getId()));
+  }
+}`;
+
+const javaCode = `public class PeerToPeerTransfer extends Workflow {
+  private final Ledger ledger = actions(Ledger.class);
+
+  @StateField Boolean isApproved;
+
+  @WorkflowMethod(returnType = Boolean.class)
+  public CompletableFuture<Boolean> transfer(TransferRequest request) {
+    // Transfers over $1,000 need a human in the loop.
+    if (request.getAmount() > 1000) {
+      // Hibernate until approved — or up to a day — using zero resources.
+      boolean approved = waitUntil(() -> isApproved != null, Duration.ofDays(1));
+      if (!approved || !isApproved) {
+        return CompletableFuture.completedFuture(false);
+      }
+    }
+    ledger.debit(request.getFrom(), request.getAmount());
+    ledger.credit(request.getTo(), request.getAmount());
+    return CompletableFuture.completedFuture(true);
+  }
+
+  // A signal wakes the waiting workflow up from the outside world.
+  @SignalMethod
+  public void approve(boolean isApproved) {
+    this.isApproved = isApproved;
+  }
+}`;
+
+const kotlinCode = `class PeerToPeerTransfer : Workflow() {
+  private val ledger = actions<Ledger>()
+
+  @StateField var isApproved: Boolean? = null
+
+  @WorkflowMethod
+  suspend fun transfer(request: TransferRequest): Boolean {
+    // Transfers over $1,000 need a human in the loop.
+    if (request.amount > 1000) {
+      // Hibernate until approved — or up to a day — using zero resources.
+      val approved = waitUntil({ isApproved != null }, Duration.ofDays(1))
+      if (!approved || isApproved != true) return false
+    }
+    ledger.debit(request.from, request.amount)
+    ledger.credit(request.to, request.amount)
+    return true
+  }
+
+  // A signal wakes the waiting workflow up from the outside world.
+  @SignalMethod
+  fun approve(isApproved: Boolean) {
+    this.isApproved = isApproved
+  }
+}`;
+
+const props = [
+  {
+    icon: 'shield',
+    title: 'Durable by default',
+    body: 'Workflows are guaranteed to reach a terminal state despite transient failures. Skipper classifies and retries errors for you, so your business logic stays clean.',
+  },
+  {
+    icon: 'package',
+    title: 'A library, not a cluster',
+    body: 'Embed Skipper in your existing service or run it as a sidecar. There is no separate cluster to deploy, scale, or get paged about at 3am.',
+  },
+  {
+    icon: 'database',
+    title: 'Reuses your database',
+    body: 'Start instantly on an embedded store, then point Skipper at the MySQL your service already runs — all behind pluggable adapters. No new critical dependency.',
+  },
+];
+
+const features = [
+  { icon: 'repeat', title: 'Durable state & checkpoints', body: 'Completed action results are persisted and restored, so side effects never run twice when a workflow resumes.' },
+  { icon: 'signal', title: 'Signals & queries', body: 'Push data into a running workflow with @SignalMethod, or read its state with @QueryMethod. Signals can be made durable.' },
+  { icon: 'rotate', title: 'Compensation (Saga)', body: 'Add @Compensate methods and Skipper unwinds completed actions in reverse order when a workflow fails.' },
+  { icon: 'alert', title: 'Retries & error handling', body: 'A pluggable exception classifier, fixed / exponential / persistent retry strategies, and a dead-letter queue for the rest.' },
+  { icon: 'branch', title: 'Versioning & evolution', body: 'Named checkpoints and version gates let you change running workflows without breaking in-flight instances.' },
+  { icon: 'flask', title: 'First-class testing', body: 'SkipperTest helpers run workflows end-to-end in-memory and assert on state, completion, and compensation.' },
+  { icon: 'gauge', title: 'Admin UI & metrics', body: 'A built-in admin UI inspects running instances; core dashboards track actions, scheduler, and storage.' },
+  { icon: 'layers', title: 'Pluggable storage', body: 'Storage and scheduler sit behind clean interfaces — bring your own backend or use the bundled MySQL adapter.' },
+];
+
+const fitYes = [
+  'You need durable execution — the workflow must run to a terminal state in spite of failures.',
+  'Your process coordinates multiple steps, long waits, or human approvals.',
+  'You would consider Temporal, but you do not want to run and operate a cluster.',
+  'Your service is Tier 0 and cannot take a dependency on an external workflow cluster.',
+];
+const fitNo = [
+  'Your workflow does not require durable execution.',
+  'Your service is written in a non-JVM language.',
+];
+
+const flow = [
+  { title: 'Workflow', body: 'Your deterministic business logic, written as a plain Java or Kotlin class.' },
+  { title: 'Actions', body: 'The side-effecting steps — I/O, RPCs, database writes — that the workflow calls.' },
+  { title: 'Checkpoints', body: 'Completed actions and state are persisted, so finished work is never repeated.' },
+  { title: 'Hibernate & resume', body: 'Waits consume no resources; the workflow resumes automatically when a signal or timer fires.' },
+];
+
+const ctaCards = [
+  { icon: 'book', title: 'Read the docs', body: 'Concepts, step-by-step guides, and the full API reference.', href: `${base}/docs/`, cta: 'Browse docs' },
+  { icon: 'rocket', title: 'Try the quickstart', body: 'Add the dependency and ship your first workflow.', href: `${base}/docs/#quickstart`, cta: 'Get started' },
+  { icon: 'star', title: 'Star on GitHub', body: 'Follow development, file issues, and contribute.', href: GITHUB, cta: 'View source' },
+];
+---
+<Layout heroNav={true}>
+  <!-- ===================== HERO ===================== -->
+  <section class="hero">
+    <div class="hero__watermark" aria-hidden="true"><Logo variant="white" size={560} /></div>
+    <div class="container hero__inner">
+      <div>
+        <span class="hero__badge">Open source · Apache 2.0</span>
+        <h1>Durable execution, <span class="accent">embedded in your service</span></h1>
+        <p class="hero__sub">
+          Skipper is a lightweight workflow engine for the JVM. Write complex,
+          long-running business logic as plain Java or Kotlin — and let Skipper
+          guarantee it runs to completion, in spite of failures.
+        </p>
+        <div class="hero__actions">
+          <a class="btn btn--primary" href={`${base}/docs/`}>Get Started <Icon name="arrow" size={18} /></a>
+          <a class="btn btn--on-dark" href="#why">Why Skipper?</a>
+          <a class="btn btn--on-dark" href={GITHUB}><Icon name="github" size={18} /> GitHub</a>
+        </div>
+        <p class="hero__note">
+          No cluster to operate. No new database. Just a dependency:
+          <code>dev.skipper:skipper</code> — coordinates are illustrative until the first public release.
+        </p>
+      </div>
+
+      <div class="hero__code">
+        <LangTabs java={heroJava} kotlin={heroKotlin} />
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== VALUE PROPS ===================== -->
+  <section class="section" id="why">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Why Skipper</span>
+        <h2>Workflow durability without the operational tax</h2>
+        <p>The reliability of a workflow engine, delivered as a library you already know how to run.</p>
+      </div>
+      <div class="props">
+        {props.map((p) => (
+          <div class="prop">
+            <div class="prop__icon"><Icon name={p.icon} size={24} /></div>
+            <h3>{p.title}</h3>
+            <p>{p.body}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SHOW ME THE CODE ===================== -->
+  <section class="section section--surface" id="code">
+    <div class="container">
+      <div class="code-layout">
+        <div>
+          <span class="eyebrow">Show me the code</span>
+          <h2>A workflow is just a class</h2>
+          <p>
+            This peer-to-peer transfer waits for manual approval on large amounts,
+            then moves the money. Notice what is <em>not</em> here: retries, state
+            persistence, and failure handling are the engine's job.
+          </p>
+          <ul>
+            <li><strong>No error-handling boilerplate.</strong> Skipper retries transient failures; your method stays pure business logic.</li>
+            <li><strong><code>waitUntil</code> hibernates.</strong> The workflow can pause for a day or longer, consuming zero resources, then resume exactly where it left off.</li>
+            <li><strong>Signals wake it up.</strong> <code>approve(...)</code> is called from the outside world — an API handler, a queue consumer, or a human.</li>
+            <li><strong>Automatic checkpoints.</strong> Completed actions are persisted, so a resumed workflow never repeats work it has already done.</li>
+          </ul>
+        </div>
+        <LangTabs java={javaCode} kotlin={kotlinCode} />
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== FEATURE GRID ===================== -->
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Features</span>
+        <h2>Everything a durable workflow needs</h2>
+        <p>Batteries-included primitives for the hard parts of long-running, stateful processes.</p>
+      </div>
+      <div class="features">
+        {features.map((f) => (
+          <div class="feature">
+            <div class="feature__icon"><Icon name={f.icon} size={22} /></div>
+            <h3>{f.title}</h3>
+            <p>{f.body}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== HOW IT WORKS ===================== -->
+  <section class="section section--surface" id="how">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">How it works</span>
+        <h2>How durable execution works</h2>
+        <p>Four moving parts. Your code touches the first two; Skipper handles the rest.</p>
+      </div>
+      <div class="flow">
+        {flow.map((step, i) => (
+          <>
+            <div class="flow__step">
+              <h4>{i + 1}. {step.title}</h4>
+              <p>{step.body}</p>
+            </div>
+            {i < flow.length - 1 && <div class="flow__arrow"><Icon name="arrow" size={22} /></div>}
+          </>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== FIT / NOT FIT ===================== -->
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Is it for you?</span>
+        <h2>Is Skipper a good fit?</h2>
+        <p>Skipper is opinionated. Here is where it shines — and where it does not.</p>
+      </div>
+      <div class="fit">
+        <div class="fit__card fit__card--yes">
+          <h3>A great fit if…</h3>
+          <ul>{fitYes.map((t) => <li>{t}</li>)}</ul>
+        </div>
+        <div class="fit__card fit__card--no">
+          <h3>Maybe not the right tool if…</h3>
+          <ul>{fitNo.map((t) => <li>{t}</li>)}</ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== GET STARTED BAND ===================== -->
+  <section class="section cta-band">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow" style="color: var(--orange-light)">Get started</span>
+        <h2 style="color:#fff">Ship your first durable workflow today</h2>
+        <p style="color:#c3cae8">Pick a starting point — each takes only a few minutes.</p>
+      </div>
+      <div class="cta-cards">
+        {ctaCards.map((c) => (
+          <a class="cta-card" href={c.href}>
+            <div class="feature__icon" style="color:var(--orange-light)"><Icon name={c.icon} size={24} /></div>
+            <h3>{c.title}</h3>
+            <p>{c.body}</p>
+            <p style="margin-top:14px"><span class="arrow">{c.cta} →</span></p>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== COMMUNITY ===================== -->
+  <section class="section section--tight">
+    <div class="container">
+      <div class="section-head" style="margin-bottom:0">
+        <span class="eyebrow">Open source</span>
+        <h2>Built in the open</h2>
+        <p>
+          Skipper is released under the Apache 2.0 license. Issues, discussions, and
+          pull requests are welcome — see the <a href={`${base}/community/`}>community page</a> to get involved.
+        </p>
+      </div>
+    </div>
+  </section>
+</Layout>

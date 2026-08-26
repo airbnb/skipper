@@ -1,0 +1,47 @@
+---
+import { Code } from 'astro:components';
+
+interface Props { java: string; kotlin: string; title?: string; }
+const { java, kotlin } = Astro.props;
+---
+<div class="langtabs" data-langtabs>
+  <div class="langtabs__bar">
+    <button type="button" data-lang="kotlin" class="is-active" aria-pressed="true">Kotlin</button>
+    <button type="button" data-lang="java" aria-pressed="false">Java</button>
+  </div>
+  <div class="langtabs__panel" data-panel="kotlin">
+    <Code code={kotlin} lang="kotlin" theme="github-dark" />
+  </div>
+  <div class="langtabs__panel" data-panel="java" hidden>
+    <Code code={java} lang="java" theme="github-dark" />
+  </div>
+</div>
+
+<script>
+  const KEY = 'skipper-lang';
+
+  function applyLang(root: HTMLElement, lang: string) {
+    root.querySelectorAll<HTMLButtonElement>('.langtabs__bar button').forEach((b) => {
+      const active = b.dataset.lang === lang;
+      b.classList.toggle('is-active', active);
+      b.setAttribute('aria-pressed', String(active));
+    });
+    root.querySelectorAll<HTMLElement>('.langtabs__panel').forEach((p) => {
+      p.hidden = p.dataset.panel !== lang;
+    });
+  }
+
+  // Clicking a tab switches every snippet on the page, and the choice is remembered.
+  function setAll(lang: string) {
+    document.querySelectorAll<HTMLElement>('[data-langtabs]').forEach((r) => applyLang(r, lang));
+    try { localStorage.setItem(KEY, lang); } catch { /* ignore */ }
+  }
+
+  let saved: string | null = null;
+  try { saved = localStorage.getItem(KEY); } catch { /* ignore */ }
+  if (saved === 'java' || saved === 'kotlin') setAll(saved);
+
+  document.querySelectorAll<HTMLButtonElement>('[data-langtabs] .langtabs__bar button').forEach((btn) => {
+    btn.addEventListener('click', () => { if (btn.dataset.lang) setAll(btn.dataset.lang); });
+  });
+</script>

@@ -1,0 +1,1738 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="">
+  <title>Skipper Admin</title>
+  <link href="https://bootswatch.com/4/darkly/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+    .bd-placeholder-img {
+      font-size: 1.125rem;
+      text-anchor: middle;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      user-select: none;
+    }
+    @media (min-width: 768px) {
+      .bd-placeholder-img-lg {
+        font-size: 3.5rem;
+      }
+    }
+    label {
+      margin-bottom: 0;
+    }
+    code {
+      color: white;
+    }
+    .json-block {
+      display: block;
+      position: absolute;
+      overflow: auto;
+      white-space: pre;
+      font-size: x-small;
+    }
+    .json-block-cont {
+      position: relative;
+      overflow: auto;
+    }
+    .border-light {
+      border-color: #adb5bd54 !important;
+    }
+    /* Checkbox dropdown items */
+    .cb-dropdown-item {
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: #dee2e6;
+      padding: 4px 8px;
+      border-radius: 3px;
+    }
+    .cb-dropdown-item:hover {
+      background: #375a7f;
+      color: #fff;
+    }
+    .cb-dropdown-item input[type="checkbox"] {
+      margin-right: 8px;
+    }
+
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="#" onclick="showHome(); return false">Skipper</a>
+    <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarColor01" aria-controls="navbarColor01" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarColor01">
+      <ul class="navbar-nav ml-auto" style="margin-right: 15px">
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showHome(); return false">Home</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showWorkflows(); return false">Workflows</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showExhaustedRetries(); return false">Exhausted Retries</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showDLQ(); return false">DLQ</a>
+        </li>
+      </ul>
+      <form class="form-inline my-2 my-lg-0" onsubmit="searchWorkflowInstance(); return false">
+        <input class="form-control mr-sm-2" type="text" id="searchBox" placeholder="Workflow ID">
+        <button class="btn btn-secondary my-2 my-sm-0" type="submit">Search</button>
+      </form>
+    </div>
+  </div>
+</nav>
+<main class="container-fluid">
+  <div class="py-3 px-3">
+    <div id="main_content"></div>
+  </div>
+
+  <!-- Workflow details modal -->
+  <div class="modal fade" id="workflow_data" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Workflow Details</h5>
+          <button type="button" class="close btn-close" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <div class="modal-body">
+
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Workflow input modal -->
+  <div class="modal fade" id="workflow_input" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content border-light1">
+        <div class="modal-header card-header">
+          <h5 class="modal-title"></h5>
+          <button type="button" class="close btn-close" data-bs-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <pre id="workflow_input_content"></pre>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!----------------------------------------------------------------------------------------------------------------------
+Home/Welcome view
+----------------------------------------------------------------------------------------------------------------------->
+<script id="home_view" type="text/x-handlebars-template">
+  <div class="container">
+    <div class="text-center mb-5 mt-4">
+      <h1 class="display-4 text-muted mb-3">Skipper Admin</h1>
+      <p class="lead text-muted">Workflow Administration Dashboard</p>
+    </div>
+
+    {{#gt stats.exhausted_retries_count 0}}
+    <div class="row justify-content-center mb-4">
+      <div class="col-md-6 mb-3">
+        <div class="card border-warning">
+          <div class="card-body text-center">
+            <div class="card-title">
+              <i class="fas fa-exclamation-triangle text-warning mb-2" style="font-size: 2rem;"></i>
+              <h5 class="text-warning">Exhausted Retries</h5>
+            </div>
+            <h2 class="display-4 mb-2">{{stats.exhausted_retries_count}}</h2>
+            <p class="card-text text-muted">Workflows needing manual intervention</p>
+            <a href="#exhausted-retries" onclick="showExhaustedRetries(); return false" class="btn btn-outline-warning btn-sm">View {{stats.exhausted_retries_count}} Workflow{{#gt stats.exhausted_retries_count 1}}s{{/gt}}</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {{/gt}}
+
+    {{#gt stats.dlq_tasks_count 0}}
+    <div class="row justify-content-center mb-4">
+      <div class="col-md-6 mb-3">
+        <div class="card border-danger">
+          <div class="card-body text-center">
+            <div class="card-title">
+              <i class="fas fa-times-circle text-danger mb-2" style="font-size: 2rem;"></i>
+              <h5 class="text-danger">Dead Letter Queue</h5>
+            </div>
+            <h2 class="display-4 mb-2">{{stats.dlq_tasks_count}}</h2>
+            <p class="card-text text-muted">Failed tasks requiring attention</p>
+            <a href="#dlq" onclick="showDLQ(); return false" class="btn btn-outline-danger btn-sm">View {{stats.dlq_tasks_count}} Task{{#gt stats.dlq_tasks_count 1}}s{{/gt}}</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {{/gt}}
+
+    <div class="text-center text-muted">
+      <p>Use the navigation above to manage workflows and tasks.</p>
+    </div>
+  </div>
+</script>
+
+<!----------------------------------------------------------------------------------------------------------------------
+Workflow detail view
+----------------------------------------------------------------------------------------------------------------------->
+<script id="workflow_detail_view" type="text/x-handlebars-template">
+  <div class="container-fluid">
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3">
+      <h1 class="h2">Workflow Instance</h1>
+      <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group btn-group-sm ml-1" role="group">
+          <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            Actions
+          </button>
+          <ul class="dropdown-menu">
+            {{! Retry re-executes via reExecuteWorkflows, which rejects terminal states — so gate on
+                the non-terminal failed statuses only (ERROR is terminal; it uses Reset to Running). }}
+            {{#if_in instance.status 'RETRIES_EXHAUSTED,TRANSIENT_ERROR,COMPENSATION_ERROR'}}
+            <li><a class="dropdown-item" href="#" onclick="retryWorkflowDetail('{{instance.workflow_id}}'); return false">Retry (re-execute)</a></li>
+            {{/if_in}}
+            {{#if_eq instance.status 'ERROR'}}
+            <li><a class="dropdown-item" href="#" onclick="resetWorkflowFromError('{{instance.workflow_id}}'); return false">Reset to Running</a></li>
+            {{/if_eq}}
+            {{#if_in instance.status 'ERROR,RETRIES_EXHAUSTED,TRANSIENT_ERROR,COMPENSATION_ERROR'}}
+            <li><hr class="dropdown-divider"></li>
+            {{/if_in}}
+            <li><a class="dropdown-item" href="#" onclick="cancelWorkflow('{{instance.workflow_id}}'); return false">Cancel workflow</a></li>
+            {{#if_in instance.status 'COMPLETED,ERROR,TIMEOUT,COMPENSATION_COMPLETED,CANCELLED'}}
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item text-danger" href="#" onclick="deleteWorkflow('{{instance.workflow_id}}'); return false">Delete workflow</a></li>
+            {{/if_in}}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <!-- Left Column: Workflow Details, State, Result, and Tasks -->
+      <div class="col-12 col-lg-6 mb-4">
+        <!-- Workflow Details -->
+        <div class="card border-light mb-4">
+          <div class="card-header">
+            <h5 class="mb-0">Workflow Details</h5>
+          </div>
+          <div class="card-body">
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="text-muted small">WORKFLOW ID</label>
+                <div><code style="color: white">{{instance.workflow_id}}</code></div>
+              </div>
+              <div class="col-md-6">
+                <label class="text-muted small">EXECUTION DURATION</label>
+                <div>{{duration instance.created_at instance.updated_at}}</div>
+              </div>
+            </div>
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="text-muted small">CLASS</label>
+                <div>{{classname instance.workflow_class}}</div>
+              </div>
+              <div class="col-md-6">
+                <label class="text-muted small">METHOD</label>
+                <div>{{instance.workflow_method}}</div>
+              </div>
+            </div>
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="text-muted small">STATUS</label>
+                <div>
+                  {{#if_eq instance.status 'ERROR'}}
+                  <span class="badge badge-danger">{{instance.status}}</span>
+                  {{else}}
+                  {{#if_eq instance.status 'COMPLETED'}}
+                  <span class="badge badge-success">{{instance.status}}</span>
+                  {{else}}
+                  <span class="badge badge-primary">{{instance.status}}</span>
+                  {{/if_eq}}
+                  {{/if_eq}}
+                </div>
+              </div>
+              <div class="col-md-6">
+                <label class="text-muted small">CREATION DATE</label>
+                <div>{{to_local_date instance.created_at}}</div>
+              </div>
+            </div>
+            {{#if instance.parent_workflow_id}}
+            <div class="row mb-3">
+              <div class="col-md-12">
+                <label class="text-muted small">PARENT WORKFLOW</label>
+                <div><code><a href="#" onclick="navigateToWorkflow('{{instance.parent_workflow_id}}'); return false">{{instance.parent_workflow_id}}</a></code></div>
+              </div>
+            </div>
+            {{/if}}
+          </div>
+        </div>
+
+        <!-- Child Workflows -->
+        <div id="child-workflows-section"></div>
+
+        <!-- Input -->
+        <div class="card border-light mb-4">
+          <div class="card-header">Input</div>
+          <div class="card-body" style="padding: 0">
+            <table class="table table-condensed" style="margin-bottom: 0;">
+              <thead>
+                <th style="width: 50%">Type</th>
+                <th>Value</th>
+              </thead>
+              <tr>
+                <td><code>{{classname instance.input.type}}</code></td>
+                <td class="json-block-cont"><code class="json-block">{{to_json_tabs instance.input.value}}</code></td>
+              </tr>
+            </table>
+          </div>
+        </div>
+
+        <!-- State -->
+        {{#if instance.state}}
+        <div class="card border-light mb-4">
+          <div class="card-header">State</div>
+          <div class="card-body" style="padding: 0">
+            <table class="table table-condensed" style="margin-bottom: 0;">
+              <thead>
+                <th style="width: 50%">Name</th>
+                <th>Value</th>
+              </thead>
+              {{#each instance.state}}
+              <tr>
+                <td><code>{{@key}}</code><span class="badge badge-light ml-2">{{classname type}}</span></td>
+                <td class="json-block-cont"><code class="json-block">{{to_json_tabs value}}</code></td>
+              </tr>
+              {{/each}}
+            </table>
+          </div>
+        </div>
+        {{/if}}
+
+        <!-- Result -->
+        {{#if instance.result}}
+        {{#if instance.result.success }}
+        <div class="card border-success mb-4">
+          <div class="card-header">
+            Result
+            <span class="badge badge-light ml-2">{{classname instance.result.ok.type}}</span>
+          </div>
+          <div class="card-body" style="max-height: 300px; overflow: auto">
+            <pre style="margin-bottom: 0; white-space: pre">{{to_json_tabs instance.result.ok.value}}</pre>
+          </div>
+        </div>
+        {{else}}
+        <div class="card border-danger bg-danger mb-4">
+          <div class="card-header">
+            Error
+            <span class="badge badge-light ml-2">{{classname instance.result.error.type}}</span>
+          </div>
+          <div class="card-body" style="max-height: 300px; overflow: auto">
+            <pre style="margin-bottom: 0; white-space: pre">{{to_json_tabs instance.result.error.value}}</pre>
+          </div>
+        </div>
+        {{/if}}
+        {{/if}}
+
+      </div>
+
+      <!-- Right Column: Checkpoints Timeline and Timers -->
+      <div class="col-12 col-lg-6">
+        <!-- Checkpoints Timeline -->
+        <div class="card border-light mb-4">
+          <div class="card-header">
+            <h5 class="mb-0">Action Checkpoints</h5>
+          </div>
+          <div class="card-body timeline-card">
+            <div class="timeline-container">
+              {{#each checkpoints}}
+              <div class="timeline-item">
+                <div class="timeline-icon {{#if isSuccessful}}success{{else}}{{#if transient}}warning{{else}}danger{{/if}}{{/if}}">
+                  {{#if isSuccessful}}
+                  <i class="fas fa-check"></i>
+                  {{else}}
+                  {{#if transient}}
+                  <i class="fas fa-exclamation-triangle"></i>
+                  {{else}}
+                  <i class="fas fa-times"></i>
+                  {{/if}}
+                  {{/if}}
+                </div>
+                <div class="timeline-content">
+                  <div class="timeline-main">
+                    <div class="timeline-details">
+                      <div class="timeline-header">
+                        <h6 class="mb-1">
+                          <code style="color: white">{{classname checkpoint_tag.action_class}}:{{checkpoint_tag.action_method}}</code>
+                          <small class="text-muted mx-1">[{{checkpoint_tag.iteration}}]</small>
+                        </h6>
+                        <small class="text-muted">{{to_local_date execution_start_time}} - {{duration execution_start_time execution_end_time}}</small>
+                      </div>
+                    </div>
+                    <div class="timeline-actions">
+                      {{#if result}}
+                      <a href="#" onclick="show_data('Action result', '{{to_json result}}');return false" class="btn btn-sm btn-outline-info mb-1" style="border: none">
+                        <i class="fas fa-eye"></i> View Result
+                      </a>
+                      {{/if}}
+                      <a href="#" onclick="rewindToCheckpoint('{{checkpoint_tag.workflow_id}}', '{{checkpoint_tag.action_class}}', '{{checkpoint_tag.action_method}}', '{{checkpoint_tag.iteration}}', '{{checkpoint_tag.checkpoint_name}}'); return false" class="btn btn-sm btn-outline-warning mb-1" style="border: none" title="Rewind the workflow to this checkpoint: deletes this and all later checkpoints, then replays from here">
+                        <i class="fas fa-backward"></i> Rewind to here
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {{/each}}
+            </div>
+          </div>
+        </div>
+
+        <!-- Timers -->
+        <div class="card border-light mb-4">
+          <div class="card-header">
+            <h5 class="mb-0">Timers</h5>
+          </div>
+          <div class="card-body" style="padding: 0">
+            <table class="table table-striped" style="margin-bottom: 0">
+              <thead>
+                <tr>
+                  <th scope="col">ID</th>
+                  <th scope="col">Created at</th>
+                  <th scope="col">Duration</th>
+                  <th scope="col">Expires at</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{#each timers}}
+                <tr>
+                  <td>{{id}}</td>
+                  <td>{{to_local_date created_at}}</td>
+                  <td>{{duration}}</td>
+                  <td>{{to_local_date expires_at}}</td>
+                  <td>{{status}}</td>
+                </tr>
+                {{/each}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Scheduled Tasks -->
+        <div class="card border-light mb-4">
+          <div class="card-header">
+            <h5 class="mb-0">Scheduled Tasks</h5>
+          </div>
+          <div class="card-body" style="padding: 0">
+            <table class="table table-striped" style="margin-bottom: 0">
+              <thead>
+                <tr>
+                  <th scope="col">ID</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Run after</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {{#each tasks}}
+                <tr>
+                  <td>{{id}}</td>
+                  <td>{{type}}</td>
+                  <td>{{status}}</td>
+                  <td>{{to_local_date run_after}}</td>
+                  <td>
+                    {{#if_eq status 'FAILED'}}
+                    <div class="btn-group btn-group-sm" role="group">
+                      <button type="button" class="btn btn-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">Actions</button>
+                      <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="#" onclick="requeueTask('{{id}}');return false">Re-queue</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="dequeueTask('{{id}}');return false">Dequeue</a></li>
+                      </ul>
+                    </div>
+                    {{/if_eq}}
+                    {{#if_eq status 'PENDING'}}
+                    <div class="btn-group btn-group-sm" role="group">
+                      <button type="button" class="btn btn-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">Actions</button>
+                      <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="#" onclick="dequeueTask('{{id}}');return false">Dequeue</a></li>
+                      </ul>
+                    </div>
+                    {{/if_eq}}
+                  </td>
+                </tr>
+                {{/each}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Persisted Signals (loaded separately, like Child Workflows) -->
+        <div id="signals-section"></div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .timeline-container {
+      position: relative;
+      padding-left: 40px;
+    }
+
+    .timeline-card::before {
+      content: '';
+      position: absolute;
+      left: 33px;
+      top: 47px;
+      bottom: 0;
+      width: 2px;
+      background: #dee2e64d;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding-bottom: 20px;
+      margin-bottom: 10px;
+      border-bottom: none;
+    }
+
+    .timeline-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+      margin-bottom: 0;
+    }
+
+    .timeline-icon {
+      position: absolute;
+      left: -39px;
+      top: 5px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid #dee2e64d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1;
+    }
+
+    .timeline-icon.success {
+      background: #00bc8c;
+    }
+
+    .timeline-icon.warning {
+      background: #ffc107;
+    }
+
+    .timeline-icon.danger {
+      background: #dc3545;
+    }
+
+    .timeline-icon i {
+      font-size: 14px;
+      color: white;
+    }
+
+    .timeline-content {
+      background: transparent;
+      padding: 0;
+    }
+
+    .timeline-main {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 15px;
+    }
+
+    .timeline-details {
+      flex: 1;
+    }
+
+    .timeline-actions {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-items: flex-end;
+    }
+
+    .timeline-header h6 {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    @media (max-width: 768px) {
+      .timeline-main {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .timeline-actions {
+        align-items: flex-start;
+        flex-direction: row;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+    }
+  </style>
+</script>
+
+<!----------------------------------------------------------------------------------------------------------------------
+Exhausted retries view
+----------------------------------------------------------------------------------------------------------------------->
+<script id="exhausted_retries_view" type="text/x-handlebars-template">
+  <div class="container">
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3">
+      <h1 class="h2">Workflows with Exhausted Retries</h1>
+      <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group btn-group-sm ml-1" role="group">
+          <button type="button" class="btn btn-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            Bulk Actions
+          </button>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#" onclick="bulkRetryWorkflows(); return false">Retry Selected</a></li>
+            <li><a class="dropdown-item" href="#" onclick="bulkCancelWorkflows(); return false">Cancel Selected</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="select-all-workflows" onchange="toggleAllWorkflows()"></th>
+            <th>Workflow ID</th>
+            <th>Class</th>
+            <th>Method</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th title="Click to sort by least recently updated first. This sort is not index-backed, so it can be slow when the backlog is large; click again to go back to the unsorted (fastest) listing.">
+              <a href="#" class="text-reset text-decoration-none" onclick="toggleExhaustedRetriesOrdering(); return false">
+                Updated
+                {{#if order_by_updated_at}}
+                <i class="fas fa-sort-up"></i>
+                {{else}}
+                <i class="fas fa-sort text-muted"></i>
+                {{/if}}
+              </a>
+            </th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each workflows}}
+          <tr>
+            <td><input type="checkbox" class="workflow-checkbox" value="{{workflow_id}}"></td>
+            <td><code><a href="#" onclick="navigateToWorkflow('{{workflow_id}}'); return false">{{workflow_id}}</a></code></td>
+            <td>{{classname workflow_class}}</td>
+            <td>{{workflow_method}}</td>
+            <td>
+              {{#if_eq status 'RETRIES_EXHAUSTED'}}
+              <span class="badge badge-warning">{{status}}</span>
+              {{else}}
+              <span class="badge badge-danger">{{status}}</span>
+              {{/if_eq}}
+            </td>
+            <td>{{to_local_date created_at}}</td>
+            <td>{{to_local_date updated_at}}</td>
+            <td>
+              <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">Actions</button>
+                <ul class="dropdown-menu">
+                  <li><a class="dropdown-item" href="#" onclick="navigateToWorkflow('{{workflow_id}}'); return false">View Details</a></li>
+                  <li><a class="dropdown-item" href="#" onclick="retryWorkflow('{{workflow_id}}'); return false">Retry</a></li>
+                  <li><a class="dropdown-item" href="#" onclick="cancelWorkflow('{{workflow_id}}'); return false">Cancel</a></li>
+                </ul>
+              </div>
+            </td>
+          </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</script>
+
+<!----------------------------------------------------------------------------------------------------------------------
+DLQ view
+----------------------------------------------------------------------------------------------------------------------->
+<script id="dlq_view" type="text/x-handlebars-template">
+  <div class="container">
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3">
+      <h1 class="h2">Dead Letter Queue</h1>
+      <div class="btn-toolbar mb-2 mb-md-0">
+        <div class="btn-group btn-group-sm ml-1" role="group">
+          <button type="button" class="btn btn-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            Bulk Actions
+          </button>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#" onclick="bulkRedriveTasks(); return false">Redrive Selected</a></li>
+            <li><a class="dropdown-item" href="#" onclick="bulkRemoveTasks(); return false">Remove Selected</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item text-danger" href="#" onclick="bulkCancelWorkflowsFromDLQ(); return false">Cancel Workflows (WORKFLOW tasks only)</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="select-all-tasks" onchange="toggleAllTasks()"></th>
+            <th>Task ID</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Retry Count</th>
+            <th>Created</th>
+            <th>Run After</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each tasks}}
+          <tr>
+            <td><input type="checkbox" class="task-checkbox" value="{{id}}"></td>
+            <td>
+              {{#if_eq type 'WORKFLOW'}}
+              <code><a href="#" onclick="navigateToWorkflow('{{id}}'); return false">{{id}}</a></code>
+              {{else}}
+              <code>{{id}}</code>
+              {{/if_eq}}
+            </td>
+            <td>{{type}}</td>
+            <td><span class="badge badge-danger">{{status}}</span></td>
+            <td>{{retry_count}}</td>
+            <td>{{#if created_at}}{{to_local_date created_at}}{{else}}N/A{{/if}}</td>
+            <td>{{#if run_after}}{{to_local_date run_after}}{{else}}N/A{{/if}}</td>
+            <td>
+              <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">Actions</button>
+                <ul class="dropdown-menu">
+                  <li><a class="dropdown-item" href="#" onclick="requeueTask('{{id}}'); return false">Redrive</a></li>
+                  <li><a class="dropdown-item" href="#" onclick="dequeueTask('{{id}}'); return false">Remove</a></li>
+                  {{#if_eq type 'WORKFLOW'}}
+                  <li><hr class="dropdown-divider"></li>
+                  <li><a class="dropdown-item text-danger" href="#" onclick="cancelWorkflowFromTask('{{id}}'); return false">Cancel Workflow</a></li>
+                  {{/if_eq}}
+                </ul>
+              </div>
+            </td>
+          </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</script>
+
+<!----------------------------------------------------------------------------------------------------------------------
+Workflows List view
+----------------------------------------------------------------------------------------------------------------------->
+<script id="workflows_list_view" type="text/x-handlebars-template">
+  <div class="container">
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3">
+      <h1 class="h2">Workflows</h1>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-body">
+        <form id="workflow-search-form" onsubmit="executeWorkflowSearch(); return false">
+          <div class="row">
+            <div class="col-md-4">
+              <label class="form-label small text-muted">Workflow Entry Point</label>
+              <div class="dropdown" id="type-dropdown">
+                <button class="btn btn-outline-secondary dropdown-toggle w-100 text-left" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" id="type-dropdown-btn">
+                  All Types
+                </button>
+                <div class="dropdown-menu p-2" style="max-height: 250px; overflow-y: auto; min-width: 100%;">
+                  {{#each workflowTypes}}
+                  <label class="cb-dropdown-item d-flex align-items-center">
+                    <input type="checkbox" class="filter-type-cb" value="{{this.workflow_class}}::{{this.workflow_method}}">
+                    {{this.label}}
+                  </label>
+                  {{/each}}
+                </div>
+              </div>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-muted">Status</label>
+              <div class="dropdown" id="status-dropdown">
+                <button class="btn btn-outline-secondary dropdown-toggle w-100 text-left" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" id="status-dropdown-btn">
+                  All Statuses
+                </button>
+                <div class="dropdown-menu p-2" style="max-height: 250px; overflow-y: auto; min-width: 100%;">
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="RUNNING"> RUNNING</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="WAITING"> WAITING</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="COMPLETED"> COMPLETED</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="ERROR"> ERROR</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="TRANSIENT_ERROR"> TRANSIENT_ERROR</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="RETRIES_EXHAUSTED"> RETRIES_EXHAUSTED</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="CREATED"> CREATED</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="TIMEOUT"> TIMEOUT</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="CANCELLED"> CANCELLED</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="COMPENSATION_IN_PROGRESS"> COMPENSATION_IN_PROGRESS</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="COMPENSATION_ERROR"> COMPENSATION_ERROR</label>
+                  <label class="cb-dropdown-item d-flex align-items-center"><input type="checkbox" class="filter-status-cb" value="COMPENSATION_COMPLETED"> COMPENSATION_COMPLETED</label>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-muted">Created After</label>
+              <input type="date" class="form-control" id="filter-created-after">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-muted">Created Before</label>
+              <input type="date" class="form-control" id="filter-created-before">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+              <button type="submit" class="btn btn-primary w-100">Search</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {{#if result}}
+    <div class="table-responsive">
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th>Workflow ID</th>
+            <th>Workflow Type</th>
+            <th>Workflow Method</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody id="workflows-tbody">
+          {{#each result.workflows}}
+          <tr>
+            <td><code><a href="#" onclick="navigateToWorkflow('{{workflow_id}}'); return false">{{workflow_id}}</a></code></td>
+            <td>{{classname workflow_class}}</td>
+            <td>{{workflow_method}}</td>
+            <td><span class="badge badge-{{statusBadge status}}">{{status}}</span></td>
+            <td>{{to_local_date created_at}}</td>
+            <td>{{to_local_date updated_at}}</td>
+          </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-2 mb-3">
+      <span class="text-muted" id="result-count">Showing {{result.workflows.length}} results</span>
+      <span class="text-muted small" id="scroll-hint" {{#unless hasNext}}style="display:none"{{/unless}}>Scroll down for more</span>
+    </div>
+    {{/if}}
+  </div>
+</script>
+
+<script id="workflow_row_partial" type="text/x-handlebars-template">
+  <tr>
+    <td><code><a href="#" onclick="navigateToWorkflow('{{workflow_id}}'); return false">{{workflow_id}}</a></code></td>
+    <td>{{classname workflow_class}}</td>
+    <td>{{workflow_method}}</td>
+    <td><span class="badge badge-{{statusBadge status}}">{{status}}</span></td>
+    <td>{{to_local_date created_at}}</td>
+    <td>{{to_local_date updated_at}}</td>
+  </tr>
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/js/bootstrap.bundle.min.js" integrity="sha384-b5kHyXgcpbZJO/tY9Ul7kGkf1S0CWuKcCD38l8YkeH8z8QjE0GmW1gYU5S9FOnJ0" crossorigin="anonymous"></script>
+<script src="https://code.jquery.com/jquery-3.5.1.min.js" integrity="sha256-9/aliU8dGd2tb6OSsuzixeV4y/faTqgFtohetphbbj0=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/handlebars@latest/dist/handlebars.js"></script>
+
+<script>
+  Handlebars.registerHelper('if_eq', function(a, b, opts) {
+    if (a == b) {
+      return opts.fn(this);
+    } else {
+      return opts.inverse(this);
+    }
+  });
+
+  Handlebars.registerHelper('gt', function(a, b, opts) {
+    if (a > b) {
+      return opts.fn(this);
+    } else {
+      return opts.inverse(this);
+    }
+  });
+
+  Handlebars.registerHelper('if_in', function(value, list, opts) {
+    if (list.split(',').indexOf(value) !== -1) {
+      return opts.fn(this);
+    } else {
+      return opts.inverse(this);
+    }
+  });
+
+  // JavaScript's Number type only safely represents integers up to 2^53-1 (Number.MAX_SAFE_INTEGER).
+  // Java Long/i64 values can reach 2^63-1. When jQuery parses JSON via native JSON.parse(), any
+  // integer exceeding 2^53-1 silently loses precision (e.g. 9007199254740993 becomes 9007199254740992).
+  //
+  // safeParse works around this by pre-processing the raw JSON text: it finds integer values with
+  // 16+ digits (the threshold where precision loss can occur) and wraps them in quotes so they
+  // become JSON strings instead of numbers. The lookbehind (?<=") ensures we only match a colon
+  // that follows a JSON key's closing quote, preventing false matches on large integers that
+  // appear inside string values (e.g. "fileId: 1689209556184977785" in an error message).
+  function safeParse(text) {
+    return JSON.parse(text.replace(/(?<=")(\s*):(\s*)(-?\d{16,})\b/g, '$1:$2"$3"'));
+  }
+
+  // Wrapper around $.ajax that fetches JSON as raw text and applies safeParse,
+  // preventing large integer truncation that would occur with $.get's automatic JSON parsing.
+  function safeGet(url, onSuccess, onFail) {
+    $.ajax({
+      url: url,
+      dataType: 'text',
+      success: function(text) { onSuccess(safeParse(text)); },
+      error: onFail
+    });
+  }
+
+  Handlebars.registerHelper("classname", function(clazz) {
+    // split the class name by '.' and return the last part
+    if (!clazz) {
+      return "";
+    }
+    return clazz.split('.').pop();
+  });
+
+  Handlebars.registerHelper('to_json', function (obj)  {
+    return JSON.stringify(obj);
+  });
+
+  Handlebars.registerHelper('to_json_tabs', function (obj)  {
+    if (typeof obj !== 'object' || obj === null) {
+      return obj;
+    }
+    return JSON.stringify(obj, null, 4);
+  });
+
+  Handlebars.registerHelper('to_local_date', function(isoDateString) {
+    if (!isoDateString) {
+      return '';
+    }
+      const date = new Date(isoDateString); // Parse ISO 8601 string
+
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      return '';
+    }
+
+    // Get components in local timezone
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = date.getHours();
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const seconds = date.getSeconds().toString().padStart(2, '0');
+
+    // Get timezone abbreviation
+    const timezone = date.toLocaleTimeString('en-us', {timeZoneName: 'short'}).split(' ')[2];
+
+    return month + '/' + day + '/' + year + ' ' + hours + ':' + minutes + ':' + seconds + ' ' + timezone;
+  });
+
+  Handlebars.registerHelper('duration', function(startDateString, endDateString) {
+    if (!startDateString || !endDateString) {
+      return '';
+    }
+
+    const startDate = new Date(startDateString);
+    const endDate = new Date(endDateString);
+
+    // Check if dates are valid
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return '';
+    }
+
+    const durationMs = endDate.getTime() - startDate.getTime();
+
+    if (durationMs < 0) {
+      return '';
+    }
+
+    const seconds = Math.floor(durationMs / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      const remainingHours = hours % 24;
+      const remainingMinutes = minutes % 60;
+      return days + 'd ' + remainingHours + 'h ' + remainingMinutes + 'm';
+    } else if (hours > 0) {
+      const remainingMinutes = minutes % 60;
+      const remainingSeconds = seconds % 60;
+      return hours + 'h ' + remainingMinutes + 'm ' + remainingSeconds + 's';
+    } else if (minutes > 0) {
+      const remainingSeconds = seconds % 60;
+      return minutes + 'm ' + remainingSeconds + 's';
+    } else if (seconds > 0) {
+      const remainingMs = durationMs % 1000;
+      if (remainingMs > 0) {
+        return seconds + 's ' + remainingMs + 'ms';
+      } else {
+        return seconds + 's';
+      }
+    } else {
+      return durationMs + 'ms';
+    }
+  });
+
+  Handlebars.registerHelper('statusBadge', function(status) {
+    switch(status) {
+      case 'COMPLETED': case 'COMPENSATION_COMPLETED': return 'success';
+      case 'ERROR': case 'TIMEOUT': case 'COMPENSATION_ERROR': return 'danger';
+      case 'RETRIES_EXHAUSTED': case 'TRANSIENT_ERROR': return 'warning';
+      case 'RUNNING': case 'WAITING': case 'COMPENSATION_IN_PROGRESS': return 'info';
+      case 'CANCELLED': return 'secondary';
+      default: return 'light';
+    }
+  });
+
+  // View definitions
+  const home_view = Handlebars.compile($('#home_view').html());
+  const workflow_detail_view = Handlebars.compile($('#workflow_detail_view').html());
+  const exhausted_retries_view = Handlebars.compile($('#exhausted_retries_view').html());
+  const dlq_view = Handlebars.compile($('#dlq_view').html());
+  const workflows_list_view = Handlebars.compile($('#workflows_list_view').html());
+  const workflow_row_partial = Handlebars.compile($('#workflow_row_partial').html());
+
+  function searchWorkflowInstance() {
+    document.location.href = '#workflow/' + $('#searchBox').val();
+  }
+
+  function navigateToWorkflow(id) {
+    document.location.href = '#workflow/' + id;
+  }
+
+  /**
+   * Display the individual workflow view
+   * @param id The workflow id
+   */
+  function view_workflow_internal(url) {
+    safeGet(url, function(response) {
+      console.log(response);
+      response.result_json = JSON.stringify(response.instance.result, null, 4);
+      $("#main_content").html(workflow_detail_view(response));
+      adjustJsonBlockSize();
+      loadChildWorkflows(response.instance.workflow_id);
+      loadSignals(response.instance.workflow_id);
+    }, function(response) {
+      alert("Workflow ID is invalid");
+    });
+  }
+
+  function loadChildWorkflows(parentId) {
+    safeGet("/skipper/admin/workflows?parentWorkflowId=" + encodeURIComponent(parentId) + "&limit=20", function(result) {
+      if (result.workflows && result.workflows.length > 0) {
+        var html = '<div class="card border-light mb-4"><div class="card-header"><h5 class="mb-0">Child Workflows</h5></div>';
+        html += '<div class="table-responsive"><table class="table table-condensed" style="margin-bottom: 0;">';
+        html += '<thead><tr><th>Workflow ID</th><th>Workflow Type</th><th>Workflow Method</th><th>Status</th><th>Created</th><th>Updated</th></tr></thead><tbody>';
+        result.workflows.forEach(function(wf) {
+          html += '<tr>';
+          html += '<td><code><a href="#" onclick="navigateToWorkflow(\'' + wf.workflow_id + '\'); return false">' + wf.workflow_id + '</a></code></td>';
+          html += '<td>' + (wf.workflow_class ? wf.workflow_class.split('.').pop() : '') + '</td>';
+          html += '<td>' + (wf.workflow_method || '') + '</td>';
+          html += '<td><span class="badge badge-' + statusBadgeClass(wf.status) + '">' + wf.status + '</span></td>';
+          html += '<td>' + formatDate(wf.created_at) + '</td>';
+          html += '<td>' + formatDate(wf.updated_at) + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table></div></div>';  // close table-responsive + card
+        $("#child-workflows-section").html(html);
+      }
+    }, function() {});
+  }
+
+  function formatDate(isoStr) {
+    if (!isoStr) return '';
+    var d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString();
+  }
+
+  function statusBadgeClass(status) {
+    switch(status) {
+      case 'COMPLETED': case 'COMPENSATION_COMPLETED': return 'success';
+      case 'ERROR': case 'TIMEOUT': case 'COMPENSATION_ERROR': return 'danger';
+      case 'RETRIES_EXHAUSTED': case 'TRANSIENT_ERROR': return 'warning';
+      case 'RUNNING': case 'WAITING': case 'COMPENSATION_IN_PROGRESS': return 'info';
+      case 'CANCELLED': return 'secondary';
+      default: return 'light';
+    }
+  }
+
+  // Persisted signals for the workflow currently shown in the detail view. Held module-level so the
+  // per-row "View input"/"View error" actions can look the payload up by index instead of embedding
+  // (and re-escaping) arbitrary JSON inside an inline onclick handler.
+  var _persistedSignals = [];
+  var _persistedSignalsWorkflowId = null;
+
+  // Minimal HTML-escaper for values interpolated into admin tables built by string concatenation
+  // (workflow-supplied ids, signal method names, etc.), so a crafted value cannot inject markup.
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function signalStatusBadge(status) {
+    if (!status) return 'secondary';
+    var s = String(status).toUpperCase();
+    if (s.indexOf('ERROR') !== -1 || s.indexOf('FAIL') !== -1) return 'danger';
+    if (s.indexOf('EXECUTED') !== -1 || s.indexOf('PROCESSED') !== -1 || s.indexOf('COMPLETE') !== -1 || s.indexOf('REPLAY') !== -1 || s.indexOf('DELIVERED') !== -1) return 'success';
+    if (s.indexOf('PENDING') !== -1 || s.indexOf('WAIT') !== -1) return 'warning';
+    return 'secondary';
+  }
+
+  function loadSignals(workflowId) {
+    _persistedSignalsWorkflowId = workflowId;
+    safeGet("/skipper/admin/workflows/" + encodeURIComponent(workflowId) + "/signals", function(result) {
+      _persistedSignals = (result && result.signals) ? result.signals : [];
+      if (_persistedSignals.length === 0) {
+        return;
+      }
+      var html = '<div class="card border-light mb-4"><div class="card-header"><h5 class="mb-0">Persisted Signals</h5></div>';
+      html += '<div class="table-responsive"><table class="table table-striped" style="margin-bottom: 0;">';
+      html += '<thead><tr><th>ID</th><th>Signal Method</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>';
+      _persistedSignals.forEach(function(sig, i) {
+        html += '<tr>';
+        html += '<td><code>' + escapeHtml(sig.id) + '</code></td>';
+        html += '<td>' + escapeHtml(sig.signal_method || '') + '</td>';
+        html += '<td><span class="badge badge-' + signalStatusBadge(sig.status) + '">' + escapeHtml(sig.status) + '</span></td>';
+        html += '<td>' + escapeHtml(formatDate(sig.created_at)) + '</td>';
+        html += '<td><div class="btn-group btn-group-sm" role="group">';
+        html += '<button type="button" class="btn btn-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">Actions</button>';
+        html += '<ul class="dropdown-menu">';
+        if (sig.input !== null && sig.input !== undefined) {
+          html += '<li><a class="dropdown-item" href="#" onclick="viewSignalInput(' + i + '); return false">View input</a></li>';
+        }
+        if (sig.error) {
+          html += '<li><a class="dropdown-item" href="#" onclick="viewSignalError(' + i + '); return false">View error</a></li>';
+        }
+        // Dispatch by array index (an integer), never the raw id, so a crafted signal/workflow id
+        // cannot break out of the inline handler.
+        html += '<li><a class="dropdown-item" href="#" onclick="replaySignalByIndex(' + i + '); return false">Replay</a></li>';
+        html += '</ul></div></td>';
+        html += '</tr>';
+      });
+      html += '</tbody></table></div></div>';
+      $("#signals-section").html(html);
+    }, function() {});
+  }
+
+  function viewSignalInput(i) {
+    var sig = _persistedSignals[i];
+    if (!sig || sig.input === null || sig.input === undefined) return;
+    show_data('Signal input', typeof sig.input === 'string' ? sig.input : JSON.stringify(sig.input));
+  }
+
+  function viewSignalError(i) {
+    var sig = _persistedSignals[i];
+    if (!sig || !sig.error) return;
+    show_data('Signal error', typeof sig.error === 'string' ? sig.error : JSON.stringify(sig.error));
+  }
+
+  function replaySignalByIndex(i) {
+    var sig = _persistedSignals[i];
+    if (!sig) return;
+    replaySignal(_persistedSignalsWorkflowId, sig.id);
+  }
+
+  function replaySignal(workflowId, signalId) {
+    if (!confirm("Replay this persisted signal? The workflow will re-process it.")) {
+      return;
+    }
+    $.post("/skipper/admin/workflows/" + encodeURIComponent(workflowId) + "/signals/" + encodeURIComponent(signalId) + "/replay", function() {
+      location.reload();
+    }).fail(function (response) {
+      alert("Failed to replay signal: " + response.responseText);
+    });
+  }
+
+  function rewindToCheckpoint(workflowId, actionClass, actionMethod, iteration, checkpointName) {
+    if (!confirm("Rewind this workflow to the selected checkpoint?\n\nThis will:\n- Set the workflow status to RUNNING\n- DELETE this checkpoint and every checkpoint after it\n- Re-execute the workflow from this point\n\nThis operation CANNOT be undone.")) {
+      return;
+    }
+    var params = "actionClass=" + encodeURIComponent(actionClass) +
+      "&actionMethod=" + encodeURIComponent(actionMethod) +
+      "&iteration=" + encodeURIComponent(iteration);
+    if (checkpointName) {
+      params += "&checkpointName=" + encodeURIComponent(checkpointName);
+    }
+    $.post("/skipper/admin/workflows/" + encodeURIComponent(workflowId) + "/rewind?" + params, function() {
+      alert("Workflow rewound to the selected checkpoint and rescheduled for execution.");
+      location.reload();
+    }).fail(function (response) {
+      alert("Failed to rewind workflow: " + response.responseText);
+    });
+  }
+
+  function view_workflow(id) {
+    view_workflow_internal("/skipper/admin/workflows/" + id)
+  }
+
+  function dequeueTask(taskId) {
+    if (!confirm("Are you sure you want to dequeue this task?")) {
+      return;
+    }
+    $.post("/skipper/admin/scheduler/" + taskId + "/dequeue", function(response) {
+      console.log(response);
+      showDLQ();
+    }).fail(function (response) {
+      alert("Failed to dequeue task: " + response.responseText);
+    });
+  }
+
+  function cancelWorkflowFromTask(taskId) {
+    if (!confirm("Are you sure you want to cancel this workflow? This will also remove the task from the DLQ.")) {
+      return;
+    }
+    $.post("/skipper/admin/scheduler/" + taskId + "/cancel-workflow", function(response) {
+      console.log(response);
+      showDLQ();
+    }).fail(function (response) {
+      alert("Failed to cancel workflow: " + response.responseText);
+    });
+  }
+
+  function requeueTask(taskId) {
+    if (!confirm("Are you sure you want to requeue this task?")) {
+      return;
+    }
+    $.post("/skipper/admin/scheduler/" + taskId + "/requeue", function(response) {
+      console.log(response);
+      showDLQ();
+    }).fail(function (response) {
+      alert("Failed to requeue task: " + response.responseText);
+    });
+  }
+
+  function cancelWorkflow(workflowId) {
+    if (!confirm("Are you sure you want to cancel this workflow?")) {
+      return;
+    }
+    $.post("/skipper/admin/workflows/" + workflowId + "/cancel", function(response) {
+      console.log(response);
+      location.reload();
+    }).fail(function (response) {
+      alert("Failed to cancel workflow: " + response.responseText);
+    });
+  }
+
+  function resetWorkflowFromError(workflowId) {
+    if (!confirm("Are you sure you want to reset this workflow from ERROR to RUNNING?\n\nThis will:\n- Change the workflow status from ERROR to RUNNING\n- Delete the latest non-transient error checkpoint\n- Schedule the workflow for immediate execution\n\nThis operation cannot be undone.")) {
+      return;
+    }
+    $.post("/skipper/admin/workflows/" + workflowId + "/reset-error", function(response) {
+      console.log(response);
+      alert("Workflow successfully reset to RUNNING status and scheduled for execution.");
+      location.reload();
+    }).fail(function (response) {
+      alert("Failed to reset workflow: " + response.responseText);
+    });
+  }
+
+  function deleteWorkflow(workflowId) {
+    if (!confirm("WARNING: You are about to permanently delete this workflow.\n\n" +
+        "This will:\n" +
+        "- Remove the workflow instance from the database\n" +
+        "- Delete all action checkpoints\n" +
+        "- Delete all timers\n\n" +
+        "This operation CANNOT be undone.\n\n" +
+        "Are you sure you want to proceed?")) {
+      return;
+    }
+    $.post("/skipper/admin/workflows/" + workflowId + "/delete", function() {
+      alert("Workflow " + workflowId + " has been permanently deleted.");
+      showHome();
+    }).fail(function(xhr) {
+      alert("Failed to delete workflow: " + xhr.responseText);
+    });
+  }
+
+  function showHome() {
+    window.location.hash = '';
+    safeGet("/skipper/admin/dashboard/stats", function(stats) {
+      $("#main_content").html(home_view({stats: stats}));
+    }, function (response) {
+      // Show basic home view even if stats fail
+      $("#main_content").html(home_view({stats: {exhausted_retries_count: 0, dlq_tasks_count: 0, scheduler_backlog_count: 0}}));
+    });
+  }
+
+  // Backs the sortable "Updated" column header. Sorting is opt-in — and only two-state rather than the
+  // usual asc/desc cycle — because the server-side sort is not index-backed and times out once the
+  // backlog is large, so the unsorted (index-order) listing is the default. Held in a module-level var
+  // so re-renders (e.g. after a bulk action) keep the operator's choice.
+  var _exhaustedRetriesOrderByUpdatedAt = false;
+
+  function toggleExhaustedRetriesOrdering() {
+    _exhaustedRetriesOrderByUpdatedAt = !_exhaustedRetriesOrderByUpdatedAt;
+    loadExhaustedRetries();
+  }
+
+  function showExhaustedRetries() {
+    window.location.hash = 'exhausted-retries';
+    loadExhaustedRetries();
+  }
+
+  function loadExhaustedRetries() {
+    // Omitting sortBy entirely is what asks the server for the unsorted (fast) listing.
+    const url = "/skipper/admin/workflows/exhausted-retries" +
+      (_exhaustedRetriesOrderByUpdatedAt ? "?sortBy=UPDATED_AT&sortDirection=ASC" : "");
+    safeGet(url, function(response) {
+      console.log(response);
+      $("#main_content").html(exhausted_retries_view(
+        Object.assign({}, response, {order_by_updated_at: _exhaustedRetriesOrderByUpdatedAt})));
+    }, function (response) {
+      alert("Failed to load exhausted retries: " + response.responseText);
+    });
+  }
+
+  function showDLQ() {
+    window.location.hash = 'dlq';
+    safeGet("/skipper/admin/scheduler/dlq", function(response) {
+      console.log(response);
+      $("#main_content").html(dlq_view(response));
+    }, function (response) {
+      alert("Failed to load DLQ: " + response.responseText);
+    });
+  }
+
+  // Stored globally so re-renders preserve the dropdown and accumulated results
+  var _workflowTypes = [];
+  var _workflowResults = [];
+  var _workflowNextCursor = null;
+  var _workflowLoadingMore = false;
+  var _workflowSavedFilters = null;
+
+  function showWorkflows() {
+    window.location.hash = 'workflows';
+    // Render the form immediately (empty results) while we fetch types + data
+    _workflowResults = [];
+    _workflowNextCursor = null;
+    _workflowSavedFilters = null;
+    safeGet("/skipper/admin/workflow-types", function(types) {
+      _workflowTypes = types;
+      renderWorkflowsViewFull();
+      executeWorkflowSearch();
+    }, function() {
+      _workflowTypes = [];
+      renderWorkflowsViewFull();
+      executeWorkflowSearch();
+    });
+  }
+
+  function renderWorkflowsViewFull() {
+    var data = {
+      workflowTypes: _workflowTypes,
+      result: _workflowResults.length > 0 ? {workflows: _workflowResults, next_cursor: _workflowNextCursor} : null,
+      hasNext: !!_workflowNextCursor
+    };
+    $("#main_content").html(workflows_list_view(data));
+    restoreFilters();
+    setupCheckboxDropdowns();
+    setupInfiniteScroll();
+  }
+
+  function appendWorkflowRows(newWorkflows) {
+    var html = '';
+    newWorkflows.forEach(function(wf) {
+      html += workflow_row_partial(wf);
+    });
+    $("#workflows-tbody").append(html);
+    $("#result-count").text("Showing " + _workflowResults.length + " results");
+    if (_workflowNextCursor) {
+      $("#scroll-hint").show();
+    } else {
+      $("#scroll-hint").hide();
+    }
+  }
+
+  function restoreFilters() {
+    if (!_workflowSavedFilters) return;
+    (_workflowSavedFilters.entryPoints || []).forEach(function(ep) {
+      $('.filter-type-cb[value="' + ep + '"]').prop('checked', true);
+    });
+    (_workflowSavedFilters.statuses || []).forEach(function(s) {
+      $('.filter-status-cb[value="' + s + '"]').prop('checked', true);
+    });
+    if (_workflowSavedFilters.after) $('#filter-created-after').val(_workflowSavedFilters.after);
+    if (_workflowSavedFilters.before) $('#filter-created-before').val(_workflowSavedFilters.before);
+    updateDropdownLabels();
+  }
+
+  function setupCheckboxDropdowns() {
+    $(document).off('change.filterType').on('change.filterType', '.filter-type-cb', updateDropdownLabels);
+    $(document).off('change.filterStatus').on('change.filterStatus', '.filter-status-cb', updateDropdownLabels);
+    // Prevent dropdown from closing when clicking inside the menu
+    $('.dropdown-menu').off('click.keepOpen').on('click.keepOpen', function(e) {
+      e.stopPropagation();
+    });
+  }
+
+  function updateDropdownLabels() {
+    var typeCount = $('.filter-type-cb:checked').length;
+    $('#type-dropdown-btn').text(typeCount > 0 ? typeCount + ' type(s) selected' : 'All Types');
+    var statusCount = $('.filter-status-cb:checked').length;
+    $('#status-dropdown-btn').text(statusCount > 0 ? statusCount + ' status(es) selected' : 'All Statuses');
+  }
+
+  function getCurrentFilters() {
+    var entryPoints = [];
+    $('.filter-type-cb:checked').each(function() { entryPoints.push($(this).val()); });
+    var statuses = [];
+    $('.filter-status-cb:checked').each(function() { statuses.push($(this).val()); });
+    return {
+      entryPoints: entryPoints,
+      statuses: statuses,
+      after: $('#filter-created-after').val() || '',
+      before: $('#filter-created-before').val() || ''
+    };
+  }
+
+  function buildWorkflowSearchUrl(filters, cursor) {
+    var params = [];
+    if (filters.entryPoints && filters.entryPoints.length > 0) {
+      filters.entryPoints.forEach(function(ep) {
+        params.push('entryPoint=' + encodeURIComponent(ep));
+      });
+    }
+    if (filters.statuses && filters.statuses.length > 0) {
+      filters.statuses.forEach(function(s) {
+        params.push('status=' + encodeURIComponent(s));
+      });
+    }
+    if (filters.after) params.push('createdAfter=' + encodeURIComponent(new Date(filters.after).toISOString()));
+    if (filters.before) params.push('createdBefore=' + encodeURIComponent(new Date(filters.before + 'T23:59:59Z').toISOString()));
+    if (cursor) params.push('cursor=' + encodeURIComponent(cursor));
+    return '/skipper/admin/workflows' + (params.length > 0 ? '?' + params.join('&') : '');
+  }
+
+  function executeWorkflowSearch(cursor) {
+    var filters = getCurrentFilters();
+    if (!cursor) {
+      _workflowResults = [];
+      _workflowNextCursor = null;
+    }
+    _workflowSavedFilters = filters;
+    _workflowLoadingMore = true;
+
+    safeGet(buildWorkflowSearchUrl(filters, cursor), function(result) {
+      _workflowLoadingMore = false;
+      _workflowResults = _workflowResults.concat(result.workflows);
+      _workflowNextCursor = result.next_cursor;
+      if (!cursor) {
+        renderWorkflowsViewFull();
+      } else {
+        appendWorkflowRows(result.workflows);
+      }
+    }, function(response) {
+      _workflowLoadingMore = false;
+      alert("Search failed: " + (response.responseText || 'Unknown error'));
+    });
+  }
+
+  function setupInfiniteScroll() {
+    $(window).off('scroll.workflows').on('scroll.workflows', function() {
+      if (_workflowLoadingMore || !_workflowNextCursor) return;
+      if (window.location.hash !== '#workflows') {
+        $(window).off('scroll.workflows');
+        return;
+      }
+      var scrollBottom = $(window).scrollTop() + $(window).height();
+      var docHeight = $(document).height();
+      if (scrollBottom >= docHeight - 200) {
+        executeWorkflowSearch(_workflowNextCursor);
+      }
+    });
+  }
+
+  function retryWorkflow(workflowId) {
+    if (!confirm("Are you sure you want to retry this workflow?")) {
+      return;
+    }
+    $.ajax({
+      url: "/skipper/admin/workflows/bulk-retry",
+      type: "POST",
+      data: JSON.stringify([workflowId]),
+      contentType: "application/json",
+      dataType: "json"
+    }).done(function(response) {
+      console.log(response);
+      if (response.failed.length > 0) {
+        alert("Failed to retry workflow: " + workflowId);
+      } else {
+        showExhaustedRetries();
+      }
+    }).fail(function (response) {
+      alert("Failed to retry workflow: " + response.responseText);
+    });
+  }
+
+  // Same re-execute as retryWorkflow() but invoked from the workflow detail view, so it refreshes
+  // the current instance instead of navigating back to the exhausted-retries list.
+  function retryWorkflowDetail(workflowId) {
+    if (!confirm("Retry (re-execute) this workflow? It will be rescheduled for execution.")) {
+      return;
+    }
+    $.ajax({
+      url: "/skipper/admin/workflows/bulk-retry",
+      type: "POST",
+      data: JSON.stringify([workflowId]),
+      contentType: "application/json",
+      dataType: "json"
+    }).done(function(response) {
+      console.log(response);
+      if (response.failed && response.failed.length > 0) {
+        alert("Failed to retry workflow: " + workflowId);
+      } else {
+        location.reload();
+      }
+    }).fail(function (response) {
+      alert("Failed to retry workflow: " + response.responseText);
+    });
+  }
+
+  function toggleAllWorkflows() {
+    const selectAll = document.getElementById('select-all-workflows');
+    const checkboxes = document.querySelectorAll('.workflow-checkbox');
+    checkboxes.forEach(checkbox => {
+      checkbox.checked = selectAll.checked;
+    });
+  }
+
+  function toggleAllTasks() {
+    const selectAll = document.getElementById('select-all-tasks');
+    const checkboxes = document.querySelectorAll('.task-checkbox');
+    checkboxes.forEach(checkbox => {
+      checkbox.checked = selectAll.checked;
+    });
+  }
+
+  function getSelectedWorkflows() {
+    const checkboxes = document.querySelectorAll('.workflow-checkbox:checked');
+    return Array.from(checkboxes).map(checkbox => checkbox.value);
+  }
+
+  function getSelectedTasks() {
+    const checkboxes = document.querySelectorAll('.task-checkbox:checked');
+    return Array.from(checkboxes).map(checkbox => checkbox.value);
+  }
+
+  function bulkCancelWorkflows() {
+    const selected = getSelectedWorkflows();
+    if (selected.length === 0) {
+      alert("Please select at least one workflow to cancel.");
+      return;
+    }
+    if (!confirm("Are you sure you want to cancel " + selected.length + " workflow(s)?")) {
+      return;
+    }
+    $.ajax({
+      url: "/skipper/admin/workflows/bulk-cancel",
+      type: "POST",
+      data: JSON.stringify(selected),
+      contentType: "application/json",
+      dataType: "json"
+    }).done(function(response) {
+      console.log(response);
+      alert("Successfully cancelled " + response.successful.length + " workflow(s). Failed: " + response.failed.length);
+      showExhaustedRetries();
+    }).fail(function (response) {
+      alert("Failed to cancel workflows: " + response.responseText);
+    });
+  }
+
+  function bulkRetryWorkflows() {
+    const selected = getSelectedWorkflows();
+    if (selected.length === 0) {
+      alert("Please select at least one workflow to retry.");
+      return;
+    }
+    if (!confirm("Are you sure you want to retry " + selected.length + " workflow(s)?")) {
+      return;
+    }
+    $.ajax({
+      url: "/skipper/admin/workflows/bulk-retry",
+      type: "POST",
+      data: JSON.stringify(selected),
+      contentType: "application/json",
+      dataType: "json"
+    }).done(function(response) {
+      console.log(response);
+      alert("Successfully retried " + response.successful.length + " workflow(s). Failed: " + response.failed.length);
+      showExhaustedRetries();
+    }).fail(function (response) {
+      alert("Failed to retry workflows: " + response.responseText);
+    });
+  }
+
+  function bulkRedriveTasks() {
+    const selected = getSelectedTasks();
+    if (selected.length === 0) {
+      alert("Please select at least one task to redrive.");
+      return;
+    }
+    if (!confirm("Are you sure you want to redrive " + selected.length + " task(s)?")) {
+      return;
+    }
+    $.ajax({
+      url: "/skipper/admin/scheduler/bulk-redrive",
+      type: "POST",
+      data: JSON.stringify(selected),
+      contentType: "application/json",
+      dataType: "json"
+    }).done(function(response) {
+      console.log(response);
+      alert("Successfully redriven " + response.successful.length + " task(s). Failed: " + response.failed.length);
+      showDLQ();
+    }).fail(function (response) {
+      alert("Failed to redrive tasks: " + response.responseText);
+    });
+  }
+
+  function bulkRemoveTasks() {
+    const selected = getSelectedTasks();
+    if (selected.length === 0) {
+      alert("Please select at least one task to remove.");
+      return;
+    }
+    if (!confirm("Are you sure you want to remove " + selected.length + " task(s)?")) {
+      return;
+    }
+    $.ajax({
+      url: "/skipper/admin/scheduler/bulk-remove",
+      type: "POST",
+      data: JSON.stringify(selected),
+      contentType: "application/json",
+      dataType: "json"
+    }).done(function(response) {
+      console.log(response);
+      alert("Successfully removed " + response.successful.length + " task(s). Failed: " + response.failed.length);
+      showDLQ();
+    }).fail(function (response) {
+      alert("Failed to remove tasks: " + response.responseText);
+    });
+  }
+
+  function bulkCancelWorkflowsFromDLQ() {
+    const selected = getSelectedTasks();
+    if (selected.length === 0) {
+      alert("Please select at least one task to cancel workflows for.");
+      return;
+    }
+    if (!confirm("Are you sure you want to cancel workflows for " + selected.length + " selected task(s)? Only WORKFLOW type tasks will be processed.")) {
+      return;
+    }
+    $.ajax({
+      url: "/skipper/admin/scheduler/bulk-cancel-workflows",
+      type: "POST",
+      data: JSON.stringify(selected),
+      contentType: "application/json",
+      dataType: "json"
+    }).done(function(response) {
+      console.log(response);
+      const ignoredCount = response.failed.length - (selected.length - response.successful.length);
+      let message = "Successfully cancelled " + response.successful.length + " workflow(s).";
+      if (response.failed.length > 0) {
+        message += " " + (response.failed.length - Math.max(0, ignoredCount)) + " failed.";
+        if (ignoredCount > 0) {
+          message += " " + ignoredCount + " non-WORKFLOW tasks were ignored.";
+        }
+      }
+      alert(message);
+      showDLQ();
+    }).fail(function (response) {
+      alert("Failed to cancel workflows: " + response.responseText);
+    });
+  }
+
+  /**
+   * Display the modal showing the input/result JSON data provided
+   * @param title The title of the modal
+   * @param content The object to be displayed in JSON format
+   */
+  function show_data(title, content) {
+    try {
+      content = JSON.stringify(JSON.parse(content), null, 4);
+    } catch (e) {
+    }
+
+    $("#workflow_input_content").html(content);
+    $("#workflow_input .modal-title").html(title);
+    new bootstrap.Modal(document.getElementById("workflow_input")).toggle();
+  }
+
+  /**
+   * Simple hash based routing
+   */
+  function route() {
+    const hash = window.location.hash.substring(1); // Remove the #
+    if (hash.startsWith("workflow/")) {
+      let flow_id = hash.split('/')[1];
+      view_workflow(flow_id);
+    } else if (hash === 'exhausted-retries') {
+      loadExhaustedRetries();
+    } else if (hash === 'dlq') {
+      safeGet("/skipper/admin/scheduler/dlq", function(response) {
+        $("#main_content").html(dlq_view(response));
+      }, function (response) {
+        alert("Failed to load DLQ: " + response.responseText);
+      });
+    } else if (hash === 'workflows') {
+      showWorkflows();
+    } else {
+      safeGet("/skipper/admin/dashboard/stats", function(stats) {
+        $("#main_content").html(home_view({stats: stats}));
+      }, function (response) {
+        $("#main_content").html(home_view({stats: {exhausted_retries_count: 0, dlq_tasks_count: 0, scheduler_backlog_count: 0}}));
+      });
+    }
+  }
+
+  function adjustJsonBlockSize() {
+    $(".json-block").each(function(i, e) {
+      const height = $(this).height();
+      if (height < 40) {
+        $(this).parent().height(40);
+      } else if (height > 300) {
+        $(this).parent().height(300);
+      } else {
+        $(this).parent().height(height);
+      }
+    });
+  }
+
+  window.addEventListener('hashchange', route);
+
+  $(document).ready(function() {
+    route();
+  });
+
+  $(window).resize(function() {
+    adjustJsonBlockSize();
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,236 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import LangTabs from '../../components/LangTabs.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+const transferKt = `class PeerToPeerTransfer : Workflow() {
+  private val ledger = actions<LedgerActions>()
+
+  @StateField var isApproved: Boolean? = null
+
+  @WorkflowMethod
+  suspend fun transfer(request: TransferRequest): Boolean {
+    if (request.amount > 1000) {
+      // Hibernate until approved — or up to a day — using zero resources.
+      val approved = waitUntil({ isApproved != null }, Duration.ofDays(1))
+      if (!approved || isApproved != true) return false
+    }
+    ledger.debit(request.from, request.amount)
+    ledger.credit(request.to, request.amount)
+    return true
+  }
+
+  @SignalMethod
+  fun approve(approved: Boolean) { this.isApproved = approved }
+}`;
+
+const transferJava = `public class PeerToPeerTransfer extends Workflow {
+  private final LedgerActions ledger = actions(LedgerActions.class);
+
+  @StateField Boolean isApproved;
+
+  @WorkflowMethod(returnType = Boolean.class)
+  public CompletableFuture<Boolean> transfer(TransferRequest request) {
+    if (request.getAmount() > 1000) {
+      // Hibernate until approved — or up to a day — using zero resources.
+      boolean approved = waitUntil(() -> isApproved != null, Duration.ofDays(1));
+      if (!approved || !isApproved) {
+        return CompletableFuture.completedFuture(false);
+      }
+    }
+    ledger.debit(request.getFrom(), request.getAmount());
+    ledger.credit(request.getTo(), request.getAmount());
+    return CompletableFuture.completedFuture(true);
+  }
+
+  @SignalMethod
+  public void approve(boolean approved) { this.isApproved = approved; }
+}`;
+
+const orderKt = `class OrderWorkflow : Workflow() {
+  private val payments = actions<PaymentActions>()
+  private val inventory = actions<InventoryActions>()
+  private val shipping = actions<ShippingActions>()
+
+  @WorkflowMethod
+  suspend fun process(order: OrderRequest): OrderResult {
+    payments.charge(order)      // compensated by refund if a later step fails
+    inventory.reserve(order)    // compensated by release if a later step fails
+    shipping.schedule(order)    // if this throws, the two above are undone
+    return OrderResult.completed(order.id)
+  }
+}
+
+class PaymentActions : Actions() {
+  @Execute
+  suspend fun charge(order: OrderRequest): String = gateway.charge(order)
+
+  @Compensate(forExecute = "charge")
+  suspend fun refund(order: OrderRequest, chargeId: String) = gateway.refund(chargeId)
+}`;
+
+const orderJava = `public class OrderWorkflow extends Workflow {
+  private final PaymentActions payments = actions(PaymentActions.class);
+  private final InventoryActions inventory = actions(InventoryActions.class);
+  private final ShippingActions shipping = actions(ShippingActions.class);
+
+  @WorkflowMethod(returnType = OrderResult.class)
+  public CompletableFuture<OrderResult> process(OrderRequest order) {
+    payments.charge(order);      // compensated by refund if a later step fails
+    inventory.reserve(order);    // compensated by release if a later step fails
+    shipping.schedule(order);    // if this throws, the two above are undone
+    return CompletableFuture.completedFuture(OrderResult.completed(order.getId()));
+  }
+}
+
+public class PaymentActions extends Actions {
+  @Execute
+  public String charge(OrderRequest order) { return gateway.charge(order); }
+
+  @Compensate(forExecute = "charge")
+  public void refund(OrderRequest order, String chargeId) { gateway.refund(chargeId); }
+}`;
+
+const approvalKt = `class DocumentApproval : Workflow() {
+  @StateField var decision: Decision? = null
+
+  @WorkflowMethod
+  suspend fun review(doc: Document): Outcome {
+    // Wait up to a week for a human decision; no resources held while waiting.
+    val received = waitUntil({ decision != null }, Duration.ofDays(7))
+    return when {
+      !received                     -> Outcome.EXPIRED
+      decision == Decision.APPROVED -> Outcome.APPROVED
+      else                          -> Outcome.REJECTED
+    }
+  }
+
+  @SignalMethod fun submit(decision: Decision) { this.decision = decision }
+
+  @QueryMethod fun isPending(): Boolean = decision == null
+}`;
+
+const approvalJava = `public class DocumentApproval extends Workflow {
+  @StateField Decision decision;
+
+  @WorkflowMethod(returnType = Outcome.class)
+  public CompletableFuture<Outcome> review(Document doc) {
+    // Wait up to a week for a human decision; no resources held while waiting.
+    boolean received = waitUntil(() -> decision != null, Duration.ofDays(7));
+    Outcome outcome;
+    if (!received) {
+      outcome = Outcome.EXPIRED;
+    } else if (decision == Decision.APPROVED) {
+      outcome = Outcome.APPROVED;
+    } else {
+      outcome = Outcome.REJECTED;
+    }
+    return CompletableFuture.completedFuture(outcome);
+  }
+
+  @SignalMethod
+  public void submit(Decision decision) { this.decision = decision; }
+
+  @QueryMethod
+  public boolean isPending() { return decision == null; }
+}`;
+
+const batchKt = `class BatchWorkflow : Workflow() {
+  private val processor = actions<ItemActions>()
+
+  @WorkflowMethod
+  suspend fun run(batch: Batch): BatchResult {
+    var processed = 0
+    batch.items.forEach { item ->
+      // A stable per-item checkpoint name keeps the loop safe across resumes.
+      processor.named("item-\${item.id}").process(item)
+      processed++
+    }
+    return BatchResult(processed)
+  }
+}`;
+
+const batchJava = `public class BatchWorkflow extends Workflow {
+  private final ItemActions processor = actions(ItemActions.class);
+
+  @WorkflowMethod(returnType = BatchResult.class)
+  public CompletableFuture<BatchResult> run(Batch batch) {
+    int processed = 0;
+    for (Item item : batch.getItems()) {
+      // A stable per-item checkpoint name keeps the loop safe across resumes.
+      processor.named(ItemActions.class, "item-" + item.getId()).process(item);
+      processed++;
+    }
+    return CompletableFuture.completedFuture(new BatchResult(processed));
+  }
+}`;
+
+const examples = [
+  {
+    id: 'peer-to-peer-transfer',
+    title: 'Peer-to-peer transfer',
+    body: 'A money transfer that requires manual approval over a threshold, then debits and credits a ledger. The workflow hibernates while it waits for the approval signal.',
+    kotlin: transferKt, java: transferJava,
+    tags: ['waitUntil', 'signals', 'state'],
+    links: [['Signals & Queries', '/docs/signals-and-queries/'], ['Workflow API', '/docs/workflow-api/']],
+  },
+  {
+    id: 'order-processing',
+    title: 'Order processing with compensation',
+    body: 'Charge, reserve inventory, and ship. If any step fails, Skipper automatically runs the compensation methods for completed actions in reverse order — the saga pattern.',
+    kotlin: orderKt, java: orderJava,
+    tags: ['compensation', 'actions'],
+    links: [['Compensation (Saga)', '/docs/compensation/']],
+  },
+  {
+    id: 'approval-workflow',
+    title: 'Approval workflow',
+    body: 'A document review that pauses for up to a week waiting on a human decision delivered by a signal, and exposes its pending state through a query.',
+    kotlin: approvalKt, java: approvalJava,
+    tags: ['signals', 'queries', 'long waits'],
+    links: [['Signals & Queries', '/docs/signals-and-queries/']],
+  },
+  {
+    id: 'batch-processing',
+    title: 'Batch processing',
+    body: 'Fan out over a list of items. Stable, per-item checkpoint names mean the loop resumes exactly where it left off after an interruption, without reprocessing finished items.',
+    kotlin: batchKt, java: batchJava,
+    tags: ['named checkpoints', 'loops'],
+    links: [['Versioning & Evolution', '/docs/versioning/']],
+  },
+];
+---
+<Layout title="Examples — Skipper" description="Runnable example workflows demonstrating Skipper's core features.">
+  <header class="page-head">
+    <div class="container">
+      <div class="breadcrumb"><a href={`${base}/`}>Home</a> / Examples</div>
+      <h1>Examples</h1>
+      <p>Self-contained workflows that show Skipper's features in context. Each focuses on a
+      single idea; follow the linked guides for the full picture. Toggle <strong>Kotlin</strong>
+      or <strong>Java</strong> on any snippet.</p>
+    </div>
+  </header>
+
+  <div class="page-body">
+    {examples.map((ex) => (
+      <section class="example" id={ex.id}>
+        <div class="prose">
+          <h2>{ex.title}</h2>
+          <p>{ex.body}</p>
+        </div>
+        <LangTabs java={ex.java} kotlin={ex.kotlin} />
+        <div class="example__tags">
+          {ex.tags.map((t) => <code>{t}</code>)}
+        </div>
+        <div class="prose">
+          <p><strong>Key topics:</strong>{' '}
+            {ex.links.map((l, i) => (
+              <>{i > 0 ? ' · ' : ''}<a href={`${base}${l[1]}`}>{l[0]}</a></>
+            ))}
+          </p>
+        </div>
+      </section>
+    ))}
+  </div>
+</Layout>

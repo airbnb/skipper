@@ -1,0 +1,264 @@
+---
+import Layout from './Layout.astro';
+import { getCollection } from 'astro:content';
+
+interface Props { title: string; description?: string; }
+const { title, description } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+const all = (await getCollection('docs')).sort((a, b) => a.data.order - b.data.order);
+const sectionsOrder = ['Getting Started', 'Guides', 'State Machine', 'Reference'];
+const grouped = sectionsOrder.map((s) => ({
+  section: s,
+  items: all.filter((d) => d.data.section === s),
+}));
+
+const hrefFor = (id: string) => (id === 'introduction' ? `${base}/docs/` : `${base}/docs/${id}/`);
+const current = Astro.url.pathname.replace(/\/$/, '');
+const isActive = (id: string) => current === hrefFor(id).replace(/\/$/, '');
+
+const flat = grouped.flatMap((g) => g.items);
+const idx = flat.findIndex((d) => isActive(d.id));
+const prev = idx > 0 ? flat[idx - 1] : null;
+const next = idx >= 0 && idx < flat.length - 1 ? flat[idx + 1] : null;
+---
+<Layout title={`${title} — Skipper Docs`} description={description}>
+  <div class="docs">
+    <aside class="docs__sidebar">
+      <div class="docs-search">
+        <input
+          type="search"
+          class="docs-search__input"
+          placeholder="Search docs…"
+          aria-label="Search the documentation"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="docs-search__results" hidden></div>
+      </div>
+      <nav class="docs__nav" aria-label="Documentation">
+        {grouped.map((g) => (
+          <div class="docs__group">
+            <h4>{g.section}</h4>
+            <ul>
+              {g.items.map((d) => (
+                <li>
+                  <a href={hrefFor(d.id)} class={isActive(d.id) ? 'is-active' : ''}>{d.data.title}</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+    </aside>
+
+    <article class="docs__main">
+      <div class="breadcrumb">
+        <a href={`${base}/`}>Home</a> / <a href={`${base}/docs/`}>Docs</a> / {title}
+      </div>
+      <h1 class="docs__title">{title}</h1>
+      {description && <p class="docs__lede">{description}</p>}
+      <div class="prose">
+        <slot />
+      </div>
+
+      <nav class="docs__pager" aria-label="Pagination">
+        {prev ? (
+          <a class="docs__pager-link" href={hrefFor(prev.id)}>
+            <span class="docs__pager-dir">← Previous</span>
+            <span class="docs__pager-title">{prev.data.title}</span>
+          </a>
+        ) : <span />}
+        {next ? (
+          <a class="docs__pager-link docs__pager-link--next" href={hrefFor(next.id)}>
+            <span class="docs__pager-dir">Next →</span>
+            <span class="docs__pager-title">{next.data.title}</span>
+          </a>
+        ) : <span />}
+      </nav>
+    </article>
+  </div>
+</Layout>
+
+<script>
+  // Merge each Kotlin code block immediately followed by a Java block into the shared
+  // tabbed widget, so docs snippets get the same Kotlin/Java toggle as the rest of the site.
+  document.querySelectorAll<HTMLElement>('.prose pre[data-language="kotlin"]').forEach((kotlinPre) => {
+    const javaPre = kotlinPre.nextElementSibling as HTMLElement | null;
+    if (!javaPre || javaPre.tagName !== 'PRE' || javaPre.dataset.language !== 'java') return;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'langtabs';
+    wrap.setAttribute('data-langtabs', '');
+
+    const bar = document.createElement('div');
+    bar.className = 'langtabs__bar';
+    bar.innerHTML =
+      '<button type="button" data-lang="kotlin" class="is-active" aria-pressed="true">Kotlin</button>' +
+      '<button type="button" data-lang="java" aria-pressed="false">Java</button>';
+
+    const kPanel = document.createElement('div');
+    kPanel.className = 'langtabs__panel';
+    kPanel.dataset.panel = 'kotlin';
+    const jPanel = document.createElement('div');
+    jPanel.className = 'langtabs__panel';
+    jPanel.dataset.panel = 'java';
+    jPanel.hidden = true;
+
+    kotlinPre.before(wrap);
+    kPanel.appendChild(kotlinPre);
+    jPanel.appendChild(javaPre);
+    wrap.append(bar, kPanel, jPanel);
+  });
+
+  // Toggle, synced across the page and persisted (shared `skipper-lang` key with the rest of the site).
+  const KEY = 'skipper-lang';
+  function applyLang(root: HTMLElement, lang: string) {
+    root.querySelectorAll<HTMLButtonElement>('.langtabs__bar button').forEach((b) => {
+      const active = b.dataset.lang === lang;
+      b.classList.toggle('is-active', active);
+      b.setAttribute('aria-pressed', String(active));
+    });
+    root.querySelectorAll<HTMLElement>('.langtabs__panel').forEach((p) => {
+      p.hidden = p.dataset.panel !== lang;
+    });
+  }
+  function setAll(lang: string) {
+    document.querySelectorAll<HTMLElement>('[data-langtabs]').forEach((r) => applyLang(r, lang));
+    try { localStorage.setItem(KEY, lang); } catch { /* ignore */ }
+  }
+  let saved: string | null = null;
+  try { saved = localStorage.getItem(KEY); } catch { /* ignore */ }
+  if (saved === 'java' || saved === 'kotlin') setAll(saved);
+  document.querySelectorAll<HTMLButtonElement>('[data-langtabs] .langtabs__bar button').forEach((btn) => {
+    btn.addEventListener('click', () => { if (btn.dataset.lang) setAll(btn.dataset.lang); });
+  });
+</script>
+
+<script>
+  // Client-side docs search over a build-time JSON index. No server required.
+  const input = document.querySelector<HTMLInputElement>('.docs-search__input');
+  const results = document.querySelector<HTMLElement>('.docs-search__results');
+
+  if (input && results) {
+    const indexUrl = import.meta.env.BASE_URL.replace(/\/$/, '') + '/search-index.json';
+    const WEIGHTS = { title: 10, heading: 5, description: 3, text: 1 };
+    let index: any[] | null = null;
+    let active = -1;
+
+    async function ensureIndex() {
+      if (index) return;
+      try {
+        const res = await fetch(indexUrl);
+        index = await res.json();
+        index!.forEach((d) => {
+          d._title = d.title.toLowerCase();
+          d._head = (d.headings || []).join(' ').toLowerCase();
+          d._desc = (d.description || '').toLowerCase();
+          d._text = (d.text || '').toLowerCase();
+        });
+      } catch {
+        index = [];
+      }
+    }
+
+    function tokens(q: string) {
+      return q.toLowerCase().split(/\s+/).filter(Boolean);
+    }
+
+    function search(q: string) {
+      const ts = tokens(q);
+      if (!ts.length || !index) return [];
+      const scored: { d: any; score: number }[] = [];
+      for (const d of index) {
+        let score = 0;
+        let all = true;
+        for (const t of ts) {
+          let s = 0;
+          if (d._title.includes(t)) s += WEIGHTS.title;
+          if (d._head.includes(t)) s += WEIGHTS.heading;
+          if (d._desc.includes(t)) s += WEIGHTS.description;
+          if (d._text.includes(t)) s += WEIGHTS.text;
+          if (s === 0) { all = false; break; }
+          score += s;
+        }
+        if (all) {
+          if (d._title.startsWith(ts[0])) score += 4;
+          scored.push({ d, score });
+        }
+      }
+      scored.sort((a, b) => b.score - a.score);
+      return scored.slice(0, 8).map((x) => x.d);
+    }
+
+    function escapeHtml(s: string) {
+      return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+    }
+    function highlight(text: string, q: string) {
+      let html = escapeHtml(text);
+      for (const t of tokens(q)) {
+        const re = new RegExp('(' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig');
+        html = html.replace(re, '<mark>$1</mark>');
+      }
+      return html;
+    }
+    function snippet(d: any, q: string) {
+      const t = tokens(q)[0];
+      const i = d._text.indexOf(t);
+      if (i === -1) return d.description || '';
+      const start = Math.max(0, i - 40);
+      return (start > 0 ? '…' : '') + d.text.slice(start, start + 150);
+    }
+
+    function render(items: any[], q: string) {
+      active = -1;
+      if (!q) { results!.hidden = true; results!.innerHTML = ''; return; }
+      results!.hidden = false;
+      if (!items.length) {
+        results!.innerHTML = '<div class="docs-search__empty">No results for “' + escapeHtml(q) + '”</div>';
+        return;
+      }
+      results!.innerHTML = items
+        .map(
+          (d) =>
+            `<a class="docs-search__result" href="${d.url}">` +
+            `<span class="docs-search__r-title">${highlight(d.title, q)}</span>` +
+            `<span class="docs-search__r-section">${escapeHtml(d.section)}</span>` +
+            `<span class="docs-search__r-snip">${highlight(snippet(d, q), q)}</span>` +
+            `</a>`,
+        )
+        .join('');
+    }
+
+    function setActive(links: HTMLElement[]) {
+      links.forEach((l, i) => l.classList.toggle('is-active', i === active));
+      if (links[active]) links[active].scrollIntoView({ block: 'nearest' });
+    }
+
+    input.addEventListener('input', async () => {
+      await ensureIndex();
+      render(search(input.value.trim()), input.value.trim());
+    });
+    input.addEventListener('focus', () => {
+      ensureIndex();
+      if (input.value.trim() && results!.innerHTML) results!.hidden = false;
+    });
+    input.addEventListener('keydown', (e) => {
+      const links = [...results!.querySelectorAll<HTMLElement>('.docs-search__result')];
+      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, links.length - 1); setActive(links); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); setActive(links); }
+      else if (e.key === 'Enter') { const t = (active >= 0 ? links[active] : links[0]) as HTMLAnchorElement | undefined; if (t) { e.preventDefault(); location.href = t.href; } }
+      else if (e.key === 'Escape') { input.value = ''; render([], ''); input.blur(); }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!(e.target as HTMLElement).closest('.docs-search')) results!.hidden = true;
+    });
+    // "/" focuses search from anywhere on the page
+    document.addEventListener('keydown', (e) => {
+      const tag = (document.activeElement as HTMLElement | null)?.tagName;
+      if (e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA') { e.preventDefault(); input.focus(); }
+    });
+  }
+</script>

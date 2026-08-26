@@ -1,0 +1,87 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Icon from '../../components/Icon.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const GITHUB = 'https://github.com/'; // TODO: public repo URL (pending OSS branding)
+---
+<Layout title="Community — Skipper" description="Get involved with Skipper: contribute, ask questions, and follow the roadmap.">
+  <header class="page-head">
+    <div class="container">
+      <div class="breadcrumb"><a href={`${base}/`}>Home</a> / Community</div>
+      <h1>Community</h1>
+      <p>Skipper is developed in the open under the Apache 2.0 license. Contributions,
+      questions, and bug reports are all welcome.</p>
+    </div>
+  </header>
+
+  <section class="section">
+    <div class="container">
+      <div class="outline">
+        <div class="outline__group" id="contributing">
+          <h3>Contributing</h3>
+          <ul>
+            <li>
+              <a href={GITHUB}>Contribution guide</a><br />
+              <span>Fork the repository, build it, run the test suite, and open a pull request. Start with an issue for anything non-trivial so we can agree on the approach.</span>
+            </li>
+            <li>
+              <a href={GITHUB}>Good first issues</a><br />
+              <span>Issues labeled <code>good first issue</code> are scoped to be a friendly on-ramp for new contributors.</span>
+            </li>
+            <li id="coc">
+              Code of Conduct<br />
+              <span>We follow the Contributor Covenant. Be respectful and assume good intent — everyone is here to build something useful.</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="outline__group" id="discussions">
+          <h3>Get help</h3>
+          <ul>
+            <li>
+              <a href={GITHUB}>GitHub Discussions</a><br />
+              <span>Ask questions, share patterns, and see how others model their workflows.</span>
+            </li>
+            <li>
+              <a href={GITHUB}>Issues</a><br />
+              <span>Report a bug or request a feature. Include a minimal reproduction where you can.</span>
+            </li>
+            <li>
+              <a href={`${base}/docs/troubleshooting/`}>Troubleshooting</a><br />
+              <span>Check the troubleshooting guide first — it covers the most common gotchas.</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="outline" style="margin-top:22px">
+        <div class="outline__group" id="roadmap">
+          <h3>Roadmap</h3>
+          <ul>
+            <li>Public release &amp; versioning<br /><span>Semantic versioning with a binary-compatibility gate on every release.</span></li>
+            <li>Expanded storage adapters<br /><span>More first-class backends behind the pluggable store and scheduler interfaces.</span></li>
+            <li>Guides &amp; examples<br /><span>Growing the documentation and the runnable example set.</span></li>
+          </ul>
+        </div>
+
+        <div class="outline__group" id="license">
+          <h3>License &amp; source</h3>
+          <ul>
+            <li>Apache License 2.0<br /><span>Free to use, modify, and distribute, including commercially.</span></li>
+            <li><a href={GITHUB}>GitHub repository</a><br /><span>Browse the source, file issues, and open pull requests.</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="notice" style="margin-top:40px">
+        <Icon name="users" size={20} />
+        <span>
+          <strong>Heads up:</strong> Skipper is being prepared for its public launch. The
+          repository and community links above will point to the public GitHub project once
+          it is live.
+        </span>
+      </div>
+    </div>
+  </section>
+</Layout>

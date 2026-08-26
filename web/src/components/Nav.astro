@@ -1,0 +1,46 @@
+---
+import Icon from './Icon.astro';
+import Wordmark from './Wordmark.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const links = [
+  { label: 'Docs', href: `${base}/docs/` },
+  { label: 'Examples', href: `${base}/examples/` },
+  { label: 'Community', href: `${base}/community/` },
+];
+const GITHUB = 'https://github.com/'; // TODO: public repo URL (pending OSS branding)
+
+// On the homepage the nav sits over the dark hero (blue at top → white on scroll).
+// Everywhere else it is a plain white header.
+const { heroNav = false } = Astro.props;
+---
+<header class={heroNav ? 'nav' : 'nav nav--solid'} id="site-nav" data-hero={heroNav ? 'true' : 'false'}>
+  <div class="container nav__inner">
+    <a class="nav__brand" href={`${base}/`} aria-label="Skipper home">
+      <img class="nav__mark nav__mark--light" src={`${base}/brand/skipper-mark-white.svg`} alt="" aria-hidden="true" />
+      <img class="nav__mark nav__mark--dark" src={`${base}/brand/skipper-mark-color.svg`} alt="" aria-hidden="true" />
+      <Wordmark class="nav__wordmark" />
+    </a>
+
+    <nav class="nav__links" aria-label="Primary">
+      {links.map((l) => <a href={l.href}>{l.label}</a>)}
+    </nav>
+
+    <div class="nav__cta">
+      <a class="btn btn--ghost" href={`${base}/docs/`}>Get Started</a>
+      <a class="btn btn--primary" href={GITHUB} aria-label="GitHub repository">
+        <Icon name="github" size={18} /> GitHub
+      </a>
+    </div>
+  </div>
+</header>
+
+<script>
+  const nav = document.getElementById('site-nav');
+  // Only the hero nav (homepage) toggles blue → white on scroll. Other pages stay white.
+  if (nav && nav.dataset.hero === 'true') {
+    const onScroll = () => nav.classList.toggle('nav--scrolled', window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+  }
+</script>
