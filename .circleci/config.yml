@@ -2,8 +2,9 @@
 #
 # One job runs on every push:
 #
-#   jvm-build  Gradle: compiles the engine (Kotlin + Java, joint compilation) and
-#              runs the OSS test subset defined in build.gradle.kts.
+#   jvm-build  Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
+#              skipper-state-machine plugin module, and runs both test subsets. A bare
+#              `gradlew build` from the root covers every project in the build.
 #
 # Optional project environment variable (Project Settings > Environment Variables):
 #
@@ -44,7 +45,7 @@ jobs:
           name: Restore Gradle caches
           keys:
             # Exact match: same Gradle distribution, same declared dependencies.
-            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
             # Partial match: same Gradle distribution, dependencies have moved. Still
             # saves the wrapper download and most of the module cache.
             - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-
@@ -84,7 +85,7 @@ jobs:
           name: Save Gradle caches
           # Saved even when the build fails: the dependency download is the expensive
           # part and it is already done by the time anything can fail.
-          key: gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}
+          key: gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
           paths:
             - ~/.gradle/caches
             - ~/.gradle/wrapper
@@ -96,14 +97,25 @@ jobs:
       - store_test_results:
           path: build/test-results/test
 
+      - store_test_results:
+          path: skipper-state-machine/build/test-results/test
+
       # Browsable HTML test report.
       - store_artifacts:
           path: build/reports/tests/test
           destination: test-report
 
       - store_artifacts:
+          path: skipper-state-machine/build/reports/tests/test
+          destination: test-report-state-machine
+
+      - store_artifacts:
           path: build/libs
           destination: libs
+
+      - store_artifacts:
+          path: skipper-state-machine/build/libs
+          destination: libs-state-machine
 
 workflows:
   build:

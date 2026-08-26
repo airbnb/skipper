@@ -137,6 +137,20 @@ own implementation, is a config change: see
 | [Admin UI and tracing](web/src/content/docs/observability.md)        | Inspect, replay, and manage live instances                          |
 | [Testing](web/src/content/docs/testing.md)                           | Drive workflows deterministically in unit tests                     |
 
+## Modules
+
+The repository holds two Gradle projects. The engine is the root project; the state-machine DSL is a
+plugin on top of it, in its own project with its own artifact.
+
+| Project | What it is |
+| ------- | ---------- |
+| `:` (root) | The Skipper engine: workflows, actions, retries, storage, scheduler, admin UI |
+| `:skipper-state-machine` | A declarative Kotlin DSL for durable state machines, built on the engine ([README](skipper-state-machine/src/main/kotlin/com/airbnb/skipper/statemachine/README.md)) |
+
+The dependency points one way: `skipper-state-machine` depends on the engine, and the engine knows
+nothing about it. Take the engine on its own if you do not want the DSL. `./gradlew build` from the
+root builds and tests both.
+
 ## Is Skipper for you?
 
 **A good fit if** the process must reach a terminal state despite failures, coordinates several
