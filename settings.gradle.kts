@@ -21,3 +21,8 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "skipper"
+
+// skipper-state-machine is a plugin layer on top of the engine: a separate Gradle project (its own
+// artifact) that depends on the root `skipper` project. Core does not depend on it, so the engine
+// builds and publishes exactly as it did before this module existed.
+include("skipper-state-machine")
