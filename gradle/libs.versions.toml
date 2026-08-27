@@ -1,16 +1,16 @@
 # Skipper Gradle version catalog.
 #
 # Dependency versions for the OSS build. A few libraries are pinned deliberately:
-# kotlin 1.9.10, jackson 2.9.10, guava 33.5.0-jre, and vavr / vavr-match 0.9.1
-# (vavr is forced to 0.9.1, overriding the newer 0.10.4 default). The remaining
-# libraries track their standard pins. Keep this file in sync when those change.
+# kotlin 1.9.10, jackson 2.9.10, and guava 33.5.0-jre. vavr tracks 0.10.4, matching
+# the standard pin. The remaining libraries track their standard pins. Keep this file
+# in sync when those change.
 
 [versions]
 kotlin = "1.9.10"
 kotlinxCoroutines = "1.8.1"
 jackson = "2.9.10"
 guava = "33.5.0-jre"
-vavr = "0.9.1"
+vavr = "0.10.4"
 slf4j = "2.0.7"
 flyway = "5.0.7"
 sqliteJdbc = "3.45.3.0"
