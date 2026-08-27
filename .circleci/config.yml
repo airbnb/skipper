@@ -1,10 +1,30 @@
 # CircleCI configuration for airbnb/skipper.
 #
-# One job runs on every push:
+# Jobs:
 #
-#   jvm-build  Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
-#              skipper-state-machine plugin module, and runs both test subsets. A bare
-#              `gradlew build` from the root covers every project in the build.
+#   jvm-build         Gradle: compiles the engine (Kotlin + Java, joint compilation) plus
+#                     the skipper-state-machine plugin module, and runs both test subsets.
+#                     A bare `gradlew build` from the root covers every project.
+#   publish-snapshot  DEFINED BUT NOT WIRED. See "Publishing" below.
+#   publish-release   DEFINED BUT NOT WIRED. See "Publishing" below.
+#
+# Publishing
+# ----------
+# Releases are published manually; see RELEASING.md. The two publish jobs below are ready
+# but deliberately not referenced by any workflow. To enable automated publishing, uncomment
+# the entries at the bottom of this file and provide the `maven-publish` context below.
+#
+# Required context (Organization Settings > Contexts), named `maven-publish`. Restrict it to
+# the group that owns releases; CircleCI does not expose contexts to builds from forked pull
+# requests, so PR builds never see these.
+#
+# The Artifactory hostnames live in the context alongside the credentials rather than in
+# this file, since this repository is public:
+#
+#   ORG_GRADLE_PROJECT_SNAPSHOT_REPOSITORY_URL  destination for -SNAPSHOT versions
+#   ORG_GRADLE_PROJECT_RELEASE_REPOSITORY_URL   destination for release versions
+#   ORG_GRADLE_PROJECT_artifactoryUsername      repository username
+#   ORG_GRADLE_PROJECT_artifactoryPassword      repository password or API token
 #
 # Optional project environment variable (Project Settings > Environment Variables):
 #
@@ -35,12 +55,9 @@ executors:
       # `-Pkotlin.daemon.jvmargs=-Xmx1g` to the Gradle invocation below.
       GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2
 
-jobs:
-  jvm-build:
-    executor: jvm
+commands:
+  restore_gradle_cache:
     steps:
-      - checkout
-
       - restore_cache:
           name: Restore Gradle caches
           keys:
@@ -49,6 +66,31 @@ jobs:
             # Partial match: same Gradle distribution, dependencies have moved. Still
             # saves the wrapper download and most of the module cache.
             - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-
+
+  save_gradle_cache:
+    steps:
+      - run:
+          name: Drop Gradle lock files
+          # Lock files are per-process state; caching them can wedge the next build.
+          command: |
+            find ~/.gradle -name '*.lock' -type f -delete || true
+          when: always
+      - save_cache:
+          name: Save Gradle caches
+          # Saved even when the build fails: the dependency download is the expensive
+          # part and it is already done by the time anything can fail.
+          key: gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+          when: always
+
+jobs:
+  jvm-build:
+    executor: jvm
+    steps:
+      - checkout
+      - restore_gradle_cache
 
       - run:
           name: Install embedded MariaDB native dependencies
@@ -75,21 +117,13 @@ jobs:
           command: ./gradlew --stacktrace build
 
       - run:
-          name: Drop Gradle lock files
-          # Lock files are per-process state; caching them can wedge the next build.
-          command: |
-            find ~/.gradle -name '*.lock' -type f -delete || true
-          when: always
+          name: Validate the publication metadata
+          # Publishes to the local Maven cache, which needs no credentials. Catches a
+          # malformed POM or a broken publication config in review rather than at
+          # release time, when the fix is far more expensive.
+          command: ./gradlew publishToMavenLocal -PVERSION_NAME=0.0.0-CI
 
-      - save_cache:
-          name: Save Gradle caches
-          # Saved even when the build fails: the dependency download is the expensive
-          # part and it is already done by the time anything can fail.
-          key: gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
-          paths:
-            - ~/.gradle/caches
-            - ~/.gradle/wrapper
-          when: always
+      - save_gradle_cache
 
       # store_test_results and store_artifacts run even when an earlier step failed,
       # so a red build still publishes its test report. The JUnit XML also drives
@@ -116,8 +150,86 @@ jobs:
       - store_artifacts:
           path: skipper-state-machine/build/libs
           destination: libs-state-machine
+  publish-snapshot:
+    executor: jvm
+    steps:
+      - checkout
+      - restore_gradle_cache
+      - run:
+          name: Publish snapshot to Artifactory
+          # --snapshot means the script always yields a version, even when only docs or
+          # chores landed. Snapshots are prunable, so there is no gate here; only real
+          # releases are gated, and those are cut by pushing a tag.
+          command: |
+            if [ -z "${ORG_GRADLE_PROJECT_SNAPSHOT_REPOSITORY_URL:-}" ]; then
+              echo "ORG_GRADLE_PROJECT_SNAPSHOT_REPOSITORY_URL is not set."
+              echo "Add it to the maven-publish context (see the header of this file)."
+              exit 1
+            fi
+            VERSION="$(scripts/next-version.sh --snapshot)-SNAPSHOT"
+            echo "Publishing com.airbnb.skipper:skipper-core:$VERSION"
+            ./gradlew --stacktrace publishAllPublicationsToArtifactoryRepository \
+              -PVERSION_NAME="$VERSION"
+      - save_gradle_cache
+
+  publish-release:
+    executor: jvm
+    steps:
+      - checkout
+      - restore_gradle_cache
+      - run:
+          name: Publish the tagged release to Artifactory
+          # The tag is the version, minus the leading `v`. Artifactory refuses to
+          # overwrite an existing release version, so a re-run of an already-published
+          # tag fails rather than silently replacing the artifact.
+          command: |
+            if [ -z "${ORG_GRADLE_PROJECT_RELEASE_REPOSITORY_URL:-}" ]; then
+              echo "ORG_GRADLE_PROJECT_RELEASE_REPOSITORY_URL is not set."
+              echo "Add it to the maven-publish context (see the header of this file)."
+              exit 1
+            fi
+            VERSION="${CIRCLE_TAG#v}"
+            echo "Publishing com.airbnb.skipper:skipper-core:$VERSION"
+            ./gradlew --stacktrace publishAllPublicationsToArtifactoryRepository \
+              -PVERSION_NAME="$VERSION"
+      - save_gradle_cache
 
 workflows:
   build:
     jobs:
-      - jvm-build
+      # Tag pushes are handled by the release workflow below, not this one.
+      - jvm-build:
+          filters:
+            tags:
+              ignore: /.*/
+      # Not wired yet - see "Publishing" in the header. To enable, uncomment:
+      #
+      # - publish-snapshot:
+      #     requires:
+      #       - jvm-build
+      #     context:
+      #       - maven-publish
+      #     filters:
+      #       branches:
+      #         only: main
+
+  # A tag-triggered release is re-runnable against an immutable ref, and lets a
+  # maintainer cut a release by hand without touching CI config. jvm-build runs again
+  # here: redundant for a tag on an already-tested commit, but it is what makes a
+  # hand-pushed tag safe.
+  release:
+    jobs:
+      - jvm-build:
+          filters: &release-tags
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
+      # Not wired yet - see "Publishing" in the header. To enable, uncomment:
+      #
+      # - publish-release:
+      #     requires:
+      #       - jvm-build
+      #     context:
+      #       - maven-publish
+      #     filters: *release-tags
