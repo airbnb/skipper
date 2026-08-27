@@ -4,6 +4,13 @@
 #
 #   next-version.sh              the version to release, or exit 3 if nothing releasable landed
 #   next-version.sh --snapshot   always prints a version (treats "nothing releasable" as a patch)
+#   next-version.sh --build      a unique, monotonic version for THIS commit; never fails
+#
+# --build exists so every merge to main can publish an immutable artifact that consumers
+# can pin, with no human ever choosing a version. It prints 0.<minor>.<commit count>, and
+# because main takes squash merges its history is linear - so the count is monotonic and
+# unique per commit, and sorts correctly under Maven's version ordering. It deliberately
+# carries no semantic meaning: it is a build number, not a release.
 #
 # The bump signal is the commit subject. Because main takes squash merges, that subject is
 # the pull request title, so one required check on PR titles is the whole enforcement story
@@ -19,11 +26,28 @@
 set -euo pipefail
 
 snapshot=false
-if [[ ${1:-} == --snapshot ]]; then
-    snapshot=true
-elif [[ $# -gt 0 ]]; then
-    echo "usage: $(basename "$0") [--snapshot]" >&2
-    exit 64
+build=false
+case ${1:-} in
+    "") ;;
+    --snapshot) snapshot=true ;;
+    --build) build=true ;;
+    *)
+        echo "usage: $(basename "$0") [--snapshot | --build]" >&2
+        exit 64
+        ;;
+esac
+
+# --build ignores commit prefixes entirely: every commit gets a version, and the minor
+# component tracks the last tag so a later `git tag v0.2.0` moves the whole series along.
+if [[ $build == true ]]; then
+    build_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+    if [[ -z $build_tag ]]; then
+        build_minor=1
+    else
+        IFS=. read -r _ build_minor _ <<<"${build_tag#v}"
+    fi
+    echo "0.${build_minor}.$(git rev-list --count HEAD)"
+    exit 0
 fi
 
 # --match keeps stray tags (release candidates, internal markers) out of the calculation.

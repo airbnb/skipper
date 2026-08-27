@@ -1,7 +1,18 @@
 # Releasing Skipper
 
-Skipper publishes `com.airbnb.skipper:skipper-core` to Artifactory. Releases are currently
-cut by hand, following the steps below.
+Skipper publishes `com.airbnb.skipper:skipper-core` to Artifactory.
+
+Publishing is **manual**, run from a machine with network access to that repository. It is
+not done from CI, which cannot reach it.
+
+There are two publishing modes, and most of the time you want the first:
+
+- **Every commit** on `main` publishes an immutable artifact versioned
+  `0.<minor>.<commit count>`. Nobody chooses a version. This is what lets a consumer
+  track "whatever is newest" without anyone bumping anything.
+- **Tagged releases** publish a semantic version for a milestone worth naming.
+
+Both are the same publication to the same repository; only the version differs.
 
 ## One-time setup
 
@@ -49,19 +60,40 @@ minor release.
 ```bash
 scripts/next-version.sh             # the next release version; exits 3 if nothing releasable landed
 scripts/next-version.sh --snapshot  # always prints a version, treating "nothing" as a patch
+scripts/next-version.sh --build     # a unique, monotonic version for THIS commit; never fails
 ```
+
+`--build` is the one used for per-commit publishing. It ignores commit prefixes entirely and
+prints `0.<minor>.<commit count>`: monotonic and unique because `main` is linear under squash
+merges, and correctly ordered because Maven compares each component numerically (`0.1.11` is
+newer than `0.1.9`). Tagging `v0.2.0` moves the whole series to `0.2.<count>`. It carries no
+semantic meaning by design — it is a build number, not a release.
 
 Every publish task takes its version as `-PVERSION_NAME`. A build given no version falls
 back to a `0.0.0-LOCAL` sentinel that the publish tasks refuse to upload to a shared
 repository, so a local experiment cannot become a release by accident.
 
-## Publishing a snapshot
-
-Snapshots are cheap and prunable, so publish them freely from `main`:
+## Publishing a build (every commit)
 
 ```bash
-./gradlew publishAllPublicationsToArtifactoryRepository -PVERSION_NAME="$(scripts/next-version.sh --snapshot)-SNAPSHOT"
+./gradlew publishAllPublicationsToArtifactoryRepository -PVERSION_NAME="$(scripts/next-version.sh --build)"
 ```
+
+This goes to the **release** repository, not snapshots, which is deliberate. A consumer with
+a pinned lockfile — Bazel, for instance — needs artifacts that are immutable and never
+pruned. A snapshot is neither: pinning one silently freezes the consumer on a single
+arbitrary timestamped build, until it is pruned out from under them. The cost of using real
+versions is that every merge leaves a permanent artifact, roughly 1 MB of jar plus sources.
+
+Consumers discover the newest version from the repository itself, so nothing needs to tell
+them what was published:
+
+```bash
+curl -s "$REPO/com/airbnb/skipper/skipper-core/maven-metadata.xml" | grep '<latest>'
+```
+
+Snapshots remain available (`--snapshot`, with a `-SNAPSHOT` suffix, which routes to the
+snapshot repository) for consumers that genuinely want a moving target.
 
 ## Publishing a release
 
