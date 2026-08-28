@@ -1,0 +1,321 @@
+<!DOCTYPE html><html lang="en"> <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="Astro v5.18.2"><title>Evolution — Skipper Docs</title><meta name="description" content="Safely change a state machine that already has live, in-flight instances — what is safe, what needs care, and what is breaking."><meta property="og:title" content="Evolution — Skipper Docs"><meta property="og:description" content="Safely change a state machine that already has live, in-flight instances — what is safe, what needs care, and what is breaking."><meta property="og:type" content="website"><link rel="icon" href="/skipper/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/skipper/_astro/_slug_.68Z633Hi.css"></head> <body> <header class="nav nav--solid" id="site-nav" data-hero="false"> <div class="container nav__inner"> <a class="nav__brand" href="/skipper/" aria-label="Skipper home"> <img class="nav__mark nav__mark--light" src="/skipper/brand/skipper-mark-white.svg" alt="" aria-hidden="true"> <img class="nav__mark nav__mark--dark" src="/skipper/brand/skipper-mark-color.svg" alt="" aria-hidden="true"> <svg class="nav__wordmark" viewBox="151 47 151 42" fill="currentColor" role="img" aria-label="Skipper" xmlns="http://www.w3.org/2000/svg"> <path d="M163.9,80.29c-1.81,0-3.47-.32-4.98-.95-1.51-.64-2.8-1.54-3.86-2.71-1.06-1.17-1.79-2.58-2.18-4.22l5.89-1.27c.37,1.16,1.01,2.06,1.93,2.71.92.65,2.01.97,3.29.97.9,0,1.7-.16,2.4-.49.69-.32,1.23-.77,1.61-1.34.38-.57.57-1.21.57-1.95,0-.93-.35-1.69-1.06-2.27-.71-.58-1.85-1.05-3.43-1.42l-1.36-.3c-3.11-.68-5.4-1.77-6.87-3.29-1.47-1.51-2.21-3.36-2.21-5.53,0-1.36.27-2.6.8-3.73s1.28-2.11,2.23-2.95,2.06-1.48,3.33-1.95c1.27-.47,2.64-.7,4.11-.7,1.67,0,3.22.31,4.67.93,1.44.62,2.66,1.51,3.65,2.67s1.65,2.53,1.99,4.11l-5.81,1.27c-.34-1.13-.93-2-1.76-2.61-.83-.61-1.8-.91-2.9-.91-.76,0-1.45.15-2.06.45-.61.3-1.09.71-1.44,1.23-.35.52-.53,1.11-.53,1.76,0,.99.38,1.75,1.14,2.27.76.52,1.89.95,3.39,1.29l1.36.3c3.08.68,5.37,1.75,6.85,3.22,1.48,1.47,2.23,3.35,2.23,5.64,0,1.44-.28,2.76-.83,3.94s-1.32,2.22-2.31,3.1c-.99.88-2.15,1.55-3.48,2.01-1.33.47-2.79.7-4.37.7Z"></path> <path d="M177.47,79.66v-31.64h5.81v18.36l8.31-9.12h6.96l-9.33,9.92,10.35,12.47h-7.51l-8.78-11.15v11.15h-5.81Z"></path> <path d="M207.41,51.2c0,.65-.15,1.23-.45,1.74s-.71.91-1.23,1.21-1.1.45-1.72.45-1.2-.15-1.72-.45c-.52-.3-.93-.7-1.23-1.21s-.45-1.09-.45-1.74.15-1.23.45-1.74c.3-.51.71-.91,1.23-1.21.52-.3,1.09-.45,1.72-.45s1.19.15,1.72.45.93.7,1.23,1.21c.3.51.45,1.09.45,1.74ZM201.05,79.66v-22.39h5.94v22.39h-5.94Z"></path> <path d="M210.68,87.89v-30.62h5.47l.17,3.26c.76-1.21,1.78-2.17,3.05-2.86,1.27-.69,2.67-1.04,4.2-1.04s2.83.3,4.07.89,2.33,1.42,3.27,2.48c.93,1.06,1.66,2.3,2.18,3.71.52,1.41.79,2.96.79,4.62s-.27,3.27-.81,4.71c-.54,1.44-1.29,2.71-2.25,3.79-.96,1.09-2.09,1.94-3.39,2.54-1.3.61-2.7.91-4.2.91-1.38,0-2.64-.28-3.77-.83-1.13-.55-2.08-1.32-2.84-2.31v10.73h-5.94ZM222.17,74.95c1.07,0,2.04-.28,2.88-.85.85-.57,1.52-1.34,2.01-2.31.49-.98.74-2.08.74-3.33s-.25-2.35-.74-3.33-1.17-1.75-2.01-2.31c-.85-.57-1.81-.85-2.88-.85s-2.04.28-2.88.85c-.85.57-1.52,1.34-2.01,2.31-.5.98-.74,2.08-.74,3.33s.25,2.35.74,3.33c.49.97,1.17,1.75,2.01,2.31.85.57,1.81.85,2.88.85Z"></path> <path d="M236.72,87.89v-30.62h5.47l.17,3.26c.76-1.21,1.78-2.17,3.05-2.86,1.27-.69,2.67-1.04,4.2-1.04s2.83.3,4.07.89c1.24.59,2.33,1.42,3.27,2.48.93,1.06,1.66,2.3,2.18,3.71.52,1.41.78,2.96.78,4.62s-.27,3.27-.8,4.71c-.54,1.44-1.29,2.71-2.25,3.79-.96,1.09-2.09,1.94-3.39,2.54-1.3.61-2.7.91-4.2.91-1.39,0-2.64-.28-3.77-.83-1.13-.55-2.08-1.32-2.84-2.31v10.73h-5.94ZM248.21,74.95c1.07,0,2.04-.28,2.88-.85.85-.57,1.52-1.34,2.01-2.31.49-.98.74-2.08.74-3.33s-.25-2.35-.74-3.33c-.5-.98-1.17-1.75-2.01-2.31-.85-.57-1.81-.85-2.88-.85s-2.04.28-2.88.85c-.85.57-1.52,1.34-2.01,2.31-.5.98-.74,2.08-.74,3.33s.25,2.35.74,3.33c.49.97,1.17,1.75,2.01,2.31.85.57,1.81.85,2.88.85Z"></path> <path d="M273.57,80.29c-1.67,0-3.2-.29-4.6-.87s-2.61-1.4-3.63-2.46c-1.02-1.06-1.81-2.32-2.38-3.77s-.85-3.05-.85-4.77.28-3.22.85-4.66c.57-1.44,1.35-2.69,2.35-3.75,1-1.06,2.18-1.89,3.54-2.48s2.83-.89,4.41-.89,3.13.28,4.47.85c1.34.57,2.49,1.37,3.46,2.42.96,1.05,1.7,2.29,2.23,3.73.52,1.44.79,3.05.79,4.83v1.48h-16.07c.25,1.67.86,2.98,1.82,3.92.96.95,2.18,1.42,3.65,1.42,1.02,0,1.94-.24,2.78-.72s1.52-1.17,2.06-2.08l5.3,1.7c-.51,1.27-1.27,2.36-2.29,3.27-1.02.91-2.21,1.6-3.56,2.1s-2.8.74-4.33.74ZM273.27,61.21c-1.3,0-2.4.42-3.29,1.27-.89.85-1.48,2.01-1.76,3.48h9.88c-.23-1.47-.77-2.63-1.63-3.48-.86-.85-1.93-1.27-3.2-1.27Z"></path> <path d="M286.84,79.66v-22.39h5.47l.21,3.39c.56-1.19,1.33-2.1,2.29-2.74.96-.64,2.09-.95,3.39-.95.4,0,.79.04,1.19.11.39.07.75.16,1.06.28l-.64,5.85c-.31-.11-.63-.19-.95-.23-.33-.04-.66-.06-1-.06-1.64,0-2.9.5-3.77,1.51-.88,1-1.31,2.42-1.31,4.26v10.98h-5.94Z"></path> </svg> </a> <nav class="nav__links" aria-label="Primary"> <a href="/skipper/docs/">Docs</a><a href="/skipper/examples/">Examples</a><a href="/skipper/community/">Community</a> </nav> <div class="nav__cta"> <a class="btn btn--ghost" href="/skipper/docs/">Get Started</a> <a class="btn btn--primary" href="https://github.com/" aria-label="GitHub repository"> <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.3 4.3 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.3 2.6 5.3 2.9 5.3 2.9a4.3 4.3 0 0 0-.1 3.2A4.6 4.6 0 0 0 3.9 9.3c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg> GitHub
+</a> </div> </div> </header> <script type="module">const e=document.getElementById("site-nav");if(e&&e.dataset.hero==="true"){const t=()=>e.classList.toggle("nav--scrolled",window.scrollY>8);t(),window.addEventListener("scroll",t,{passive:!0})}</script> <main>  <div class="docs"> <aside class="docs__sidebar"> <div class="docs-search"> <input type="search" class="docs-search__input" placeholder="Search docs…" aria-label="Search the documentation" autocomplete="off" spellcheck="false"> <div class="docs-search__results" hidden></div> </div> <nav class="docs__nav" aria-label="Documentation"> <div class="docs__group"> <h4>Getting Started</h4> <ul> <li> <a href="/skipper/docs/" class>Introduction</a> </li><li> <a href="/skipper/docs/quickstart/" class>Quickstart</a> </li><li> <a href="/skipper/docs/core-concepts/" class>Core Concepts</a> </li><li> <a href="/skipper/docs/first-workflow/" class>Your First Workflow</a> </li> </ul> </div><div class="docs__group"> <h4>Guides</h4> <ul> <li> <a href="/skipper/docs/invoking-workflows/" class>Invoking Workflows</a> </li><li> <a href="/skipper/docs/workflow-api/" class>Workflow API</a> </li><li> <a href="/skipper/docs/signals-and-queries/" class>Signals &amp; Queries</a> </li><li> <a href="/skipper/docs/error-handling/" class>Error Handling &amp; Retries</a> </li><li> <a href="/skipper/docs/compensation/" class>Compensation (Saga)</a> </li><li> <a href="/skipper/docs/versioning/" class>Versioning &amp; Evolution</a> </li><li> <a href="/skipper/docs/instance-management/" class>Instance Management</a> </li><li> <a href="/skipper/docs/kotlin-coroutines/" class>Kotlin Coroutines</a> </li><li> <a href="/skipper/docs/storage/" class>Storage Backends</a> </li><li> <a href="/skipper/docs/testing/" class>Testing</a> </li><li> <a href="/skipper/docs/observability/" class>Observability &amp; Admin UI</a> </li><li> <a href="/skipper/docs/troubleshooting/" class>Troubleshooting</a> </li> </ul> </div><div class="docs__group"> <h4>State Machine</h4> <ul> <li> <a href="/skipper/docs/state-machine/overview/" class>Overview</a> </li><li> <a href="/skipper/docs/state-machine/first-state-machine/" class>Your First State Machine</a> </li><li> <a href="/skipper/docs/state-machine/dsl-reference/" class>DSL Reference</a> </li><li> <a href="/skipper/docs/state-machine/persistence/" class>Persistence &amp; Replay</a> </li><li> <a href="/skipper/docs/state-machine/middleware/" class>Middleware</a> </li><li> <a href="/skipper/docs/state-machine/admin-ui/" class>Admin UI</a> </li><li> <a href="/skipper/docs/state-machine/evolution/" class="is-active">Evolution</a> </li> </ul> </div><div class="docs__group"> <h4>Reference</h4> <ul> <li> <a href="/skipper/docs/reference/annotations/" class>Annotations</a> </li><li> <a href="/skipper/docs/reference/core-types/" class>Core types</a> </li><li> <a href="/skipper/docs/reference/errors/" class>Errors &amp; retries</a> </li><li> <a href="/skipper/docs/reference/configuration/" class>Configuration</a> </li> </ul> </div> </nav> </aside> <article class="docs__main"> <div class="breadcrumb"> <a href="/skipper/">Home</a> / <a href="/skipper/docs/">Docs</a> / Evolution </div> <h1 class="docs__title">Evolution</h1> <p class="docs__lede">Safely change a state machine that already has live, in-flight instances — what is safe, what needs care, and what is breaking.</p> <div class="prose">  <p>This page is about changing a state machine <strong>that already has live in-flight instances</strong>. A
+state machine is a durable Skipper workflow: instances can live for days or weeks, and the event
+loop replays each one from its initial state on every execution. So an edit you make today runs
+against instances that were <em>started by yesterday’s code</em>. Some edits are safe; a few will corrupt
+or wedge in-flight instances if you make them naively.</p>
+<p>The guiding design principle: <strong>the DSL stays simple, and is smart internally.</strong> It derives stable
+identities for your states, timers, and events from what you already wrote — you do not annotate or
+name anything for the common cases. Where an edit is genuinely ambiguous (a rename, or “new
+instances should behave differently from in-flight ones”), there is a small, explicit escape hatch.</p>
+<p>If you have not read <a href="/skipper/docs/state-machine/persistence/">Persistence &#x26; Replay</a>, read it first — this
+page assumes you know that handler bodies re-run on every replay and only Action/<code>checkpoint{}</code>
+calls inside them are durable.</p>
+<h2 id="tldr--what-you-can-change-freely">TL;DR — what you can change freely</h2>
+<ul>
+<li><strong>Add a state.</strong> Safe. It is inert until something transitions into it.</li>
+<li><strong>Add / remove / reorder <code>on&#x3C;E></code> handlers</strong> for <em>distinct</em> event types. Safe — dispatch is by
+event class, not position.</li>
+<li><strong>Append an <code>after()</code> hook after the existing <code>after()</code> hooks and before <code>timeout()</code>, remove the
+last <code>after()</code> hook, or change an <code>after()</code>/<code>timeout()</code> duration without changing relative timer
+order.</strong> Safe — firing identity is the hook’s declaration ordinal or explicit id, and validation
+requires <code>after()</code> declarations to stay before <code>timeout()</code> and in increasing duration order. See
+<a href="#changing-a-timer-duration-the-1d7d-case">Changing a timer duration</a>.</li>
+<li><strong>Edit a hook body</strong> — change the orchestration Kotlin freely. Keep it deterministic, and name
+Action calls you expect to add/remove/reorder later (see <a href="#editing-a-hook-body">Editing a hook body</a>).</li>
+<li><strong>Add a nullable / primitive <code>@StateField</code>; remove any <code>@StateField</code>.</strong> Safe — Skipper’s lenient
+deserialization handles both.</li>
+</ul>
+<h2 id="what-needs-care-or-an-explicit-choice">What needs care or an explicit choice</h2>
+<ul>
+<li><strong>Behavior that must differ for new vs. in-flight instances</strong> → gate it with
+<a href="#branching-behavior-across-deploys-version"><code>version()</code></a>.</li>
+<li><strong>The <em>shape</em> of <code>define()</code> differing for new vs. in-flight instances</strong> → branch on an immutable
+<a href="#branching-shape-across-deploys-input"><code>Input</code></a> field.</li>
+<li><strong>Renaming a state or event</strong> → add a <a href="#renaming-a-state-or-an-event">migration entry</a>; a rename
+is otherwise breaking.</li>
+</ul>
+<h2 id="what-is-still-irreducibly-breaking">What is still irreducibly breaking</h2>
+<p>These have no safe in-place edit. Use the copy/migrate fallback: introduce a new machine class, route
+<strong>new</strong> instances to it behind a feature flag, let in-flight instances drain on the old class, then
+retire it.</p>
+<ul>
+<li><strong>Removing a state that in-flight instances occupy or auto-transition into.</strong> The loop reconstructs
+that state on replay and fails with “No definition for state …”. You cannot define behavior for a
+state you deleted.</li>
+<li><strong>Changing a <code>@StateField</code>’s type</strong> (e.g. <code>String</code> → <code>Long</code>). Deserialization fails. Soften with a
+dual-field migration (add a new nullable field, dual-read, drain, drop the old).</li>
+<li><strong>Changing the workflow <code>Input</code> or return type, or renaming the machine class / <code>execute</code>.</strong> These
+are Skipper-level breaks the DSL inherits.</li>
+</ul>
+<h2 id="breaking-changes-matrix">Breaking-changes matrix</h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Change</th><th>Safe?</th><th>What you do</th></tr></thead><tbody><tr><td>Add a <code>state(NEW){}</code></td><td>✅</td><td>Nothing. Gate any <code>transitionTo(NEW)</code> you add to <em>existing</em> handlers with <code>version()</code> if in-flight instances should not route there.</td></tr><tr><td>Reorder <code>on&#x3C;E></code> handlers (distinct event types)</td><td>✅</td><td>Nothing.</td></tr><tr><td>Add <code>on&#x3C;E></code> for a type already present in live event logs</td><td>⚠️</td><td>Replayed historical events of that type would newly be handled — gate the effect with <code>version()</code>.</td></tr><tr><td>Remove <code>on&#x3C;E></code> whose type is in live logs</td><td>⚠️</td><td>Neuter behind <code>version()</code>, drain, then delete.</td></tr><tr><td>Append or remove an <code>after()</code> at the end of a live state’s hook list</td><td>✅</td><td>Put appended hooks after existing <code>after()</code> hooks and before <code>timeout()</code>. Keep the appended hook’s duration greater than the previous <code>after()</code> duration and less than <code>timeout</code>. Firing identity is the hook’s declaration ordinal unless an explicit id is provided.</td></tr><tr><td>Change an <code>after()</code>/<code>timeout()</code> duration without changing relative timer order</td><td>✅</td><td>Nothing. Not-yet-fired hooks fire on the recomputed deadline; already-fired hooks do not re-fire.</td></tr><tr><td>Change an <code>after()</code> duration so declaration order is no longer increasing by duration</td><td>❌</td><td>Validation rejects the definition. Named journal checkpoints keep framework records stable but do not bypass the DSL ordering contract. Drive the duration from <code>Input</code>, split behavior with <code>version()</code>, or add a new hook in the correct position and drain old instances first. See <a href="#changing-a-timer-duration-the-1d7d-case">Changing a timer duration</a>.</td></tr><tr><td>Insert an <code>after()</code> <em>before</em> an existing one, or reorder declarations, on a live state</td><td>⚠️</td><td>Keep hooks before <code>timeout()</code> and in increasing duration order. Explicit ids can preserve hook identity and framework journal identity, but Action checkpoints inside affected hook bodies are still positional unless those Action calls are named. Prefer appending, <code>version()</code>/<code>Input</code>, or draining old instances.</td></tr><tr><td>Edit a hook body — orchestration Kotlin only</td><td>✅</td><td>Keep it deterministic &#x26; replay-idempotent.</td></tr><tr><td>Edit a hook body — add/remove/reorder Action calls</td><td>✅*</td><td>Name the Action calls with <code>actions.named("…")</code> so identity survives the edit.</td></tr><tr><td>Add nullable / primitive <code>@StateField</code></td><td>✅</td><td>Nothing.</td></tr><tr><td>Remove a <code>@StateField</code></td><td>✅</td><td>Nothing.</td></tr><tr><td>Add a non-null reference <code>@StateField</code></td><td>⚠️</td><td>Make it nullable or lazy-init — the initializer is lost on deserialization for in-flight instances.</td></tr><tr><td>Change a <code>@StateField</code>’s type</td><td>❌</td><td>Dual-field migration.</td></tr><tr><td>Add a new event type to the sealed hierarchy</td><td>✅</td><td>Nothing (it is simply absent from old logs).</td></tr><tr><td>Rename a state enum constant</td><td>✅†</td><td>Add a <code>stateNameMigrations</code> entry.</td></tr><tr><td>Rename an event class</td><td>✅†</td><td>Add <code>@EventAlias</code> / an <code>eventAliasMigrations</code> entry.</td></tr><tr><td>Move an event class to another package</td><td>✅</td><td>Nothing (alias is the simple class name).</td></tr><tr><td>Remove a state an instance occupies</td><td>❌</td><td>Copy/migrate.</td></tr><tr><td>Behavior differs new-vs-in-flight</td><td>✅</td><td><code>version()</code> in a handler body.</td></tr><tr><td><code>define()</code> <em>shape</em> differs new-vs-in-flight</td><td>✅</td><td>Branch on an immutable <code>Input</code> field.</td></tr></tbody></table>
+<p>* requires named Action calls (see <a href="#editing-a-hook-body">Editing a hook body</a>).
+† requires the rename-migration entry (see <a href="#renaming-a-state-or-an-event">Renaming a state or an event</a>).</p>
+<h2 id="changing-a-timer-duration-the-1d7d-case">Changing a timer duration (the 1d→7d case)</h2>
+<p>Say a state has <code>after(Duration.ofDays(1)) { … sendReminder() }</code> and you change it to
+<code>Duration.ofDays(7)</code>. There are two cohorts of live instances:</p>
+<ul>
+<li><strong>Already fired</strong> (in the state more than a day): the reminder already went out.</li>
+<li><strong>Not yet fired</strong> (in the state less than a day).</li>
+</ul>
+<p>The DSL identifies each after-hook by its <strong>declaration ordinal within the state</strong> unless you provide
+an explicit id. Fresh execution wakes hooks by deadline, while replay can see several past deadlines
+at once and chooses among them by declaration ordinal. For those orders to match, validation requires
+<code>after()</code> declarations to be in strictly increasing duration order.</p>
+<p>Whether a duration change is in-flight-safe depends on whether it preserves that order:</p>
+<ul>
+<li><strong>Changing a duration without crossing another hook:</strong> safe. Already-fired instances do not re-fire
+(the firing is suppressed by its hook id); not-yet-fired instances fire once at the recomputed
+deadline.</li>
+<li><strong>Changing a duration so the declaration order is no longer increasing:</strong> rejected by validation.
+Named journal checkpoints keep the framework/admin records stable, but they do not bypass this
+startup validation. Do not fix the validation failure by simply reordering existing hooks in a live
+state: explicit ids can preserve hook identity, but Action checkpoints inside hook bodies are still
+positional unless those Action calls are named. Treat this as a behavioral change and gate it
+(below), drive the duration from <code>Input</code>, or add a new hook and let old instances drain.</li>
+</ul>
+<p>What you <strong>cannot</strong> express by editing the duration: “re-fire for instances that already fired.” A
+duration edit never resurrects an already-fired hook; if you need a fresh firing, add a <em>new</em> hook
+(it gets a new ordinal).</p>
+<p>To make any duration change a clean <strong>cohort split</strong> — in-flight instances keep the old schedule,
+new instances get the new one, nobody double-fires or mis-replays — treat it as a behavioral change:
+drive the duration from an immutable <code>Input</code> field (durations are a build-time argument, so you
+cannot gate the literal inside the body), or gate the surrounding behavior with <code>version()</code>:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">data</span><span style="color:#F97583"> class</span><span style="color:#B392F0"> Input</span><span style="color:#E1E4E8">(</span><span style="color:#F97583">val</span><span style="color:#E1E4E8"> ticketId: </span><span style="color:#B392F0">Long</span><span style="color:#E1E4E8">, </span><span style="color:#F97583">val</span><span style="color:#E1E4E8"> reporterId: </span><span style="color:#B392F0">Long</span><span style="color:#E1E4E8">, </span><span style="color:#F97583">val</span><span style="color:#E1E4E8"> reminderDays: </span><span style="color:#B392F0">Long</span><span style="color:#F97583"> =</span><span style="color:#79B8FF"> 1</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#6A737D">// new starters pass reminderDays = 7; in-flight instances keep the value they were started with</span></span>
+<span class="line"><span style="color:#B392F0">state</span><span style="color:#E1E4E8">(OPEN) {</span></span>
+<span class="line"><span style="color:#B392F0">    after</span><span style="color:#E1E4E8">(Duration.</span><span style="color:#B392F0">ofDays</span><span style="color:#E1E4E8">(input.reminderDays)) { input </span><span style="color:#F97583">-></span><span style="color:#E1E4E8"> actions.</span><span style="color:#B392F0">sendReminder</span><span style="color:#E1E4E8">(input.reporterId) }</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>(An <code>after()</code> duration is read once at build time, so an input-derived <code>after</code> like the above is
+fixed for the instance’s life. A <code>timeout()</code> can also take an input-computed duration that is
+re-evaluated per entry — see below.)</p>
+<h2 id="timeouts-whose-duration-varies-per-entry-timeout-input---">Timeouts whose duration varies per entry (<code>timeout({ input -> … })</code>)</h2>
+<p>A fixed <code>timeout(Duration)</code> captures its duration once when the machine is built and reuses it for
+every entry into that state. For a looping state whose wait differs per iteration — e.g. a single
+<code>EXECUTE_STEP</code> state that runs a DB-defined sequence with a different delay before each step — use the
+input-computed overload <code>timeout({ input -> … })</code>. It is re-evaluated each time the event loop
+computes the state’s deadline, so each re-entry can use a different duration:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">data</span><span style="color:#F97583"> class</span><span style="color:#B392F0"> Input</span><span style="color:#E1E4E8">(</span><span style="color:#F97583">val</span><span style="color:#E1E4E8"> steps: </span><span style="color:#B392F0">List</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">StepDef</span><span style="color:#E1E4E8">>)   </span><span style="color:#6A737D">// pinned at enrollment</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#B392F0">state</span><span style="color:#E1E4E8">(WorkflowState.EXECUTE_STEP) {</span></span>
+<span class="line"><span style="color:#B392F0">    timeout</span><span style="color:#E1E4E8">({ input </span><span style="color:#F97583">-></span><span style="color:#E1E4E8"> input.steps[currentStepIndex].waitDuration }) { input </span><span style="color:#F97583">-></span></span>
+<span class="line"><span style="color:#B392F0">        runStep</span><span style="color:#E1E4E8">(input.steps[currentStepIndex])</span></span>
+<span class="line"><span style="color:#F97583">        if</span><span style="color:#E1E4E8"> (currentStepIndex </span><span style="color:#F97583">>=</span><span style="color:#E1E4E8"> input.steps.lastIndex) </span><span style="color:#B392F0">transitionTo</span><span style="color:#E1E4E8">(WorkflowState.DONE) </span><span style="color:#F97583">else</span><span style="color:#B392F0"> stay</span><span style="color:#E1E4E8">()</span></span>
+<span class="line"><span style="color:#E1E4E8">    }</span></span>
+<span class="line"><span style="color:#B392F0">    onExit</span><span style="color:#E1E4E8"> { currentStepIndex</span><span style="color:#F97583">++</span><span style="color:#E1E4E8"> }   </span><span style="color:#6A737D">// local var rebuilt from the event log</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>This is replay-safe <strong>only</strong> because the deadline is <code>state-entry-time + durationFn(input)</code>, the entry
+time is durable, and <code>durationFn</code> reads only the immutable input and the replay-deterministic
+<code>currentStepIndex</code>. The lambda must not read the clock, an Action result, or external mutable state —
+a non-deterministic duration would make the timer fire at a different point on replay. See the
+<a href="/skipper/docs/state-machine/dsl-reference/">DSL Reference</a> for the full contract and limitations (notably:
+the <code>after &#x3C; timeout</code> check and the admin pending-deadline view can’t see a dynamic duration without
+the input).</p>
+<h2 id="branching-behavior-across-deploys-version">Branching behavior across deploys (<code>version()</code>)</h2>
+<p><code>version(changeId, minVersion, maxVersion)</code> (from Skipper’s <code>Workflow</code>) returns the active version
+for a logical change. On an instance’s <strong>first execution</strong> it returns <code>maxVersion</code> and persists it;
+on <strong>replay</strong> it returns the persisted value — so an instance keeps the behavior it was created with,
+even after you bump <code>maxVersion</code> in a later deploy.</p>
+<p><strong>Call <code>version()</code> inside a handler/hook body</strong> (<code>on</code>, <code>after</code>, <code>timeout</code>, <code>onEntry</code>, <code>onExit</code>).
+Those bodies run only while the workflow is executing, which is where version gates work. <strong>Do not
+call <code>version()</code> in the structural body of <code>define()</code></strong> — <code>define()</code> also runs in query contexts
+(<code>getAdminSnapshot</code>, <code>isTerminal</code>) with no checkpoint engine.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">timeout</span><span style="color:#E1E4E8">(INACTIVITY_TIMEOUT) {</span></span>
+<span class="line"><span style="color:#6A737D">    // In-flight instances persisted version 1 and keep going to EXPIRED;</span></span>
+<span class="line"><span style="color:#6A737D">    // instances created after this deploy persist 2 and go to STALE.</span></span>
+<span class="line"><span style="color:#F97583">    if</span><span style="color:#E1E4E8"> (</span><span style="color:#B392F0">version</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"inactivity-target-v2"</span><span style="color:#E1E4E8">, minVersion </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 1</span><span style="color:#E1E4E8">, maxVersion </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 2</span><span style="color:#E1E4E8">) </span><span style="color:#F97583">>=</span><span style="color:#79B8FF"> 2</span><span style="color:#E1E4E8">) {</span></span>
+<span class="line"><span style="color:#B392F0">        transitionTo</span><span style="color:#E1E4E8">(STALE)   </span><span style="color:#6A737D">// STALE must be added unconditionally; only new instances reach it</span></span>
+<span class="line"><span style="color:#E1E4E8">    } </span><span style="color:#F97583">else</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#B392F0">        transitionTo</span><span style="color:#E1E4E8">(EXPIRED)</span></span>
+<span class="line"><span style="color:#E1E4E8">    }</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>Lifecycle (mirrors the <a href="/skipper/docs/versioning/">Skipper versioning guide</a>):
+deploy 1 introduces the gate at <code>maxVersion = 1</code>; deploy 2 bumps to <code>2</code> and adds the new branch;
+once all v1 instances drain, raise <code>minVersion</code> to <code>2</code> and delete the old branch.</p>
+<h3 id="guards-can-use-version-too--to-reject-events-by-version">Guards can use <code>version()</code> too — to reject events by version</h3>
+<p>The guarded form <code>on&#x3C;E>(guard = …, handler = …)</code> runs its guard inside the event loop, so the guard
+can call <code>version()</code>. This is a clean way to make an event apply only to instances of a new version —
+in-flight instances simply ignore it:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">on</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">NewKindOfEvent</span><span style="color:#E1E4E8">>(</span></span>
+<span class="line"><span style="color:#6A737D">    // Old-version instances reject this event (it is ignored with GUARD_REJECTED);</span></span>
+<span class="line"><span style="color:#6A737D">    // only instances created after the gate bump act on it.</span></span>
+<span class="line"><span style="color:#E1E4E8">    guard </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> { _, _ </span><span style="color:#F97583">-></span><span style="color:#B392F0"> version</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"handle-new-event"</span><span style="color:#E1E4E8">, minVersion </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 1</span><span style="color:#E1E4E8">, maxVersion </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 2</span><span style="color:#E1E4E8">) </span><span style="color:#F97583">>=</span><span style="color:#79B8FF"> 2</span><span style="color:#E1E4E8"> },</span></span>
+<span class="line"><span style="color:#E1E4E8">    handler </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> { event, input </span><span style="color:#F97583">-></span></span>
+<span class="line"><span style="color:#E1E4E8">        actions.</span><span style="color:#B392F0">handleNewThing</span><span style="color:#E1E4E8">(input.id)</span></span>
+<span class="line"><span style="color:#B392F0">        transitionTo</span><span style="color:#E1E4E8">(NEXT)</span></span>
+<span class="line"><span style="color:#E1E4E8">    },</span></span>
+<span class="line"><span style="color:#E1E4E8">)</span></span></code></pre>
+<p><code>version()</code> is idempotent by <code>changeId</code> — it is the named checkpoint <code>"version:{changeId}"</code>, written
+once and replayed thereafter — so calling it from a guard that fires on many events is safe and
+stable.</p>
+<h2 id="branching-shape-across-deploys-input">Branching shape across deploys (<code>Input</code>)</h2>
+<p>To change the <em>set</em> of states or hooks you declare for new instances only, branch <code>define()</code> on an
+immutable <code>Input</code> field. Because the input is fixed for an instance’s life and identical on every
+replay, this is replay-stable with no checkpoint:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">data</span><span style="color:#F97583"> class</span><span style="color:#B392F0"> Input</span><span style="color:#E1E4E8">(</span><span style="color:#F97583">val</span><span style="color:#E1E4E8"> ticketId: </span><span style="color:#B392F0">Long</span><span style="color:#E1E4E8">, </span><span style="color:#F97583">val</span><span style="color:#E1E4E8"> schemaVersion: </span><span style="color:#B392F0">Int</span><span style="color:#F97583"> =</span><span style="color:#79B8FF"> 1</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">override</span><span style="color:#F97583"> fun</span><span style="color:#B392F0"> StateMachineBuilder</span><span style="color:#F97583">&#x3C;</span><span style="color:#E1E4E8">S, E, Input</span><span style="color:#F97583">></span><span style="color:#E1E4E8">.</span><span style="color:#B392F0">define</span><span style="color:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#B392F0">    state</span><span style="color:#E1E4E8">(OPEN) { </span><span style="color:#B392F0">handleOpen</span><span style="color:#E1E4E8">() }</span></span>
+<span class="line"><span style="color:#F97583">    if</span><span style="color:#E1E4E8"> (input.schemaVersion </span><span style="color:#F97583">>=</span><span style="color:#79B8FF"> 2</span><span style="color:#E1E4E8">) </span><span style="color:#B392F0">state</span><span style="color:#E1E4E8">(REVIEW) { </span><span style="color:#B392F0">handleReview</span><span style="color:#E1E4E8">() }   </span><span style="color:#6A737D">// only new instances</span></span>
+<span class="line"><span style="color:#B392F0">    state</span><span style="color:#E1E4E8">(DONE) { </span><span style="color:#B392F0">terminal</span><span style="color:#E1E4E8">() }</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>New starters pass <code>schemaVersion = 2</code>; in-flight instances were started with <code>1</code> and keep the old
+shape. Always ship the new states/hooks <em>before</em> you start flipping new instances to the new value,
+so any code an in-flight replay might touch already exists.</p>
+<h2 id="editing-a-hook-body">Editing a hook body</h2>
+<p>A hook body re-runs on every replay; only the Action and <code>checkpoint{}</code> calls inside it are durable.
+By default those calls are matched <strong>positionally</strong> by Skipper, so adding, removing, or reordering a
+call to a method already used in the same workflow can shift identities and break replay for
+in-flight instances.</p>
+<p>To edit hook bodies freely, <strong>name the Action calls</strong> you expect to change:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">onEntry</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#E1E4E8">    messageThreadId </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> actions.</span><span style="color:#B392F0">named</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"create-thread"</span><span style="color:#E1E4E8">).</span><span style="color:#B392F0">createMessageThread</span><span style="color:#E1E4E8">(</span><span style="color:#F97583">..</span><span style="color:#E1E4E8">.)</span></span>
+<span class="line"><span style="color:#E1E4E8">    actions.</span><span style="color:#B392F0">named</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"send-card"</span><span style="color:#E1E4E8">).</span><span style="color:#B392F0">sendInquiryCard</span><span style="color:#E1E4E8">(</span><span style="color:#F97583">..</span><span style="color:#E1E4E8">.)</span></span>
+<span class="line"><span style="color:#E1E4E8">    actions.</span><span style="color:#B392F0">named</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"create-lead"</span><span style="color:#E1E4E8">).</span><span style="color:#B392F0">createLead</span><span style="color:#E1E4E8">(</span><span style="color:#F97583">..</span><span style="color:#E1E4E8">.)</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>Named checkpoints are matched by name, not position, so calls that were already named before live
+instances reached them can later be inserted, removed, or reordered without disturbing those
+instances. Adding <code>actions.named("…")</code> to an existing positional call is <strong>not</strong> an in-place
+migration for instances that already checkpointed it: the named call has a new identity and will not
+match the old positional checkpoint. Introduce names before instances depend on the calls, split
+new behavior with <code>Input</code>/<code>version()</code>, or wait for positional instances to drain.</p>
+<h2 id="renaming-a-state-or-an-event">Renaming a state or an event</h2>
+<p>A rename changes the identity the DSL persisted, so an in-flight instance’s stored name no longer
+resolves. Make a rename non-breaking by registering the old name:</p>
+<p><strong>State rename</strong> — supply the old → new mapping on your state machine:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">override</span><span style="color:#F97583"> val</span><span style="color:#E1E4E8"> stateNameMigrations </span><span style="color:#F97583">=</span><span style="color:#B392F0"> mapOf</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"OPEN"</span><span style="color:#E1E4E8"> to </span><span style="color:#9ECBFF">"ACCEPTING"</span><span style="color:#E1E4E8">)</span></span></code></pre>
+<p><strong>Event rename</strong> — annotate the renamed class so it keeps its persisted alias:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">@EventAlias</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"ResponseCreated"</span><span style="color:#E1E4E8">)   </span><span style="color:#6A737D">// was the class's old simple name</span></span>
+<span class="line"><span style="color:#F97583">data</span><span style="color:#F97583"> class</span><span style="color:#B392F0"> ResponseSubmitted</span><span style="color:#E1E4E8">(</span><span style="color:#F97583">..</span><span style="color:#E1E4E8">.) : </span><span style="color:#B392F0">MyEvent</span><span style="color:#E1E4E8">()</span></span></code></pre>
+<p>An alias, once any instance has persisted it, is permanent — treat it as a wire contract. Without a
+migration entry, a rename is breaking and needs the copy/migrate fallback.</p>
+<p>Renames are reflected throughout the admin snapshot — <code>currentState</code>, <code>stateHistory</code>, and
+<code>transitionHistory</code> (each row’s <code>fromState</code>/<code>toState</code>, and an event-triggered row’s <code>triggerName</code>),
+as well as <code>eventHistory</code>’s <code>eventType</code> — all show the current name/alias, so the REST views and
+Mermaid diagrams never mix old and new identities.</p>
+<h2 id="how-this-maps-to-skipper">How this maps to Skipper</h2>
+<p>Under the hood the DSL reuses Skipper’s versioning primitives so you do not have to:</p>
+<ul>
+<li><strong>Named checkpoints</strong> back the per-state timer/after-hook identities and the named Action calls.</li>
+<li><strong>Version gates</strong> (<code>Workflow.version</code>) are exposed directly for behavioral branching.</li>
+<li><strong>Lenient <code>@StateField</code> deserialization</strong> is what makes adding/removing your subclass <code>@StateField</code>s
+safe.</li>
+</ul>
+<p>For format-level evolution (changing the compact blob the framework persists), see
+<a href="/skipper/docs/state-machine/persistence/">Persistence &#x26; Replay</a>.</p>  </div> <nav class="docs__pager" aria-label="Pagination"> <a class="docs__pager-link" href="/skipper/docs/state-machine/admin-ui/"> <span class="docs__pager-dir">← Previous</span> <span class="docs__pager-title">Admin UI</span> </a> <a class="docs__pager-link docs__pager-link--next" href="/skipper/docs/reference/annotations/"> <span class="docs__pager-dir">Next →</span> <span class="docs__pager-title">Annotations</span> </a> </nav> </article> </div>  </main> <footer class="footer"> <div class="container"> <div class="footer__grid"> <div> <div class="footer__brand"> <img class="footer__mark" src="/skipper/brand/skipper-mark-white.svg" alt="" aria-hidden="true"> <svg class="footer__wordmark" viewBox="151 47 151 42" fill="currentColor" role="img" aria-label="Skipper" xmlns="http://www.w3.org/2000/svg"> <path d="M163.9,80.29c-1.81,0-3.47-.32-4.98-.95-1.51-.64-2.8-1.54-3.86-2.71-1.06-1.17-1.79-2.58-2.18-4.22l5.89-1.27c.37,1.16,1.01,2.06,1.93,2.71.92.65,2.01.97,3.29.97.9,0,1.7-.16,2.4-.49.69-.32,1.23-.77,1.61-1.34.38-.57.57-1.21.57-1.95,0-.93-.35-1.69-1.06-2.27-.71-.58-1.85-1.05-3.43-1.42l-1.36-.3c-3.11-.68-5.4-1.77-6.87-3.29-1.47-1.51-2.21-3.36-2.21-5.53,0-1.36.27-2.6.8-3.73s1.28-2.11,2.23-2.95,2.06-1.48,3.33-1.95c1.27-.47,2.64-.7,4.11-.7,1.67,0,3.22.31,4.67.93,1.44.62,2.66,1.51,3.65,2.67s1.65,2.53,1.99,4.11l-5.81,1.27c-.34-1.13-.93-2-1.76-2.61-.83-.61-1.8-.91-2.9-.91-.76,0-1.45.15-2.06.45-.61.3-1.09.71-1.44,1.23-.35.52-.53,1.11-.53,1.76,0,.99.38,1.75,1.14,2.27.76.52,1.89.95,3.39,1.29l1.36.3c3.08.68,5.37,1.75,6.85,3.22,1.48,1.47,2.23,3.35,2.23,5.64,0,1.44-.28,2.76-.83,3.94s-1.32,2.22-2.31,3.1c-.99.88-2.15,1.55-3.48,2.01-1.33.47-2.79.7-4.37.7Z"></path> <path d="M177.47,79.66v-31.64h5.81v18.36l8.31-9.12h6.96l-9.33,9.92,10.35,12.47h-7.51l-8.78-11.15v11.15h-5.81Z"></path> <path d="M207.41,51.2c0,.65-.15,1.23-.45,1.74s-.71.91-1.23,1.21-1.1.45-1.72.45-1.2-.15-1.72-.45c-.52-.3-.93-.7-1.23-1.21s-.45-1.09-.45-1.74.15-1.23.45-1.74c.3-.51.71-.91,1.23-1.21.52-.3,1.09-.45,1.72-.45s1.19.15,1.72.45.93.7,1.23,1.21c.3.51.45,1.09.45,1.74ZM201.05,79.66v-22.39h5.94v22.39h-5.94Z"></path> <path d="M210.68,87.89v-30.62h5.47l.17,3.26c.76-1.21,1.78-2.17,3.05-2.86,1.27-.69,2.67-1.04,4.2-1.04s2.83.3,4.07.89,2.33,1.42,3.27,2.48c.93,1.06,1.66,2.3,2.18,3.71.52,1.41.79,2.96.79,4.62s-.27,3.27-.81,4.71c-.54,1.44-1.29,2.71-2.25,3.79-.96,1.09-2.09,1.94-3.39,2.54-1.3.61-2.7.91-4.2.91-1.38,0-2.64-.28-3.77-.83-1.13-.55-2.08-1.32-2.84-2.31v10.73h-5.94ZM222.17,74.95c1.07,0,2.04-.28,2.88-.85.85-.57,1.52-1.34,2.01-2.31.49-.98.74-2.08.74-3.33s-.25-2.35-.74-3.33-1.17-1.75-2.01-2.31c-.85-.57-1.81-.85-2.88-.85s-2.04.28-2.88.85c-.85.57-1.52,1.34-2.01,2.31-.5.98-.74,2.08-.74,3.33s.25,2.35.74,3.33c.49.97,1.17,1.75,2.01,2.31.85.57,1.81.85,2.88.85Z"></path> <path d="M236.72,87.89v-30.62h5.47l.17,3.26c.76-1.21,1.78-2.17,3.05-2.86,1.27-.69,2.67-1.04,4.2-1.04s2.83.3,4.07.89c1.24.59,2.33,1.42,3.27,2.48.93,1.06,1.66,2.3,2.18,3.71.52,1.41.78,2.96.78,4.62s-.27,3.27-.8,4.71c-.54,1.44-1.29,2.71-2.25,3.79-.96,1.09-2.09,1.94-3.39,2.54-1.3.61-2.7.91-4.2.91-1.39,0-2.64-.28-3.77-.83-1.13-.55-2.08-1.32-2.84-2.31v10.73h-5.94ZM248.21,74.95c1.07,0,2.04-.28,2.88-.85.85-.57,1.52-1.34,2.01-2.31.49-.98.74-2.08.74-3.33s-.25-2.35-.74-3.33c-.5-.98-1.17-1.75-2.01-2.31-.85-.57-1.81-.85-2.88-.85s-2.04.28-2.88.85c-.85.57-1.52,1.34-2.01,2.31-.5.98-.74,2.08-.74,3.33s.25,2.35.74,3.33c.49.97,1.17,1.75,2.01,2.31.85.57,1.81.85,2.88.85Z"></path> <path d="M273.57,80.29c-1.67,0-3.2-.29-4.6-.87s-2.61-1.4-3.63-2.46c-1.02-1.06-1.81-2.32-2.38-3.77s-.85-3.05-.85-4.77.28-3.22.85-4.66c.57-1.44,1.35-2.69,2.35-3.75,1-1.06,2.18-1.89,3.54-2.48s2.83-.89,4.41-.89,3.13.28,4.47.85c1.34.57,2.49,1.37,3.46,2.42.96,1.05,1.7,2.29,2.23,3.73.52,1.44.79,3.05.79,4.83v1.48h-16.07c.25,1.67.86,2.98,1.82,3.92.96.95,2.18,1.42,3.65,1.42,1.02,0,1.94-.24,2.78-.72s1.52-1.17,2.06-2.08l5.3,1.7c-.51,1.27-1.27,2.36-2.29,3.27-1.02.91-2.21,1.6-3.56,2.1s-2.8.74-4.33.74ZM273.27,61.21c-1.3,0-2.4.42-3.29,1.27-.89.85-1.48,2.01-1.76,3.48h9.88c-.23-1.47-.77-2.63-1.63-3.48-.86-.85-1.93-1.27-3.2-1.27Z"></path> <path d="M286.84,79.66v-22.39h5.47l.21,3.39c.56-1.19,1.33-2.1,2.29-2.74.96-.64,2.09-.95,3.39-.95.4,0,.79.04,1.19.11.39.07.75.16,1.06.28l-.64,5.85c-.31-.11-.63-.19-.95-.23-.33-.04-.66-.06-1-.06-1.64,0-2.9.5-3.77,1.51-.88,1-1.31,2.42-1.31,4.26v10.98h-5.94Z"></path> </svg> </div> <p class="footer__tag">A lightweight, embeddable workflow engine for durable execution on the JVM.</p> </div> <div> <h4>Docs</h4> <ul> <li><a href="/skipper/docs/">Introduction</a></li><li><a href="/skipper/docs/#quickstart">Quickstart</a></li><li><a href="/skipper/docs/#concepts">Core Concepts</a></li><li><a href="/skipper/docs/#first-workflow">Your First Workflow</a></li> </ul> </div><div> <h4>Reference</h4> <ul> <li><a href="/skipper/docs/reference/annotations/">Annotations</a></li><li><a href="/skipper/docs/reference/core-types/">Core types</a></li><li><a href="/skipper/examples/">Examples</a></li> </ul> </div><div> <h4>Community</h4> <ul> <li><a href="/skipper/community/#contributing">Contributing</a></li><li><a href="/skipper/community/#discussions">Discussions</a></li><li><a href="/skipper/community/#coc">Code of Conduct</a></li> </ul> </div><div> <h4>Project</h4> <ul> <li><a href="https://github.com/">GitHub</a></li><li><a href="/skipper/community/#license">License (Apache 2.0)</a></li><li><a href="/skipper/community/#roadmap">Roadmap</a></li> </ul> </div> </div> <div class="footer__bottom"> <span>Licensed under Apache 2.0. &copy; 2026 The Skipper Authors.</span> <span>An Airbnb Engineering open-source project.</span> </div> </div> </footer> </body></html> <script type="module">const c=document.querySelector(".docs-search__input"),o=document.querySelector(".docs-search__results");if(c&&o){let d=function(t){return t.toLowerCase().split(/\s+/).filter(Boolean)},w=function(t){const e=d(t);if(!e.length||!a)return[];const s=[];for(const n of a){let r=0,g=!0;for(const f of e){let l=0;if(n._title.includes(f)&&(l+=u.title),n._head.includes(f)&&(l+=u.heading),n._desc.includes(f)&&(l+=u.description),n._text.includes(f)&&(l+=u.text),l===0){g=!1;break}r+=l}g&&(n._title.startsWith(e[0])&&(r+=4),s.push({d:n,score:r}))}return s.sort((n,r)=>r.score-n.score),s.slice(0,8).map(n=>n.d)},h=function(t){return t.replace(/[&<>"]/g,e=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[e])},p=function(t,e){let s=h(t);for(const n of d(e)){const r=new RegExp("("+n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","ig");s=s.replace(r,"<mark>$1</mark>")}return s},x=function(t,e){const s=d(e)[0],n=t._text.indexOf(s);if(n===-1)return t.description||"";const r=Math.max(0,n-40);return(r>0?"…":"")+t.text.slice(r,r+150)},_=function(t,e){if(i=-1,!e){o.hidden=!0,o.innerHTML="";return}if(o.hidden=!1,!t.length){o.innerHTML='<div class="docs-search__empty">No results for “'+h(e)+"”</div>";return}o.innerHTML=t.map(s=>`<a class="docs-search__result" href="${s.url}"><span class="docs-search__r-title">${p(s.title,e)}</span><span class="docs-search__r-section">${h(s.section)}</span><span class="docs-search__r-snip">${p(x(s,e),e)}</span></a>`).join("")},m=function(t){t.forEach((e,s)=>e.classList.toggle("is-active",s===i)),t[i]&&t[i].scrollIntoView({block:"nearest"})};const L="/skipper/".replace(/\/$/,"")+"/search-index.json",u={title:10,heading:5,description:3,text:1};let a=null,i=-1;async function v(){if(!a)try{a=await(await fetch(L)).json(),a.forEach(e=>{e._title=e.title.toLowerCase(),e._head=(e.headings||[]).join(" ").toLowerCase(),e._desc=(e.description||"").toLowerCase(),e._text=(e.text||"").toLowerCase()})}catch{a=[]}}c.addEventListener("input",async()=>{await v(),_(w(c.value.trim()),c.value.trim())}),c.addEventListener("focus",()=>{v(),c.value.trim()&&o.innerHTML&&(o.hidden=!1)}),c.addEventListener("keydown",t=>{const e=[...o.querySelectorAll(".docs-search__result")];if(t.key==="ArrowDown")t.preventDefault(),i=Math.min(i+1,e.length-1),m(e);else if(t.key==="ArrowUp")t.preventDefault(),i=Math.max(i-1,0),m(e);else if(t.key==="Enter"){const s=i>=0?e[i]:e[0];s&&(t.preventDefault(),location.href=s.href)}else t.key==="Escape"&&(c.value="",_([],""),c.blur())}),document.addEventListener("click",t=>{t.target.closest(".docs-search")||(o.hidden=!0)}),document.addEventListener("keydown",t=>{const e=document.activeElement?.tagName;t.key==="/"&&e!=="INPUT"&&e!=="TEXTAREA"&&(t.preventDefault(),c.focus())})}</script> <script type="module">document.querySelectorAll('.prose pre[data-language="kotlin"]').forEach(a=>{const e=a.nextElementSibling;if(!e||e.tagName!=="PRE"||e.dataset.language!=="java")return;const t=document.createElement("div");t.className="langtabs",t.setAttribute("data-langtabs","");const n=document.createElement("div");n.className="langtabs__bar",n.innerHTML='<button type="button" data-lang="kotlin" class="is-active" aria-pressed="true">Kotlin</button><button type="button" data-lang="java" aria-pressed="false">Java</button>';const s=document.createElement("div");s.className="langtabs__panel",s.dataset.panel="kotlin";const l=document.createElement("div");l.className="langtabs__panel",l.dataset.panel="java",l.hidden=!0,a.before(t),s.appendChild(a),l.appendChild(e),t.append(n,s,l)});const r="skipper-lang";function d(a,e){a.querySelectorAll(".langtabs__bar button").forEach(t=>{const n=t.dataset.lang===e;t.classList.toggle("is-active",n),t.setAttribute("aria-pressed",String(n))}),a.querySelectorAll(".langtabs__panel").forEach(t=>{t.hidden=t.dataset.panel!==e})}function o(a){document.querySelectorAll("[data-langtabs]").forEach(e=>d(e,a));try{localStorage.setItem(r,a)}catch{}}let c=null;try{c=localStorage.getItem(r)}catch{}(c==="java"||c==="kotlin")&&o(c);document.querySelectorAll("[data-langtabs] .langtabs__bar button").forEach(a=>{a.addEventListener("click",()=>{a.dataset.lang&&o(a.dataset.lang)})});</script>
