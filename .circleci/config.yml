@@ -1,13 +1,40 @@
 # CircleCI configuration for airbnb/skipper.
 #
-# One job runs on every push:
+# Two jobs run on every push:
 #
 #   jvm-build  Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
 #              skipper-state-machine plugin module, and runs both test subsets. A bare
 #              `gradlew build` from the root covers every project in the build.
 #
-# Publishing is not done from CI: the Maven repository is not reachable from here.
-# See RELEASING.md.
+#   web-build  Builds the Astro documentation site in web/ and stores it as an artifact,
+#              so every branch and pull request gets a browsable copy. Nothing else in the
+#              build compiles the site, so without this a broken doc would only surface at
+#              publish time.
+#
+# One more runs on main only:
+#
+#   web-publish  Pushes the built site to the gh-pages branch, which GitHub Pages serves.
+#
+# Maven publishing is not done from CI: the Maven repository is not reachable from here.
+# See RELEASING.md. Documentation publishing is different - it needs nothing but git push.
+#
+# Why the site is published from here rather than from GitHub Actions: the Actions model
+# for Pages needs an OIDC token that only GitHub Actions can mint, and Actions does not run
+# on this repository while it is private. The branch model needs only push access, which
+# CircleCI can be given. See scripts/publish-web.sh.
+#
+# Required for web-publish, done once (Project Settings > SSH Keys > Additional SSH Keys):
+#
+#   A deploy key with write access. Generate a keypair, add the public half under the
+#   repository's Settings > Deploy keys with "Allow write access" checked, and add the
+#   private half here with hostname github.com. `add_ssh_keys` loads every key attached to
+#   the project, so no fingerprint has to be named in this file. The deploy keys CircleCI
+#   creates through its GitHub integration are read-only and will not do.
+#
+# CircleCI cannot filter jobs by changed path without converting this to a dynamic setup
+# workflow, so web-build runs even for a Gradle-only change. That is deliberate: the build
+# is under a minute, and web-publish pushes nothing when the built site is unchanged, so an
+# unrelated commit costs a build and no Pages deployment.
 #
 # Optional project environment variable (Project Settings > Environment Variables):
 #
@@ -37,6 +64,14 @@ executors:
       # OOM-killed, either raise resource_class or add
       # `-Pkotlin.daemon.jvmargs=-Xmx1g` to the Gradle invocation below.
       GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2
+
+  # Node 22 satisfies Astro 5's floor (18.20.8+, 20.3+, or 22+). Pinned to a full version
+  # like the JDK image above, so a Node release never changes the build without a commit.
+  node:
+    docker:
+      - image: cimg/node:22.20.0
+    resource_class: small
+    working_directory: ~/skipper
 
 jobs:
   jvm-build:
@@ -127,7 +162,98 @@ jobs:
           path: skipper-state-machine/build/libs
           destination: libs-state-machine
 
+  web-build:
+    executor: node
+    steps:
+      - checkout
+
+      - restore_cache:
+          name: Restore the npm cache
+          keys:
+            - npm-v1-{{ checksum "web/package-lock.json" }}
+            # Partial match: dependencies have moved, but most of the cache still applies.
+            - npm-v1-
+
+      - run:
+          name: Install web dependencies
+          # `ci`, not `install`: fails on a lock file that has drifted from package.json
+          # rather than quietly resolving something else.
+          command: npm ci
+          working_directory: ~/skipper/web
+
+      - save_cache:
+          name: Save the npm cache
+          key: npm-v1-{{ checksum "web/package-lock.json" }}
+          paths:
+            - ~/.npm
+
+      - run:
+          name: Build the site
+          command: npm run build
+          working_directory: ~/skipper/web
+          environment:
+            # The site is served from the root of the custom domain in web/public/CNAME,
+            # not from a /<repo>/ project path, so no base path is set. astro.config.mjs
+            # defaults to this same value; it is repeated here so the deployed origin is
+            # visible in the job that publishes it.
+            SKIPPER_SITE_URL: https://skipper.airbnb.tech
+
+      - persist_to_workspace:
+          # web-publish pushes exactly these bytes. Rebuilding there would risk publishing
+          # something no job ever checked.
+          root: ~/skipper
+          paths:
+            - web/dist
+
+      # A browsable copy of the site on every build, pull requests included - and the only
+      # preview available at all while Pages cannot serve this repository.
+      - store_artifacts:
+          path: web/dist
+          destination: web
+
+  web-publish:
+    executor: node
+    environment:
+      # Push over SSH explicitly rather than reusing whatever URL `checkout` left in
+      # `origin`. CircleCI's GitHub App integration checks out over HTTPS with a token that
+      # cannot push, and which integration a project uses is not visible from here.
+      SKIPPER_PAGES_REMOTE: git@github.com:airbnb/skipper.git
+    steps:
+      - checkout
+
+      # Loads every SSH key attached to the project, which must include a deploy key with
+      # write access - see the header comment. Naming no fingerprint keeps the key
+      # rotatable without a commit.
+      - add_ssh_keys
+
+      - run:
+          name: Trust GitHub's SSH host keys
+          # `checkout` populates known_hosts only on the SSH integration, and the push
+          # above may be the job's first SSH connection. Reading the keys from the
+          # TLS-authenticated meta API works under either integration and hardcodes nothing
+          # that GitHub might rotate.
+          command: |
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            curl -fsSL https://api.github.com/meta \
+              | jq -r '.ssh_keys[] | "github.com \(.)"' >> ~/.ssh/known_hosts
+
+      - attach_workspace:
+          at: ~/skipper
+
+      - run:
+          name: Publish the site to gh-pages
+          command: ./scripts/publish-web.sh
+
 workflows:
   build:
     jobs:
       - jvm-build
+      - web-build
+      - web-publish:
+          requires:
+            - web-build
+          # main only: a pull request must not overwrite the published site. The build
+          # still runs on every branch, so a broken site is caught before merge.
+          filters:
+            branches:
+              only: main
