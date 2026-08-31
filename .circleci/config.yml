@@ -192,11 +192,11 @@ jobs:
           command: npm run build
           working_directory: ~/skipper/web
           environment:
-            # Pages serves this as a *project* site, so the whole site sits under the
-            # repository name rather than at the origin root. astro.config.mjs reads both
-            # values, so retargeting the site is a change here and nowhere else.
-            SKIPPER_SITE_URL: https://airbnb.github.io/skipper
-            SKIPPER_SITE_BASE: /skipper
+            # The site is served from the root of the custom domain in web/public/CNAME,
+            # not from a /<repo>/ project path, so no base path is set. astro.config.mjs
+            # defaults to this same value; it is repeated here so the deployed origin is
+            # visible in the job that publishes it.
+            SKIPPER_SITE_URL: https://skipper.airbnb.tech
 
       - persist_to_workspace:
           # web-publish pushes exactly these bytes. Rebuilding there would risk publishing
