@@ -8,12 +8,16 @@ import com.airbnb.skipper.ContextPropagator
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.Execute
 import com.airbnb.skipper.ExecutionMetricsCollector
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.FixedRetryStrategy
+import com.airbnb.skipper.InMemoryFeatureGate
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.NonRetryableError
 import com.airbnb.skipper.PersistentRetryStrategy
 import com.airbnb.skipper.RetryableError
+import com.airbnb.skipper.WorkflowCancelledException
+import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import io.opentracing.Scope
@@ -21,6 +25,7 @@ import io.opentracing.Span
 import io.opentracing.Tracer
 import io.vavr.collection.List
 import io.vavr.control.Either
+import io.vavr.control.Option
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -125,6 +130,119 @@ class ActionExecutorTest {
         assertEquals(Instant.EPOCH, checkpoint.executionEndTime)
         assertFalse(checkpoint.isTransient)
         assertFalse(checkpoint.isResultIsAsync)
+    }
+
+    @Test
+    fun testInflightCancellationStopsBeforeAction() {
+        // Layer 1 in-flight cancellation: with the feature enabled and the workflow CANCELLED while
+        // executing, executeAction stops before starting a not-yet-checkpointed action.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val cancelledExecutor =
+            ActionExecutor(
+                mockWorkflowStore,
+                CheckpointMode.EVENTUAL_CHECKPOINT,
+                metrics,
+                errorMapper,
+                mockEventPublisher,
+                mockExecutionMetricsCollector,
+                mockTracer,
+                ContextPropagator.NOOP,
+                InMemoryFeatureGate(),
+            )
+        whenever(mockWorkflowStore.getWorkflow(any())).thenReturn(
+            Option.of(
+                TestUtils.getWorkflowInstance().toBuilder()
+                    .status(WorkflowInstance.Status.CANCELLED)
+                    .build(),
+            ),
+        )
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "hello" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actionMap[DemoActions::class.java]!!)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .arg(arrayOf<Any?>("Ricardo"))
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        assertThrows(WorkflowCancelledException::class.java) {
+            cancelledExecutor.executeAction(req)
+        }
+        // The action never ran: no iteration increment and no checkpoint recorded.
+        assertEquals(0, executionContext.getActionIteration(DemoActions::class.java, "hello"))
+        assertEquals(0, executionContext.dirtyCheckpoints.size())
+    }
+
+    @Test
+    fun testInflightCancellationDisabledByDefaultRunsAction() {
+        // Opt-in guard: with no FeatureGate (today's default) the action runs normally even if the
+        // store reports CANCELLED — proving the new behavior is gated and backward compatible.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        whenever(mockWorkflowStore.getWorkflow(any())).thenReturn(
+            Option.of(
+                TestUtils.getWorkflowInstance().toBuilder()
+                    .status(WorkflowInstance.Status.CANCELLED)
+                    .build(),
+            ),
+        )
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "hello" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actionMap[DemoActions::class.java]!!)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .arg(arrayOf<Any?>("Ricardo"))
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        // `actionExecutor` (from setup) was built with no FeatureGate, so the feature is disabled.
+        val result = actionExecutor.executeAction(req)
+        assertEquals("Hello Ricardo", result)
+    }
+
+    @Test
+    fun testInflightCancellationDisabledByGateRunsAction() {
+        // Realistic opt-out path: a real FeatureGate is present but the key is OFF (a non-adopting
+        // embedder). The action runs normally even though the store reports CANCELLED — proving the
+        // gate, not just the null default, controls the behavior.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val gate = mock<FeatureGate>()
+        whenever(gate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(false)
+        val gatedOffExecutor =
+            ActionExecutor(
+                mockWorkflowStore,
+                CheckpointMode.EVENTUAL_CHECKPOINT,
+                metrics,
+                errorMapper,
+                mockEventPublisher,
+                mockExecutionMetricsCollector,
+                mockTracer,
+                ContextPropagator.NOOP,
+                gate,
+            )
+        whenever(mockWorkflowStore.getWorkflow(any())).thenReturn(
+            Option.of(
+                TestUtils.getWorkflowInstance().toBuilder()
+                    .status(WorkflowInstance.Status.CANCELLED)
+                    .build(),
+            ),
+        )
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "hello" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actionMap[DemoActions::class.java]!!)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .arg(arrayOf<Any?>("Ricardo"))
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val result = gatedOffExecutor.executeAction(req)
+        assertEquals("Hello Ricardo", result)
     }
 
     @Test

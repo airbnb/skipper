@@ -14,6 +14,7 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.SuspendSupport
 import com.airbnb.skipper.ValidationError
 import com.airbnb.skipper.Workflow
+import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.internal.api.WaitSignal
 import com.airbnb.skipper.internal.common.SneakyThrow
@@ -399,6 +400,31 @@ open class WorkflowExecutor
             // a non-retryable error. This means that any exception, including ApplicationError errors
             // WILL be converted to a non-retryable error.
             cause = wrapUnexpectedError(cause, source)
+            if (cause is WorkflowCancelledException) {
+                // Layer 1 in-flight cancellation: the workflow was found CANCELLED at an action
+                // boundary (see ActionExecutor). cancelWorkflow already persisted CANCELLED, so settle
+                // this execution as CANCELLED rather than ERROR — it is a cancellation, not a failure.
+                metrics
+                    .counter(
+                        ImmutableMap.of(
+                            "result",
+                            "cancelled",
+                            "workflowClass",
+                            executionContext.workflow.workflowClass.simpleName,
+                            "workflowMethod",
+                            executionContext.workflow.workflowMethod,
+                            "source",
+                            source,
+                        ),
+                        METRIC_COMPONENT_NAME,
+                        "workflowExecutions",
+                    )
+                    .inc()
+                return resultBuilder
+                    .newStatus(WorkflowInstance.Status.CANCELLED)
+                    .result(Either.left(cause))
+                    .build()
+            }
             if (cause is PersistentRetryableError) {
                 val workflowInstance = executionContext.workflow
                 metrics

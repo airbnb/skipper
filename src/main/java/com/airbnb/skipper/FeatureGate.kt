@@ -72,5 +72,14 @@ interface FeatureGate {
          * persisting WAITING and removing its task is silently lost.
          */
         BUMP_TASK_VERSION_ON_HONORED_LEASE("bump_task_version_on_honored_lease"),
+
+        /**
+         * In-flight cancellation, Layer 1 (cooperative checkpoints). When enabled for an app, a
+         * running workflow re-checks its status between actions and stops starting further actions
+         * once it has been cancelled, instead of only observing the cancellation at the next
+         * scheduling boundary. Off by default: existing apps keep today's boundary-only behavior
+         * until they opt in.
+         */
+        INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints"),
     }
 }

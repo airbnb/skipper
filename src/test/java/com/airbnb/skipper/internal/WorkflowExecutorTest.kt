@@ -13,6 +13,7 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.StateField
 import com.airbnb.skipper.ValidationError
 import com.airbnb.skipper.Workflow
+import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.internal.TestUtils.REQUEST_CONTEXT
@@ -228,6 +229,27 @@ class WorkflowExecutorTest {
         assertNull(result3.retryDelay)
         val wrappedError = result3.result!!.left.cause as ApplicationError
         assertEquals(IllegalStateException::class.java.name, wrappedError.type)
+    }
+
+    @Test
+    fun testExecuteWorkflowMethod_whenWorkflowCancelledExceptionThrown() {
+        // In-flight cancellation (Layer 1): a WorkflowCancelledException — raised by the between-action
+        // check when the workflow was cancelled mid-execution — must settle the execution as CANCELLED,
+        // NOT ERROR. This guards the handleExecutionError branch: WorkflowCancelledException is a
+        // NonRetryableError, so without that branch it would fall through to ERROR, and the ERROR path
+        // spuriously schedules compensation for a compensable action on cancel. Deleting the branch
+        // makes this assertion fail.
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(Greeter::class.java)
+                .workflowMethod("hello")
+                .input("workflow-cancelled")
+                .build()
+        val result =
+            workflowExecutor.executeWorkflowMethod(instance, executorService, executionContext).join()
+        assertEquals(WorkflowInstance.Status.CANCELLED, result.newStatus)
+        assertNull(result.retryDelay)
+        assertTrue(result.result!!.left is WorkflowCancelledException)
     }
 
     @Test
@@ -507,6 +529,10 @@ class WorkflowExecutorTest {
             }
             if ("rejected-execution" == name) {
                 throw RejectedExecutionException("thread pool is shutting down")
+            }
+            if ("workflow-cancelled" == name) {
+                // Simulates the Layer 1 in-flight cancellation check raising this from action code.
+                throw WorkflowCancelledException("workflow cancelled mid-execution")
             }
             lastGreeting = String.format("Workflow Id: %s; Hello, %s!", id, name)
             return lastGreeting

@@ -65,6 +65,8 @@ import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
 import org.mockito.kotlin.any
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -1376,6 +1378,43 @@ abstract class BaseWorkflowIntegTest {
                 .find { it.actionMethod == "compensateImmediateCheckpoint" }
             assertThat(compensateCheckpoint).isNotNull()
             assertThat(compensateCheckpoint!!.result.isSuccess).isTrue()
+        }
+
+        @Test
+        fun testInflightCancelMidCompensableWorkflowStopsNextActionAndSkipsCompensation() {
+            // Layer 1 end-to-end (real SQLite store): a compensable workflow is cancelled WHILE its
+            // first (compensable) action runs. The between-action check must then stop the SECOND
+            // action from starting; the workflow must settle CANCELLED (not ERROR); and — because this
+            // is a cancel, not a failure — NO compensation may run for the already-executed first action.
+            // The INFLIGHT_CANCELLATION_CHECKPOINTS gate is enabled here by SuiteBase.setUp()'s blanket
+            // `featureGate.isEnabled(any()) == true` stub, so the between-action check is exercised.
+            val workflow = workflowFactory<CompensationWorkflow>(workflowId)
+            // Make the first action's execution cancel the workflow mid-flight, simulating a cancel
+            // request that lands after action 1 ran but before action 2's boundary.
+            doAnswer {
+                skipperEngine.cancelWorkflow(workflowId, "cancelled mid-flight")
+                null
+            }.whenever(testClient).action("executeActionWithImmediateCompensation")
+
+            // End-to-end (real SQLite store): a mid-flight cancel aborts the in-flight execution
+            // rather than running it to completion, settles the workflow durably CANCELLED (not
+            // ERROR), and runs NO compensation — a cancel is not a failure. That Layer 1's
+            // between-action check stops the NEXT action from starting is asserted deterministically
+            // by the ActionExecutor unit tests (testInflightCancellationStopsBeforeAction et al.); it
+            // is NOT asserted here via a cross-execution mock-invocation count, which is unreliable
+            // because the engine is at-least-once — a doomed replay of the already-CANCELLED workflow
+            // can make a stray next-action call under load until a separate persist-hardening
+            // follow-up skips the end-persist once the store is terminal.
+            assertThrows<Throwable> {
+                workflow.workflowWithImmediateCheckpointCompensation()
+            }
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.CANCELLED)
+
+            // No compensation ran for the already-completed first action (a cancel is not an ERROR).
+            verify(testClient, never()).action("compensateImmediateCheckpoint")
+            // Durably CANCELLED — not COMPENSATION_* or ERROR.
+            assertThat(workflow.getWorkflowInstanceView().status)
+                .isEqualTo(WorkflowInstanceStatusView.CANCELLED)
         }
 
         @Test

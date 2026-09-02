@@ -11,6 +11,7 @@ import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.Execute
 import com.airbnb.skipper.ExecutionMetricsCollector
 import com.airbnb.skipper.ExponentialRetryStrategy
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NonRetryableError
 import com.airbnb.skipper.PersistentRetryStrategy
@@ -18,6 +19,8 @@ import com.airbnb.skipper.RetryStrategy
 import com.airbnb.skipper.RetryableError
 import com.airbnb.skipper.SkipperAnnotationNames.DEFAULT_CHECKPOINT_MODE
 import com.airbnb.skipper.SuspendSupport
+import com.airbnb.skipper.WorkflowCancelledException
+import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.google.common.collect.ImmutableMap
@@ -48,7 +51,35 @@ open class ActionExecutor
         private val executionMetricsCollector: ExecutionMetricsCollector,
         private val tracer: Tracer,
         private val contextPropagator: ContextPropagator,
+        private val featureGate: FeatureGate?,
     ) {
+        // Backward-compatible 8-arg constructor for callers/subclasses that predate the trailing
+        // `featureGate` parameter (the in-flight cancellation gate) — e.g. a subclass whose
+        // `super(...)` passes the original eight arguments; it defaults featureGate to null (check disabled).
+        // Deliberately NOT @Inject: Guice requires exactly one @Inject constructor, so a Kotlin default
+        // or @JvmOverloads (either of which yields a second @Inject ctor) causes
+        // Guice/TooManyConstructors across every embedder.
+        constructor(
+            workflowStore: WorkflowStore,
+            defaultCheckpointMode: CheckpointMode,
+            metrics: Metrics,
+            errorMapper: ActionErrorMapper,
+            eventPublisher: EventPublisher,
+            executionMetricsCollector: ExecutionMetricsCollector,
+            tracer: Tracer,
+            contextPropagator: ContextPropagator,
+        ) : this(
+            workflowStore,
+            defaultCheckpointMode,
+            metrics,
+            errorMapper,
+            eventPublisher,
+            executionMetricsCollector,
+            tracer,
+            contextPropagator,
+            null,
+        )
+
         /**
          * Executes an action method.
          *
@@ -94,6 +125,42 @@ open class ActionExecutor
                     )
                 }
                 return checkpoint.get().generateResult()
+            }
+            // Layer 1 in-flight cancellation checkpoint. Before starting a NOT-yet-checkpointed action,
+            // re-read the workflow's CURRENT status from the store. If it was cancelled (e.g. by
+            // WorkflowsService.cancelWorkflows) while this execution was running, stop here rather than
+            // start another action — bounding a mid-flight cancel to at most the one action already
+            // running. The store read (not executionContext.workflow, which is a start-of-execution
+            // snapshot) is what lets a cancel written by another worker be observed. Opt-in and off by
+            // default.
+            if (featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) == true) {
+                val workflowId = request.executionContext.workflow.workflowId
+                val current: Option<WorkflowInstance> = workflowStore.getWorkflow(workflowId)
+                if (current.isDefined && current.get().status == WorkflowInstance.Status.CANCELLED) {
+                    log.info(
+                        "workflow {} was CANCELLED while executing; stopping before action {}#{}",
+                        workflowId,
+                        request.baseActionClass.simpleName,
+                        request.actionMethodName,
+                    )
+                    metrics
+                        .counter(
+                            ImmutableMap.of(
+                                "workflowClass",
+                                request.executionContext.workflow.workflowClass.simpleName,
+                                ACTION_CLASS_TAG,
+                                request.baseActionClass.simpleName,
+                            ),
+                            METRIC_COMPONENT_NAME,
+                            "inflightCancellationStopped",
+                        )
+                        .inc()
+                    throw WorkflowCancelledException(
+                        "workflow " + workflowId + " was CANCELLED before action " +
+                            request.baseActionClass.simpleName + "#" + request.actionMethodName +
+                            " started",
+                    )
+                }
             }
             val startTime = request.executionContext.clock.instant()
             val checkpointTag = CheckpointTag.fromExecuteActionRequest(request)
