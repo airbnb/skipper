@@ -401,7 +401,7 @@ open class WorkflowExecutor
             // WILL be converted to a non-retryable error.
             cause = wrapUnexpectedError(cause, source)
             if (cause is WorkflowCancelledException) {
-                // Layer 1 in-flight cancellation: the workflow was found CANCELLED at an action
+                // In-flight cancellation: the workflow was found CANCELLED at an action
                 // boundary (see ActionExecutor). cancelWorkflow already persisted CANCELLED, so settle
                 // this execution as CANCELLED rather than ERROR — it is a cancellation, not a failure.
                 metrics

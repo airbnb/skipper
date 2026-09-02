@@ -19,6 +19,7 @@ import com.airbnb.skipper.StateField
 import com.airbnb.skipper.Timer
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowCallbackHandler
+import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.WorkflowOptions
@@ -1382,7 +1383,7 @@ abstract class BaseWorkflowIntegTest {
 
         @Test
         fun testInflightCancelMidCompensableWorkflowStopsNextActionAndSkipsCompensation() {
-            // Layer 1 end-to-end (real SQLite store): a compensable workflow is cancelled WHILE its
+            // End-to-end (real SQLite store): a compensable workflow is cancelled WHILE its
             // first (compensable) action runs. The between-action check must then stop the SECOND
             // action from starting; the workflow must settle CANCELLED (not ERROR); and — because this
             // is a cancel, not a failure — NO compensation may run for the already-executed first action.
@@ -1396,20 +1397,18 @@ abstract class BaseWorkflowIntegTest {
                 null
             }.whenever(testClient).action("executeActionWithImmediateCompensation")
 
-            // End-to-end (real SQLite store): a mid-flight cancel aborts the in-flight execution
-            // rather than running it to completion, settles the workflow durably CANCELLED (not
-            // ERROR), and runs NO compensation — a cancel is not a failure. That Layer 1's
-            // between-action check stops the NEXT action from starting is asserted deterministically
-            // by the ActionExecutor unit tests (testInflightCancellationStopsBeforeAction et al.); it
-            // is NOT asserted here via a cross-execution mock-invocation count, which is unreliable
-            // because the engine is at-least-once — a doomed replay of the already-CANCELLED workflow
-            // can make a stray next-action call under load until a separate persist-hardening
-            // follow-up skips the end-persist once the store is terminal.
-            assertThrows<Throwable> {
+            // A mid-flight cancel aborts the in-flight execution with WorkflowCancelledException rather
+            // than running it to completion; the between-action check stops the NEXT action from
+            // starting; the workflow settles durably CANCELLED (not ERROR) without a stale-version status
+            // write, so there is no TRANSIENT_ERROR retry and no replay; and NO compensation runs — a
+            // cancel is not a failure.
+            assertThrows<WorkflowCancelledException> {
                 workflow.workflowWithImmediateCheckpointCompensation()
             }
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.CANCELLED)
 
+            // The next action never started.
+            verify(testClient, never()).action("failingAction")
             // No compensation ran for the already-completed first action (a cancel is not an ERROR).
             verify(testClient, never()).action("compensateImmediateCheckpoint")
             // Durably CANCELLED — not COMPENSATION_* or ERROR.

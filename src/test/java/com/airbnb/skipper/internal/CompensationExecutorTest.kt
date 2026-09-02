@@ -71,6 +71,7 @@ class CompensationExecutorTest {
                 executionMetricsCollector,
                 mockTracer,
                 deps.config.contextPropagator,
+                null,
             )
 
         compensationExecutor =

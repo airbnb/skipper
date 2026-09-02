@@ -96,6 +96,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
+            null,
             )
     }
 
@@ -134,7 +135,7 @@ class ActionExecutorTest {
 
     @Test
     fun testInflightCancellationStopsBeforeAction() {
-        // Layer 1 in-flight cancellation: with the feature enabled and the workflow CANCELLED while
+        // In-flight cancellation: with the feature enabled and the workflow CANCELLED while
         // executing, executeAction stops before starting a not-yet-checkpointed action.
         val executionContext = newExecContext()
         whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
@@ -148,7 +149,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
-                InMemoryFeatureGate(),
+                InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS to true)),
             )
         whenever(mockWorkflowStore.getWorkflow(any())).thenReturn(
             Option.of(
@@ -331,6 +332,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
+            null,
             )
 
         val executionContext = newExecContext()
@@ -377,6 +379,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
+            null,
             )
         val executionContext = newExecContext()
         whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
@@ -419,6 +422,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
+            null,
             )
         val executionContext = newExecContext()
         whenever(mockWorkflowStore.storeActionCheckpoints(any(), any()))

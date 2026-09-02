@@ -69,6 +69,7 @@ class ActionExecutorSuspendTest {
             mockExecutionMetricsCollector,
             mockTracer,
             ContextPropagator.NOOP,
+        null,
         )
     }
 

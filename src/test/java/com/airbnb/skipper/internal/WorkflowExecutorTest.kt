@@ -233,7 +233,7 @@ class WorkflowExecutorTest {
 
     @Test
     fun testExecuteWorkflowMethod_whenWorkflowCancelledExceptionThrown() {
-        // In-flight cancellation (Layer 1): a WorkflowCancelledException — raised by the between-action
+        // In-flight cancellation: a WorkflowCancelledException — raised by the between-action
         // check when the workflow was cancelled mid-execution — must settle the execution as CANCELLED,
         // NOT ERROR. This guards the handleExecutionError branch: WorkflowCancelledException is a
         // NonRetryableError, so without that branch it would fall through to ERROR, and the ERROR path
@@ -531,7 +531,7 @@ class WorkflowExecutorTest {
                 throw RejectedExecutionException("thread pool is shutting down")
             }
             if ("workflow-cancelled" == name) {
-                // Simulates the Layer 1 in-flight cancellation check raising this from action code.
+                // Simulates the in-flight cancellation check raising this from action code.
                 throw WorkflowCancelledException("workflow cancelled mid-execution")
             }
             lastGreeting = String.format("Workflow Id: %s; Hello, %s!", id, name)

@@ -144,7 +144,7 @@ class SkipperConfig(
     var contextPropagator: ContextPropagator = ContextPropagator.NOOP,
     /** The injector used to instantiate user-defined Workflow, Action, and CallbackHandler classes. */
     var injector: SkipperInjector = SimpleInjector.builder().build(),
-    /** The factory for the FeatureGate. Defaults to InMemoryFeatureGate (all features enabled). */
+    /** The factory for the FeatureGate. Defaults to InMemoryFeatureGate (each feature at its declared default). */
     var featureGate: ComponentFactory<out FeatureGate> = ComponentFactory { InMemoryFeatureGate() },
     /** The factory for the Knobs. Defaults to InMemoryKnobs (no values configured). */
     var knobs: ComponentFactory<out Knobs> = ComponentFactory { InMemoryKnobs() },

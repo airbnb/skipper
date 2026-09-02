@@ -1,19 +1,17 @@
 package com.airbnb.skipper
 
 /**
- * An in-memory implementation of [FeatureGate] where every feature is enabled by default, except
- * for kill switches, which are off: [FeatureGate.Keys.DISABLE_SIGNAL_PERSISTENCE] answers `false`
- * so that `@SignalMethod(persist = true)` persists signals out of the box, as its documentation says.
+ * An in-memory [FeatureGate] with no external configuration.
  *
- * This is the default gate a [SkipperConfig] starts with, and is useful for testing or for
- * environments where feature gating is not needed.
+ * Each feature resolves to its declared [FeatureGate.Keys.enabledByDefault] unless overridden here,
+ * so an opt-in feature stays off until an app enables it. This is the default gate in
+ * [SkipperConfig] and is also convenient for tests.
+ *
+ * @param overrides per-feature values that take precedence over the declared defaults
  */
-class InMemoryFeatureGate : FeatureGate {
-    /**
-     * Returns true for every feature except the signal-persistence kill switch.
-     *
-     * @param featureKey The key of the feature to check
-     * @return false for [FeatureGate.Keys.DISABLE_SIGNAL_PERSISTENCE], true otherwise
-     */
-    override fun isEnabled(featureKey: FeatureGate.Keys): Boolean = featureKey != FeatureGate.Keys.DISABLE_SIGNAL_PERSISTENCE
+class InMemoryFeatureGate(
+    private val overrides: Map<FeatureGate.Keys, Boolean> = emptyMap(),
+) : FeatureGate {
+    override fun isEnabled(featureKey: FeatureGate.Keys): Boolean =
+        overrides[featureKey] ?: featureKey.enabledByDefault
 }

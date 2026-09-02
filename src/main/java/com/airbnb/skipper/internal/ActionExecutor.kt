@@ -53,32 +53,6 @@ open class ActionExecutor
         private val contextPropagator: ContextPropagator,
         private val featureGate: FeatureGate?,
     ) {
-        // Backward-compatible 8-arg constructor for callers/subclasses that predate the trailing
-        // `featureGate` parameter (the in-flight cancellation gate) — e.g. a subclass whose
-        // `super(...)` passes the original eight arguments; it defaults featureGate to null (check disabled).
-        // Deliberately NOT @Inject: Guice requires exactly one @Inject constructor, so a Kotlin default
-        // or @JvmOverloads (either of which yields a second @Inject ctor) causes
-        // Guice/TooManyConstructors across every embedder.
-        constructor(
-            workflowStore: WorkflowStore,
-            defaultCheckpointMode: CheckpointMode,
-            metrics: Metrics,
-            errorMapper: ActionErrorMapper,
-            eventPublisher: EventPublisher,
-            executionMetricsCollector: ExecutionMetricsCollector,
-            tracer: Tracer,
-            contextPropagator: ContextPropagator,
-        ) : this(
-            workflowStore,
-            defaultCheckpointMode,
-            metrics,
-            errorMapper,
-            eventPublisher,
-            executionMetricsCollector,
-            tracer,
-            contextPropagator,
-            null,
-        )
 
         /**
          * Executes an action method.
@@ -126,7 +100,7 @@ open class ActionExecutor
                 }
                 return checkpoint.get().generateResult()
             }
-            // Layer 1 in-flight cancellation checkpoint. Before starting a NOT-yet-checkpointed action,
+            // In-flight cancellation checkpoint. Before starting a NOT-yet-checkpointed action,
             // re-read the workflow's CURRENT status from the store. If it was cancelled (e.g. by
             // WorkflowsService.cancelWorkflows) while this execution was running, stop here rather than
             // start another action — bounding a mid-flight cancel to at most the one action already

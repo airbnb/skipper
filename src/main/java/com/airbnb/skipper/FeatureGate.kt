@@ -48,8 +48,12 @@ interface FeatureGate {
      *
      * The name of the key must match the name of the feature in the feature-gate configuration
      * (e.g. `feature_gates.<feature_key>`).
+     *
+     * Each key declares whether it is on by default. [InMemoryFeatureGate] honours that, so an
+     * opt-in feature stays off until an app enables it; a configuration-backed gate can override
+     * it per app.
      */
-    enum class Keys(val key: String) {
+    enum class Keys(val key: String, val enabledByDefault: Boolean = true) {
         TEST_FEATURE("test_feature"),
         AUTOMATIC_LEASE_RENEWAL("automatic_lease_renewal"),
         FORCE_SIGNAL_WORKFLOW_EXEC_IN_SCHEDULER("force_signal_workflow_exec_in_scheduler"),
@@ -61,7 +65,7 @@ interface FeatureGate {
          * `@SignalMethod(persist = true)` are executed without being persisted, reverting to the
          * legacy behavior. Persistence is on by default for opted-in signals.
          */
-        DISABLE_SIGNAL_PERSISTENCE("disable_signal_persistence"),
+        DISABLE_SIGNAL_PERSISTENCE("disable_signal_persistence", enabledByDefault = false),
 
         /**
          * When the engine reschedules a workflow task honouring an active lease (the path a signal
@@ -74,12 +78,11 @@ interface FeatureGate {
         BUMP_TASK_VERSION_ON_HONORED_LEASE("bump_task_version_on_honored_lease"),
 
         /**
-         * In-flight cancellation, Layer 1 (cooperative checkpoints). When enabled for an app, a
-         * running workflow re-checks its status between actions and stops starting further actions
-         * once it has been cancelled, instead of only observing the cancellation at the next
-         * scheduling boundary. Off by default: existing apps keep today's boundary-only behavior
-         * until they opt in.
+         * In-flight cancellation checkpoints. When enabled for an app, a running workflow re-checks
+         * its status between actions and stops starting further actions once it has been cancelled,
+         * instead of only observing the cancellation at the next scheduling boundary. Off by
+         * default: existing apps keep today's boundary-only behavior until they opt in.
          */
-        INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints"),
+        INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints", enabledByDefault = false),
     }
 }
