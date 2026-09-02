@@ -60,7 +60,8 @@ tasks.withType<KotlinCompile>().configureEach {
 // it is a Gradle-only source dir.
 val testSubsetExcludes =
     listOf(
-        // Cross-backend prefix coverage is exercised by its dedicated Bazel target.
+        // Cross-backend prefix coverage needs a multi-backend setup this Gradle build does not
+        // provide, so it is excluded from this subset.
         "com/airbnb/skipper/internal/storage/prefix/TablePrefixIntegrationTest.kt"
     )
 
