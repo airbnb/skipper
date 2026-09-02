@@ -212,6 +212,18 @@ the [API reference](https://skipper.airbnb.tech/docs/reference/annotations/), ru
 [troubleshooting guide](https://skipper.airbnb.tech/docs/troubleshooting/). The source for the
 site is in [`web/`](web/).
 
+## Compatibility
+
+The supported API is everything outside `com.airbnb.skipper.internal`: the workflow programming
+model (`Workflow`, its annotations, `WorkflowFactory`), `SkipperConfig` and its component
+factories, `FeatureGate`, and the callback handlers. Classes under `com.airbnb.skipper.internal`
+are the engine's own machinery and may change shape in any release, including a patch;
+subclassing or constructing them directly means re-checking them on every upgrade. If you need a
+hook the public surface does not offer, open an issue so it can become a supported one.
+
+Versions follow the Conventional Commit prefixes described in [RELEASING.md](RELEASING.md), and
+the release notes are the GitHub releases page, generated from merged pull-request titles.
+
 ## Contributing
 
 Issues and pull requests are welcome. CI runs `./gradlew build` and `./gradlew spotlessCheck`, which fails on any Kotlin or Java file that ktlint or google-java-format would change; `./gradlew spotlessApply` reformats them.
