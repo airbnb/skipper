@@ -49,9 +49,7 @@ interface FeatureGate {
      * The name of the key must match the name of the feature in the feature-gate configuration
      * (e.g. `feature_gates.<feature_key>`).
      *
-     * Each key declares whether it is on by default. [InMemoryFeatureGate] honours that, so an
-     * opt-in feature stays off until an app enables it; a configuration-backed gate can override
-     * it per app.
+     * `enabledByDefault` is what [InMemoryFeatureGate] answers unless overridden.
      */
     enum class Keys(val key: String, val enabledByDefault: Boolean = true) {
         TEST_FEATURE("test_feature"),
@@ -78,10 +76,8 @@ interface FeatureGate {
         BUMP_TASK_VERSION_ON_HONORED_LEASE("bump_task_version_on_honored_lease"),
 
         /**
-         * In-flight cancellation checkpoints. When enabled for an app, a running workflow re-checks
-         * its status between actions and stops starting further actions once it has been cancelled,
-         * instead of only observing the cancellation at the next scheduling boundary. Off by
-         * default: existing apps keep today's boundary-only behavior until they opt in.
+         * Re-check the workflow status between actions and stop once it is cancelled, instead of
+         * only at the next scheduling boundary. Off by default.
          */
         INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints", enabledByDefault = false),
     }

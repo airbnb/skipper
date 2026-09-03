@@ -1557,11 +1557,9 @@ class WorkflowExecutionTaskHandlerTest {
 
     @Test
     fun testHandleSettlesAsCancelledWhenStoreIsCancelledDuringExecution() {
-        // The workflow was cancelled while this execution ran (the store already holds CANCELLED)
-        // and the execution itself ended TRANSIENT_ERROR, as it does when the lease renewal
-        // interrupts the worker after cancelWorkflow removed its task. Nothing may be written or
-        // rescheduled; the completed action's checkpoint is kept; and the caller observes the
-        // stored CancelledWorkflow, not the transient error.
+        // Execution ended TRANSIENT_ERROR (worker interrupted after cancelWorkflow removed its task)
+        // while the store holds CANCELLED: nothing written or rescheduled, checkpoint kept, caller
+        // gets CancelledWorkflow.
         class TestActions : Actions() {
             @Execute
             fun testAction(input: String): String = "result"

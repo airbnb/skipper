@@ -1383,12 +1383,9 @@ abstract class BaseWorkflowIntegTest {
 
         @Test
         fun testInflightCancelMidCompensableWorkflowStopsNextActionAndSkipsCompensation() {
-            // End-to-end (real SQLite store): a compensable workflow is cancelled WHILE its
-            // first (compensable) action runs. The between-action check must then stop the SECOND
-            // action from starting; the workflow must settle CANCELLED (not ERROR); and — because this
-            // is a cancel, not a failure — NO compensation may run for the already-executed first action.
-            // The INFLIGHT_CANCELLATION_CHECKPOINTS gate is enabled here by SuiteBase.setUp()'s blanket
-            // `featureGate.isEnabled(any()) == true` stub, so the between-action check is exercised.
+            // Cancelled while the first (compensable) action runs: the caller gets the recorded
+            // CancelledWorkflow, the next action never starts, no compensation runs. The gate is on
+            // via SuiteBase's blanket isEnabled stub.
             val workflow = workflowFactory<CompensationWorkflow>(workflowId)
             // Make the first action's execution cancel the workflow mid-flight, simulating a cancel
             // request that lands after action 1 ran but before action 2's boundary.
@@ -1397,12 +1394,6 @@ abstract class BaseWorkflowIntegTest {
                 null
             }.whenever(testClient).action("executeActionWithImmediateCompensation")
 
-            // A mid-flight cancel aborts the in-flight execution rather than running it to
-            // completion, and the caller observes the recorded cancellation (CancelledWorkflow) —
-            // the same exception any other observer of the workflow sees. The between-action check
-            // stops the NEXT action from starting; the workflow settles durably CANCELLED (not ERROR)
-            // without a stale-version status write, so there is no TRANSIENT_ERROR retry and no
-            // replay; and NO compensation runs — a cancel is not a failure.
             assertThrows<CancelledWorkflow> {
                 workflow.workflowWithImmediateCheckpointCompensation()
             }

@@ -100,13 +100,8 @@ open class ActionExecutor
                 }
                 return checkpoint.get().generateResult()
             }
-            // In-flight cancellation checkpoint. Before starting a NOT-yet-checkpointed action,
-            // re-read the workflow's CURRENT status from the store. If it was cancelled (e.g. by
-            // WorkflowsService.cancelWorkflows) while this execution was running, stop here rather than
-            // start another action — bounding a mid-flight cancel to at most the one action already
-            // running. The store read (not executionContext.workflow, which is a start-of-execution
-            // snapshot) is what lets a cancel written by another worker be observed. Opt-in and off by
-            // default.
+            // Re-read the current status (not the start-of-execution snapshot) before starting an
+            // unchecked action, so a cancel written while this execution ran stops it here.
             if (featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) == true) {
                 val workflowId = request.executionContext.workflow.workflowId
                 val current: Option<WorkflowInstance> = workflowStore.getWorkflow(workflowId)

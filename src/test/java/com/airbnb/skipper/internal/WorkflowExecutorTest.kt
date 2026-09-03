@@ -233,12 +233,8 @@ class WorkflowExecutorTest {
 
     @Test
     fun testExecuteWorkflowMethod_whenWorkflowCancelledExceptionThrown() {
-        // In-flight cancellation: a WorkflowCancelledException — raised by the between-action
-        // check when the workflow was cancelled mid-execution — must settle the execution as CANCELLED,
-        // NOT ERROR. This guards the handleExecutionError branch: WorkflowCancelledException is a
-        // NonRetryableError, so without that branch it would fall through to ERROR, and the ERROR path
-        // spuriously schedules compensation for a compensable action on cancel. Deleting the branch
-        // makes this assertion fail.
+        // WorkflowCancelledException settles the execution as CANCELLED, not ERROR (which would
+        // schedule compensation).
         val instance =
             TestUtils.getWorkflowInstance().toBuilder()
                 .workflowClass(Greeter::class.java)

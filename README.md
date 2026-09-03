@@ -214,15 +214,10 @@ site is in [`web/`](web/).
 
 ## Compatibility
 
-The supported API is everything outside `com.airbnb.skipper.internal`: the workflow programming
-model (`Workflow`, its annotations, `WorkflowFactory`), `SkipperConfig` and its component
-factories, `FeatureGate`, and the callback handlers. Classes under `com.airbnb.skipper.internal`
-are the engine's own machinery and may change shape in any release, including a patch;
-subclassing or constructing them directly means re-checking them on every upgrade. If you need a
-hook the public surface does not offer, open an issue so it can become a supported one.
-
-Versions follow the Conventional Commit prefixes described in [RELEASING.md](RELEASING.md), and
-the release notes are the GitHub releases page, generated from merged pull-request titles.
+Everything outside `com.airbnb.skipper.internal` is supported API. Classes under `internal` may
+change in any release; if you need a hook they provide, open an issue for a supported one. Versions
+follow the Conventional Commit prefixes in [RELEASING.md](RELEASING.md); release notes are the GitHub
+releases page.
 
 ## Contributing
 
