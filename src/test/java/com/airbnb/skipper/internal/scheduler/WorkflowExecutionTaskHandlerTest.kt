@@ -9,6 +9,7 @@ import com.airbnb.skipper.ExecutionTimeout
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.NonRetryableError
+import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.OptimisticLockingError
 import com.airbnb.skipper.RawActionInvocation
 import com.airbnb.skipper.RawRequestContextMiddleware
@@ -59,6 +60,7 @@ import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.never
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
@@ -143,7 +145,7 @@ class WorkflowExecutionTaskHandlerTest {
 
         verify(mockWorkflowStore, times(1))
             .updateWorkflowAndStoreCheckpointsAndTimers(eq(updateRequest), any(), any())
-        verify(mockWorkflowStore, times(1)).getWorkflow(eq(workflowInstance.workflowId))
+        verify(mockWorkflowStore, times(2)).getWorkflow(eq(workflowInstance.workflowId))
         val captor = argumentCaptor<WorkflowInstanceView>()
         verify(callbackHandler, times(1)).onSuccess(captor.capture())
         assertEquals(workflowInstance.workflowId, captor.firstValue.id)
@@ -205,7 +207,7 @@ class WorkflowExecutionTaskHandlerTest {
 
         verify(mockWorkflowStore, times(0))
             .updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
-        verify(mockWorkflowStore, times(2)).getWorkflow(eq(workflowInstance.workflowId))
+        verify(mockWorkflowStore, times(3)).getWorkflow(eq(workflowInstance.workflowId))
     }
 
     @Test
@@ -1551,5 +1553,88 @@ class WorkflowExecutionTaskHandlerTest {
             mapOf("source" to source, "handler" to "WorkflowCallbackHandler"),
             handlerErrors[0].tags
         )
+    }
+
+    @Test
+    fun testHandleSettlesAsCancelledWhenStoreIsCancelledDuringExecution() {
+        // The workflow was cancelled while this execution ran (the store already holds CANCELLED)
+        // and the execution itself ended TRANSIENT_ERROR, as it does when the lease renewal
+        // interrupts the worker after cancelWorkflow removed its task. Nothing may be written or
+        // rescheduled; the completed action's checkpoint is kept; and the caller observes the
+        // stored CancelledWorkflow, not the transient error.
+        class TestActions : Actions() {
+            @Execute
+            fun testAction(input: String): String = "result"
+
+            @Compensate(forExecute = "testAction")
+            fun compensateTestAction(input: String) {
+                // compensation logic
+            }
+        }
+
+        val workflowInstance = TestUtils.getWorkflowInstance()
+        val checkpoint =
+            ActionCheckpoint.builder()
+                .checkpointTag(
+                    CheckpointTag.builder()
+                        .workflowId(workflowInstance.workflowId)
+                        .actionClass(TestActions::class.java)
+                        .actionMethod("testAction")
+                        .iteration(0)
+                        .build()
+                )
+                .executionStartTime(Instant.EPOCH)
+                .executionEndTime(Instant.EPOCH)
+                .result(Either.right("success"))
+                .isTransient(false)
+                .resultIsAsync(false)
+                .build()
+        val result =
+            WorkflowExecutor.ExecutionResult.builder()
+                .result(Either.left(RetryableError("worker interrupted")))
+                .newStatus(WorkflowInstance.Status.TRANSIENT_ERROR)
+                .retryDelay(Duration.ofSeconds(1))
+                .build()
+        whenever(mockWorkflowExecutor.executeWorkflowMethod(any(), any(), any())).thenAnswer { invocation ->
+            invocation.getArgument<ExecutionContext>(2).addDirtyCheckpoint(checkpoint)
+            CompletableFuture.completedFuture(result)
+        }
+        val cancelledInStore =
+            workflowInstance.toBuilder()
+                .status(WorkflowInstance.Status.CANCELLED)
+                .result(
+                    CompletableFuture<Any?>().apply {
+                        completeExceptionally(CancelledWorkflow("cancelled by test"))
+                    }
+                )
+                .build()
+        // The store holds RUNNING when the execution starts (the payload refresh) and CANCELLED by
+        // the time the execution ends (the settle check).
+        val getWorkflowInvocations = AtomicInteger(0)
+        whenever(mockWorkflowStore.getWorkflow(eq(workflowInstance.workflowId))).thenAnswer {
+            if (getWorkflowInvocations.incrementAndGet() == 1) {
+                Option.of(workflowInstance)
+            } else {
+                Option.of(cancelledInStore)
+            }
+        }
+        whenever(mockWorkflowStore.storeActionCheckpoints(eq(workflowInstance.workflowId), any()))
+            .thenReturn(List.of(checkpoint))
+        whenever(mockWorkflowStore.getTimers(eq(workflowInstance.workflowId)))
+            .thenReturn(List.empty())
+
+        val task: Task<*> = TestUtils.getTestTask(workflowInstance)
+        val handleResult = taskHandler.handle(task, executor).join()
+
+        assertTrue(handleResult.isEmpty)
+        verify(mockWorkflowStore, never()).updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
+        verify(mockWorkflowStore, never()).updateWorkflow(any())
+        verify(mockWorkflowStore, times(1))
+            .storeActionCheckpoints(eq(workflowInstance.workflowId), eq(List.of(checkpoint)))
+        verify(mockScheduler, times(0)).schedule<Any>(any())
+        val callerFuture = (task.payload as WorkflowInstance).result
+        assertTrue(callerFuture.isCompletedExceptionally)
+        val thrown = assertThrows(CompletionException::class.java) { callerFuture.join() }
+        assertTrue(thrown.cause is CancelledWorkflow)
     }
 }

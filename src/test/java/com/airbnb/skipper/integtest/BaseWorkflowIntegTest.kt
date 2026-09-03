@@ -19,7 +19,7 @@ import com.airbnb.skipper.StateField
 import com.airbnb.skipper.Timer
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowCallbackHandler
-import com.airbnb.skipper.WorkflowCancelledException
+import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.WorkflowOptions
@@ -1397,12 +1397,13 @@ abstract class BaseWorkflowIntegTest {
                 null
             }.whenever(testClient).action("executeActionWithImmediateCompensation")
 
-            // A mid-flight cancel aborts the in-flight execution with WorkflowCancelledException rather
-            // than running it to completion; the between-action check stops the NEXT action from
-            // starting; the workflow settles durably CANCELLED (not ERROR) without a stale-version status
-            // write, so there is no TRANSIENT_ERROR retry and no replay; and NO compensation runs — a
-            // cancel is not a failure.
-            assertThrows<WorkflowCancelledException> {
+            // A mid-flight cancel aborts the in-flight execution rather than running it to
+            // completion, and the caller observes the recorded cancellation (CancelledWorkflow) —
+            // the same exception any other observer of the workflow sees. The between-action check
+            // stops the NEXT action from starting; the workflow settles durably CANCELLED (not ERROR)
+            // without a stale-version status write, so there is no TRANSIENT_ERROR retry and no
+            // replay; and NO compensation runs — a cancel is not a failure.
+            assertThrows<CancelledWorkflow> {
                 workflow.workflowWithImmediateCheckpointCompensation()
             }
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.CANCELLED)

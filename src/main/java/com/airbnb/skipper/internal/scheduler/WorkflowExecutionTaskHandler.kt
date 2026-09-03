@@ -19,6 +19,8 @@ import com.airbnb.skipper.TransientError
 import com.airbnb.skipper.WorkflowCallbackHandler
 import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
+import java.util.concurrent.CancellationException
+import com.airbnb.skipper.SkipperError
 import com.airbnb.skipper.api.ActionCheckpointView
 import com.airbnb.skipper.api.WorkflowInstanceView
 import com.airbnb.skipper.internal.ExecutionContext
@@ -323,6 +325,25 @@ class WorkflowExecutionTaskHandler
             return Option.some(now.instant().plus(unexpectedErrorRetryDelay))
         }
 
+        /**
+         * The cancellation cancelWorkflow recorded for this workflow, as loaded from the store. Falls
+         * back to a WorkflowCancelledException should the stored result not carry an error.
+         */
+        private fun storedCancellation(stored: WorkflowInstance): SkipperError {
+            if (stored.result.isCompletedExceptionally) {
+                try {
+                    stored.result.join()
+                } catch (e: CompletionException) {
+                    (e.cause as? SkipperError)?.let { return it }
+                } catch (e: CancellationException) {
+                    // fall through to the default below
+                }
+            }
+            return WorkflowCancelledException(
+                "workflow instance with id=${stored.workflowId} was cancelled while executing",
+            )
+        }
+
         private fun notifyCaller(
             result: WorkflowExecutor.ExecutionResult,
             workflowInstance: WorkflowInstance,
@@ -394,10 +415,10 @@ class WorkflowExecutionTaskHandler
                     }
                 }
                 WorkflowInstance.Status.CANCELLED -> {
-                    // In-flight cancellation. cancelWorkflow already persisted the status, invoked the
-                    // callback handler's onCancelled and published the event, so all that is left is to
-                    // release a caller still blocked on this execution's future -- otherwise a
-                    // synchronous invocation would wait forever.
+                    // Cancelled while executing. cancelWorkflow already persisted the status, invoked
+                    // the callback handler's onCancelled and published the event, so all that is left
+                    // is to release a caller still blocked on this execution's future with the stored
+                    // cancellation -- otherwise a synchronous invocation would wait forever.
                     log.info(
                         "workflow instance with id={} was cancelled while executing",
                         workflowInstance.workflowId,
@@ -426,33 +447,35 @@ class WorkflowExecutionTaskHandler
             // TODO: skip persisting if there was no change in the workflow instance
             var currentWorkflowInstance = workflowInstance
             var context = executionContext
-            // A CANCELLED result means the in-flight cancellation check fired, which only happens after
-            // cancelWorkflow has already persisted CANCELLED (bumping the version). Writing this
-            // execution's start-of-execution version would lose the optimistic-locking race and be
-            // reported as a TRANSIENT_ERROR that reschedules a doomed re-execution. There is nothing left
-            // to settle: keep the checkpoints of the actions that completed before the cancel landed
-            // (for any later compensation), skip the status write (the stored status and result already
-            // carry the cancel reason) and skip this execution's timers (a cancelled workflow must not
-            // fire them). The caller treats CANCELLED as terminal with no notification and no retry, so
-            // the execution ends cleanly as cancelled.
-            if (result.newStatus == WorkflowInstance.Status.CANCELLED) {
-                val stored = workflowStore.getWorkflow(workflowInstance.workflowId)
-                if (stored.isDefined && stored.get().status == WorkflowInstance.Status.CANCELLED) {
-                    if (!context.dirtyCheckpoints.isEmpty) {
-                        workflowStore.storeActionCheckpoints(
-                            workflowInstance.workflowId,
-                            context.dirtyCheckpoints,
-                        )
-                    }
-                    log.info(
-                        "workflow instance with id={} was cancelled while executing; " +
-                            "settled without a status write",
+            // If the workflow was cancelled while this execution ran, the execution's own outcome is
+            // moot. cancelWorkflow has already persisted CANCELLED (bumping the version) and removed
+            // the scheduler task, so any status write from here would lose the optimistic lock,
+            // surface as TRANSIENT_ERROR and reschedule a re-execution of a cancelled workflow. The
+            // execution may also have ended in an unrelated error -- e.g. the lease renewal
+            // interrupting the worker once the task was gone -- which is why this does not key on
+            // the result type. Keep the checkpoints of the actions that completed (for any later
+            // compensation), skip the status write and this execution's timers, and settle as
+            // CANCELLED carrying the stored cancellation so the caller observes the same
+            // CancelledWorkflow any other observer of the workflow would.
+            val stored: Option<WorkflowInstance>? = workflowStore.getWorkflow(workflowInstance.workflowId)
+            if (stored != null && stored.isDefined && stored.get().status == WorkflowInstance.Status.CANCELLED) {
+                if (!context.dirtyCheckpoints.isEmpty) {
+                    workflowStore.storeActionCheckpoints(
                         workflowInstance.workflowId,
+                        context.dirtyCheckpoints,
                     )
-                    return result
                 }
+                log.info(
+                    "workflow instance with id={} was cancelled while executing (execution ended " +
+                        "as {}); settled without a status write",
+                    workflowInstance.workflowId,
+                    result.newStatus,
+                )
+                return WorkflowExecutor.ExecutionResult.builder()
+                    .newStatus(WorkflowInstance.Status.CANCELLED)
+                    .result(Either.left(storedCancellation(stored.get())))
+                    .build()
             }
-            // Check if we need to reload the workflow instance to avoid stale errors.
             if (context.shouldReloadWorkflowInstance.get()) {
                 log.info(
                     "reloading workflow instance with id={} to avoid stale errors",
