@@ -444,7 +444,7 @@ class WorkflowExecutionTaskHandler
             // Cancelled while executing: cancelWorkflow already wrote CANCELLED and removed the task,
             // so a status write here would only lose the optimistic lock and reschedule a dead
             // workflow. Keep the checkpoints, skip the write, and hand the caller the recorded
-            // cancellation. Not keyed on the result type: the interrupted worker may end with any outcome.
+            // cancellation. Not keyed on the result type: the execution may end with any outcome.
             val stored: Option<WorkflowInstance>? = workflowStore.getWorkflow(workflowInstance.workflowId)
             if (stored != null && stored.isDefined && stored.get().status == WorkflowInstance.Status.CANCELLED) {
                 if (!context.dirtyCheckpoints.isEmpty) {
