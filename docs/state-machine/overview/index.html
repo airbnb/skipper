@@ -220,16 +220,15 @@ event sequence each time. <code>@StateField</code> values are restored from pers
 Use <code>@StateField</code> only for data you expose via <code>@QueryMethod</code> or persist alongside Actions. See
 <a href="/docs/state-machine/persistence/">Persistence &#x26; Replay</a>.</p>
 <h2 id="installation">Installation</h2>
-<p>State Machine ships as a separate module on top of Skipper. Add the dependency (coordinates are
-illustrative until the first public release), and the admin module if you want the UI:</p>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#6A737D">// build.gradle.kts</span></span>
-<span class="line"><span style="color:#B392F0">dependencies</span><span style="color:#E1E4E8"> {</span></span>
-<span class="line"><span style="color:#B392F0">  implementation</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"dev.skipper:skipper-state-machine:0.1.0"</span><span style="color:#E1E4E8">)</span></span>
-<span class="line"><span style="color:#B392F0">  implementation</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"dev.skipper:skipper-state-machine-admin:0.1.0"</span><span style="color:#E1E4E8">) </span><span style="color:#6A737D">// optional: admin UI</span></span>
-<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
-<p>It uses the same Kotlin AllOpen plugin Skipper requires, so your workflow and action classes are
-already <code>open</code>. To enable the admin UI, register <code>StateMachineAdminResource</code> (a JAX-RS resource)
-with your server alongside Skipper’s own <code>AdminResource</code> — see <a href="/docs/state-machine/admin-ui/">Admin UI</a>.</p>
+<p>State Machine ships as a separate module, <code>skipper-state-machine</code>, layered on top of
+<code>skipper-core</code>. <strong>It is not yet published to Maven Central</strong> — only <code>skipper-core</code> is (see the
+<a href="/docs/quickstart/">Quickstart</a>). Until it is, build it from the
+<a href="https://github.com/airbnb/skipper">repository</a> with <code>./gradlew :skipper-state-machine:jar</code> and
+consume the jar directly; when published it will be <code>com.airbnb.skipper:skipper-state-machine</code>.</p>
+<p>The admin UI is part of this module, not a separate artifact. It uses the same Kotlin AllOpen
+plugin Skipper requires, so your workflow and action classes are already <code>open</code>. To enable the
+admin UI, register <code>StateMachineAdminResource</code> (a JAX-RS resource) with your server alongside
+Skipper’s own <code>AdminResource</code> — see <a href="/docs/state-machine/admin-ui/">Admin UI</a>.</p>
 <h2 id="next-steps">Next steps</h2>
 <ul>
 <li><a href="/docs/state-machine/first-state-machine/">Your First State Machine</a> — build, invoke, and test one.</li>
