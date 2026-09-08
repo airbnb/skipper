@@ -17,11 +17,11 @@
 #
 # One more runs on release tags only:
 #
-#   publish-release  Publishes the tagged version to Maven Central. Central is a public host,
-#                    so unlike Artifactory it is reachable from here; Artifactory publishing
-#                    stays manual (see RELEASING.md). Runs after jvm-build has passed on the
-#                    same tag, so nothing untested is ever published. The deployment is left
-#                    for a human to release in the Central Portal UI.
+#   publish-release  Publishes the tagged version to Maven Central, the only place Skipper is
+#                    published. Runs after jvm-build has passed on the same tag, so nothing
+#                    untested is ever published. The deployment is left for a human to
+#                    release in the Central Portal UI. Internal consumers get it from there:
+#                    Artifactory's Central mirror serves it without any direct upload.
 #
 # Required context for publish-release (Organization Settings > Contexts), named
 # `skipper-publish`. Restrict it to the group that owns releases; CircleCI does not expose

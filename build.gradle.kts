@@ -167,38 +167,26 @@ tasks.named<KotlinCompile>("compileTestKotlin") {
 // ---------------------------------------------------------------------------------------
 // Publishing
 // ---------------------------------------------------------------------------------------
-// One publication, two destinations, two cadences:
-//
-//   * Maven Central  the public channel. Published from CI on a v* tag with a semantic
-//                    version. Central versions are permanent, public and undeletable, so
-//                    only tagged releases go there.
-//   * Artifactory    the internal channel. Published by hand for every commit on main with
-//                    a build number (0.<minor>.<commit count>), so internal consumers can
-//                    track "latest" without anyone choosing a version.
+// One publication, one destination: Maven Central, published from CI on a v* tag with a
+// semantic version. Central versions are permanent, public and undeletable, so only tagged
+// releases are published at all. Internal consumers need nothing extra - Artifactory mirrors
+// Central, so a release appears there on its own and is never uploaded directly.
 //
 // com.vanniktech.maven.publish owns the publication - coordinates, sources jar, the Dokka
 // javadoc jar Central requires, the POM - and the Central Portal upload, which is a signed
 // bundle plus a validation poll rather than a plain Maven PUT. That is why maven-publish on
-// its own cannot reach Central. Artifactory is a second repository on the same publication.
+// its own cannot reach Central.
 //
-// Every value below can be set either as a Gradle property (CI: prefix the name with
-// ORG_GRADLE_PROJECT_; locally: ~/.gradle/gradle.properties) or as an environment variable
-// of the same name. This is a public repository: no host or credential is committed here.
+// Credentials come from the CI context, as Gradle properties (ORG_GRADLE_PROJECT_ prefix)
+// or environment variables. This is a public repository: none of it is committed here.
 //
-//   mavenCentralUsername / mavenCentralPassword          Central Portal user token
-//   SIGNING_KEY / SIGNING_PASSWORD                        armoured PGP private key + passphrase
-//                                                         (environment only - see `signing`)
-//   SNAPSHOT_REPOSITORY_URL / RELEASE_REPOSITORY_URL      Artifactory destinations
-//   artifactoryUsername / artifactoryPassword             Artifactory credentials
+//   mavenCentralUsername / mavenCentralPassword   Central Portal user token
+//   SIGNING_KEY / SIGNING_PASSWORD                 armoured PGP private key + passphrase
+//                                                  (environment only - see `signing`)
 //
 // Nothing here is required to build. With none of it set, `build`, `assemble` and
 // `publishToMavenLocal` work with no configuration whatsoever - which is what keeps
 // pull-request builds green for anyone, including contributors who could never hold these.
-
-// Reads a value from a Gradle property, falling back to an environment variable of the
-// same name. Returns null when neither is set.
-fun configValue(name: String): String? =
-    providers.gradleProperty(name).orElse(providers.environmentVariable(name)).orNull
 
 // Byte-identical jars across rebuilds of the same commit, so a published artifact can be
 // reproduced from its tag and compared against what the repository holds.
@@ -251,35 +239,11 @@ mavenPublishing {
     publishToMavenCentral()
 }
 
-// Artifactory: a second destination on the same publication.
-publishing {
-    repositories {
-        val destination =
-            if (version.toString().endsWith("-SNAPSHOT")) {
-                configValue("SNAPSHOT_REPOSITORY_URL")
-            } else {
-                configValue("RELEASE_REPOSITORY_URL")
-            }
-
-        // Registered only when the destination is known. Without it there is no
-        // `publishAllPublicationsToArtifactoryRepository` task, which is the correct outcome:
-        // a build that has not been told where to publish cannot publish.
-        if (destination != null) {
-            maven {
-                // The repository name drives the credential property names: a repository
-                // called `artifactory` reads artifactoryUsername / artifactoryPassword.
-                name = "artifactory"
-                url = uri(destination)
-                credentials(PasswordCredentials::class)
-            }
-        }
-    }
-}
-
-// Both destinations reject a re-upload of an existing version, and the sentinel version must
-// never reach a shared repository at all. Fail early and legibly rather than letting either
-// turn into an HTTP error mid-upload. publishToMavenLocal is deliberately not covered.
-tasks.matching { it is PublishToMavenRepository || it.name.endsWith("ToMavenCentral") }
+// Central rejects a re-upload of an existing version, and the sentinel version must never
+// reach it at all. Fail early and legibly rather than letting either turn into an HTTP error
+// mid-upload. Matches every Central-bound task the plugin registers, including the
+// repository-style ones that stage into build/; publishToMavenLocal is deliberately not covered.
+tasks.matching { it.name.contains("MavenCentral") }
     .configureEach {
         doFirst {
             check(version.toString() != LOCAL_VERSION) {
@@ -289,11 +253,11 @@ tasks.matching { it is PublishToMavenRepository || it.name.endsWith("ToMavenCent
         }
     }
 
-// Signing is conditional on purpose. Artifactory accepts unsigned artifacts, so a local or
-// internal publish needs no key material in scope. Maven Central rejects unsigned artifacts,
-// so the CI release job supplies SIGNING_KEY and SIGNING_PASSWORD and every publication is
-// signed. These are read as environment variables rather than the plugin's own
-// signingInMemoryKey properties so the names match what the CI context already holds.
+// Signing is conditional on purpose: publishToMavenLocal needs no key material in scope, so
+// anyone can validate the publication. Maven Central rejects unsigned artifacts, so the CI
+// release job supplies SIGNING_KEY and SIGNING_PASSWORD and every publication is signed.
+// These are read as environment variables rather than the plugin's own signingInMemoryKey
+// properties so the names match what the CI context already holds.
 signing {
     val signingKey = providers.environmentVariable("SIGNING_KEY")
     val signingPassword = providers.environmentVariable("SIGNING_PASSWORD")
