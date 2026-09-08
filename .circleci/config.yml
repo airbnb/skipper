@@ -15,8 +15,22 @@
 #
 #   web-publish  Pushes the built site to the gh-pages branch, which GitHub Pages serves.
 #
-# Maven publishing is not done from CI: the Maven repository is not reachable from here.
-# See RELEASING.md. Documentation publishing is different - it needs nothing but git push.
+# One more runs on release tags only:
+#
+#   publish-release  Publishes the tagged version to Maven Central, the only place Skipper is
+#                    published. Runs after jvm-build has passed on the same tag, so nothing
+#                    untested is ever published. The deployment is left for a human to
+#                    release in the Central Portal UI. Internal consumers get it from there:
+#                    Artifactory's Central mirror serves it without any direct upload.
+#
+# Required context for publish-release (Organization Settings > Contexts), named
+# `skipper-publish`. Restrict it to the group that owns releases; CircleCI does not expose
+# contexts to builds from forked pull requests, so PR builds never see these:
+#
+#   ORG_GRADLE_PROJECT_mavenCentralUsername  Central Portal user token: username
+#   ORG_GRADLE_PROJECT_mavenCentralPassword  Central Portal user token: password
+#   SIGNING_KEY                              ASCII-armoured PGP private key
+#   SIGNING_PASSWORD                         its passphrase
 #
 # Why the site is published from here rather than from GitHub Actions: the Actions model
 # for Pages needs an OIDC token that only GitHub Actions can mint, and Actions does not run
@@ -244,6 +258,43 @@ jobs:
           name: Publish the site to gh-pages
           command: ./scripts/publish-web.sh
 
+  publish-release:
+    executor: jvm
+    steps:
+      - checkout
+
+      - restore_cache:
+          name: Restore Gradle caches
+          keys:
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-
+
+      - run:
+          name: Check the release context is attached
+          # A missing context surfaces here as one clear line rather than as a Gradle
+          # credentials error several minutes into the upload.
+          command: |
+            missing=""
+            for v in ORG_GRADLE_PROJECT_mavenCentralUsername ORG_GRADLE_PROJECT_mavenCentralPassword SIGNING_KEY SIGNING_PASSWORD; do
+              [ -n "${!v:-}" ] || missing="$missing $v"
+            done
+            if [ -n "$missing" ]; then
+              echo "Not set:$missing"
+              echo "Add them to the skipper-publish context (see the header of this file)."
+              exit 1
+            fi
+
+      - run:
+          name: Publish the tagged release to Maven Central
+          # The tag is the version, minus the leading `v`. Uploads a signed bundle and waits
+          # for Central's validation; the deployment then sits in the Portal until someone
+          # releases it. Central refuses to overwrite an existing version, so re-running an
+          # already-published tag fails rather than silently replacing the artifact.
+          command: |
+            VERSION="${CIRCLE_TAG#v}"
+            echo "Publishing com.airbnb.skipper:skipper-core:$VERSION to Maven Central"
+            ./gradlew --stacktrace publishToMavenCentral -PVERSION_NAME="$VERSION"
+
 workflows:
   build:
     jobs:
@@ -257,3 +308,23 @@ workflows:
           filters:
             branches:
               only: main
+
+  # Tag-triggered, so a release is re-runnable against an immutable ref and a maintainer can
+  # cut one by pushing a tag with no CI change. jvm-build runs again here: redundant for a tag
+  # on an already-tested commit, but it is what makes a hand-pushed tag safe. CircleCI does
+  # not run a workflow on a tag unless its jobs carry tag filters, so `build` above is
+  # unaffected by tag pushes.
+  release:
+    jobs:
+      - jvm-build:
+          filters: &release-tags
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
+      - publish-release:
+          requires:
+            - jvm-build
+          context:
+            - skipper-publish
+          filters: *release-tags

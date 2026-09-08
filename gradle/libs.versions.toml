@@ -1,12 +1,13 @@
 # Skipper Gradle version catalog.
 #
 # Dependency versions for the OSS build. A few libraries are pinned deliberately:
-# kotlin 1.9.10, jackson 2.9.10, and guava 33.5.0-jre. vavr tracks 0.10.4, matching
-# the standard pin. The remaining libraries track their standard pins. Keep this file
-# in sync when those change.
+# kotlin 1.9.25 (matching the standard pin; the Maven Central publishing plugin needs
+# 1.9.20+), jackson 2.9.10, and guava 33.5.0-jre. vavr tracks 0.10.4, matching the
+# standard pin. The remaining libraries track their standard pins. Keep this file in
+# sync when those change.
 
 [versions]
-kotlin = "1.9.10"
+kotlin = "1.9.25"
 kotlinxCoroutines = "1.8.1"
 jackson = "2.9.10"
 guava = "33.5.0-jre"
@@ -19,6 +20,12 @@ javassist = "3.25.0-GA"
 opentracing = "0.33.0"
 javaxInject = "1"
 jakartaWsRsApi = "2.1.6"
+
+# Publishing toolchain. Dokka stays on the 1.9.x line to match the pinned Kotlin 1.9.x -
+# Dokka 2.x expects a newer compiler. The vanniktech plugin owns the Maven Central Portal
+# upload (signed bundle + validation poll), which plain maven-publish cannot do.
+dokka = "1.9.20"
+vanniktechMavenPublish = "0.34.0"
 
 # Test-only pins (OSS test subset). junit-jupiter/vintage share one version; junit4 is the
 # legacy engine the `util` suite still targets. kotlin-test tracks the Kotlin version;
@@ -98,3 +105,5 @@ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 # core's @SkipperOpen Workflow/Actions). Core applies all-open to its test compile only, so this
 # plugin entry is unused by core.
 kotlin-allopen = { id = "org.jetbrains.kotlin.plugin.allopen", version.ref = "kotlin" }
+dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
+vanniktech-maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "vanniktechMavenPublish" }

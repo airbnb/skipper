@@ -1,35 +1,31 @@
 # Releasing Skipper
 
-Skipper publishes `com.airbnb.skipper:skipper-core` to Artifactory.
+Skipper publishes `com.airbnb.skipper:skipper-core` to **Maven Central**, from CI, on every
+`v*` tag. That is the only place it is published.
 
-Publishing is **manual**, run from a machine with network access to that repository. It is
-not done from CI, which cannot reach it.
-
-There are two publishing modes, and most of the time you want the first:
-
-- **Every commit** on `main` publishes an immutable artifact versioned
-  `0.<minor>.<commit count>`. Nobody chooses a version. This is what lets a consumer
-  track "whatever is newest" without anyone bumping anything.
-- **Tagged releases** publish a semantic version for a milestone worth naming.
-
-Both are the same publication to the same repository; only the version differs.
+Every version on Central is permanent, public and undeletable, so only deliberately tagged
+releases go there. Internal consumers need nothing extra: Artifactory mirrors Central, so a
+release shows up there on its own — there is no direct upload to Artifactory, and no
+per-commit publishing of any kind.
 
 ## One-time setup
 
-The build takes its destination and credentials entirely from configuration — no repository
-URL or credential is committed here. Set these four values, either in
-`~/.gradle/gradle.properties` or as environment variables of the same name:
+Credentials live in the CircleCI context `skipper-publish` and are never needed locally —
+nothing is committed here:
 
-```properties
-SNAPSHOT_REPOSITORY_URL=<destination for -SNAPSHOT versions>
-RELEASE_REPOSITORY_URL=<destination for release versions>
-artifactoryUsername=<repository username>
-artifactoryPassword=<repository password or API token>
+```
+ORG_GRADLE_PROJECT_mavenCentralUsername   Central Portal user token: username
+ORG_GRADLE_PROJECT_mavenCentralPassword   Central Portal user token: password
+SIGNING_KEY                               ASCII-armoured PGP private key
+SIGNING_PASSWORD                          its passphrase
 ```
 
-None of them are needed to build or test. Until the relevant URL is set there is no remote
-publish task at all, so `./gradlew build` and `publishToMavenLocal` work with no
-configuration whatsoever.
+Central requires every artifact to be signed and verifies the signature against a public
+keyserver, so the key's public half must be published there first.
+
+None of these are needed to build or test. The Central task only asks for its credentials
+when actually run, so `./gradlew build` and `publishToMavenLocal` work with no configuration
+whatsoever.
 
 Check your setup without touching the network:
 
@@ -60,44 +56,15 @@ minor release.
 ```bash
 scripts/next-version.sh             # the next release version; exits 3 if nothing releasable landed
 scripts/next-version.sh --snapshot  # always prints a version, treating "nothing" as a patch
-scripts/next-version.sh --build     # a unique, monotonic version for THIS commit; never fails
 ```
-
-`--build` is the one used for per-commit publishing. It ignores commit prefixes entirely and
-prints `0.<minor>.<commit count>`: monotonic and unique because `main` is linear under squash
-merges, and correctly ordered because Maven compares each component numerically (`0.1.11` is
-newer than `0.1.9`). Tagging `v0.2.0` moves the whole series to `0.2.<count>`. It carries no
-semantic meaning by design — it is a build number, not a release.
 
 Every publish task takes its version as `-PVERSION_NAME`. A build given no version falls
 back to a `0.0.0-LOCAL` sentinel that the publish tasks refuse to upload to a shared
 repository, so a local experiment cannot become a release by accident.
 
-## Publishing a build (every commit)
-
-```bash
-./gradlew publishAllPublicationsToArtifactoryRepository -PVERSION_NAME="$(scripts/next-version.sh --build)"
-```
-
-This goes to the **release** repository, not snapshots, which is deliberate. A consumer with
-a pinned lockfile — Bazel, for instance — needs artifacts that are immutable and never
-pruned. A snapshot is neither: pinning one silently freezes the consumer on a single
-arbitrary timestamped build, until it is pruned out from under them. The cost of using real
-versions is that every merge leaves a permanent artifact, roughly 1 MB of jar plus sources.
-
-Consumers discover the newest version from the repository itself, so nothing needs to tell
-them what was published:
-
-```bash
-curl -s "$REPO/com/airbnb/skipper/skipper-core/maven-metadata.xml" | grep '<latest>'
-```
-
-Snapshots remain available (`--snapshot`, with a `-SNAPSHOT` suffix, which routes to the
-snapshot repository) for consumers that genuinely want a moving target.
-
 ## Publishing a release
 
-Releases are **immutable**: Artifactory will not accept a re-upload of a version that
+Releases are **immutable**: Maven Central will not accept a re-upload of a version that
 already exists. A mistake is corrected by publishing a higher version, never by replacing
 one. Check `scripts/next-version.sh` output before tagging.
 
@@ -111,25 +78,34 @@ one. Check `scripts/next-version.sh` output before tagging.
 
    A non-zero exit here means nothing releasable has landed since the last tag.
 
-3. Publish from that exact tag:
+   **First release only:** tag `v0.2.0` by hand instead. Versions `0.1.1`–`0.1.7` were
+   consumed by an earlier per-commit build-number scheme and still exist in the internal
+   mirror, so the first semantic release has to sort above them or "latest" there would
+   point at the older artifact. The script takes over from that tag onward.
 
-   ```bash
-   git checkout "v$V"
-   ./gradlew clean publishAllPublicationsToArtifactoryRepository -PVERSION_NAME="$V"
-   ```
+3. **CI takes it from here.** The tag triggers the `release` workflow: `jvm-build` runs the
+   full test suite on the tagged commit, then `publish-release` signs the artifacts and
+   uploads them to the Central Portal, where they sit as a validated deployment.
 
-4. Publish the GitHub release so the releases page matches what shipped:
+4. **Release it in the Portal.** Sign in at central.sonatype.com, open *Deployments*, check
+   the artifacts look right, and press *Publish*. Until you do, nothing is public and the
+   deployment can be dropped instead. Expect roughly 15–30 minutes after that before the
+   version is resolvable from `repo1.maven.org`.
+
+5. Publish the GitHub release so the releases page matches what shipped:
 
    ```bash
    gh release create "v$V" --generate-notes
    ```
 
-5. Return to `main`: `git checkout main`.
-
 ## Notes
 
 - **Signing** is off unless `SIGNING_KEY` and `SIGNING_PASSWORD` are set, in which case every
-  publication is signed. Repositories that require signatures — Maven Central among them —
-  need those two values present.
+  publication is signed. Maven Central rejects unsigned artifacts, so the CI release job
+  always has them; `publishToMavenLocal` does not need them.
+- **The javadoc jar** Central requires is produced by Dokka in javadoc format. The module is
+  Kotlin-first, so the stock `javadoc` task would document almost nothing.
+- **A failed or unwanted Central deployment** can be dropped in the Portal with no trace.
+  A *released* one cannot: the fix is always a higher version.
 - **Reproducibility**: jar timestamps and file order are normalised, so rebuilding a tag
   produces byte-identical artifacts that can be compared against what was published.
