@@ -190,20 +190,16 @@ Use `@StateField` only for data you expose via `@QueryMethod` or persist alongsi
 
 ## Installation
 
-State Machine ships as a separate module on top of Skipper. Add the dependency (coordinates are
-illustrative until the first public release), and the admin module if you want the UI:
+State Machine ships as a separate module, `skipper-state-machine`, layered on top of
+`skipper-core`. **It is not yet published to Maven Central** — only `skipper-core` is (see the
+[Quickstart](/docs/quickstart/)). Until it is, build it from the
+[repository](https://github.com/airbnb/skipper) with `./gradlew :skipper-state-machine:jar` and
+consume the jar directly; when published it will be `com.airbnb.skipper:skipper-state-machine`.
 
-```kotlin
-// build.gradle.kts
-dependencies {
-  implementation("dev.skipper:skipper-state-machine:0.1.0")
-  implementation("dev.skipper:skipper-state-machine-admin:0.1.0") // optional: admin UI
-}
-```
-
-It uses the same Kotlin AllOpen plugin Skipper requires, so your workflow and action classes are
-already `open`. To enable the admin UI, register `StateMachineAdminResource` (a JAX-RS resource)
-with your server alongside Skipper's own `AdminResource` — see [Admin UI](/docs/state-machine/admin-ui/).
+The admin UI is part of this module, not a separate artifact. It uses the same Kotlin AllOpen
+plugin Skipper requires, so your workflow and action classes are already `open`. To enable the
+admin UI, register `StateMachineAdminResource` (a JAX-RS resource) with your server alongside
+Skipper's own `AdminResource` — see [Admin UI](/docs/state-machine/admin-ui/).
 
 ## Next steps
 

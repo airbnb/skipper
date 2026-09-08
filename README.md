@@ -10,6 +10,7 @@
 Skipper is a lightweight workflow engine. Write business processes as ordinary
 Kotlin or Java code, and let Skipper guarantee they run to completion.
 
+<a href="https://central.sonatype.com/artifact/com.airbnb.skipper/skipper-core"><img src="https://img.shields.io/maven-central/v/com.airbnb.skipper/skipper-core?color=2a3990&label=Maven%20Central" alt="Maven Central"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-2a3990" alt="License: Apache 2.0"></a>
 <img src="https://img.shields.io/badge/JVM-8%2B-2a3990" alt="JVM 8+">
 <img src="https://img.shields.io/badge/API-Kotlin_%26_Java-f15b29" alt="Kotlin and Java">
@@ -102,8 +103,36 @@ factory(CheckoutWorkflow::class.java, "order-${order.id}").clearReview(true)
 
 ## Getting started
 
-> **Pre-release.** Published artifacts arrive with the first tagged release. Until then, build
-> from source with `./gradlew build` and consume the jar directly.
+Skipper is on Maven Central as `com.airbnb.skipper:skipper-core`. The badge above shows the
+current version.
+
+```kotlin
+// build.gradle.kts
+dependencies {
+  implementation("com.airbnb.skipper:skipper-core:0.2.0")
+}
+```
+
+<details>
+<summary>Gradle (Groovy) and Maven</summary>
+
+```groovy
+// build.gradle
+implementation 'com.airbnb.skipper:skipper-core:0.2.0'
+```
+
+```xml
+<!-- pom.xml -->
+<dependency>
+  <groupId>com.airbnb.skipper</groupId>
+  <artifactId>skipper-core</artifactId>
+  <version>0.2.0</version>
+</dependency>
+```
+
+</details>
+
+Then wire it up once at startup:
 
 ```kotlin
 // In main(), or wherever your service wires up its singletons on startup.

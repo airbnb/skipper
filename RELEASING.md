@@ -103,6 +103,10 @@ one. Check `scripts/next-version.sh` output before tagging.
    gh release create "v$V" --generate-notes
    ```
 
+6. Bump the version in the dependency snippets — `README.md` and
+   `web/src/content/docs/quickstart.md` — to `$V`. The README badge updates itself; the
+   copy-pasteable snippets do not.
+
 ## Notes
 
 - **Signing** is off unless `SIGNING_KEY` and `SIGNING_PASSWORD` are set, in which case every
