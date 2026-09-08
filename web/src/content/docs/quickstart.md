@@ -8,18 +8,26 @@ order: 2
 This guide gets Skipper running in an existing JVM service in a few minutes. For a deeper,
 worked example with tests, see **[Your First Workflow](/docs/first-workflow/)**.
 
-> Package coordinates and module names below are illustrative and will be finalized with
-> the first public release.
-
 ## 1. Add the dependency
 
-Add Skipper to your build.
+Skipper is published to Maven Central as `com.airbnb.skipper:skipper-core`. The current
+version is on the
+[artifact page](https://central.sonatype.com/artifact/com.airbnb.skipper/skipper-core).
 
 ```kotlin
 // build.gradle.kts
 dependencies {
-  implementation("dev.skipper:skipper:0.1.0")
+  implementation("com.airbnb.skipper:skipper-core:0.2.0")
 }
+```
+
+```xml
+<!-- pom.xml -->
+<dependency>
+  <groupId>com.airbnb.skipper</groupId>
+  <artifactId>skipper-core</artifactId>
+  <version>0.2.0</version>
+</dependency>
 ```
 
 If you write workflows in Kotlin, also enable the AllOpen compiler plugin so Skipper can
