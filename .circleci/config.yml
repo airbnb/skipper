@@ -37,13 +37,14 @@
 # on this repository while it is private. The branch model needs only push access, which
 # CircleCI can be given. See scripts/publish-web.sh.
 #
-# Required for web-publish, done once (Project Settings > SSH Keys > Additional SSH Keys):
+# Required for web-publish, done once:
 #
 #   A deploy key with write access. Generate a keypair, add the public half under the
 #   repository's Settings > Deploy keys with "Allow write access" checked, and add the
-#   private half here with hostname github.com. `add_ssh_keys` loads every key attached to
-#   the project, so no fingerprint has to be named in this file. The deploy keys CircleCI
-#   creates through its GitHub integration are read-only and will not do.
+#   private half under Project Settings > SSH Keys > Additional SSH Keys for github.com.
+#   The job pins that key's fingerprint, so replacing the key means updating it there too.
+#   The deploy key CircleCI creates through its GitHub integration is read-only and will
+#   not do - it is what every failed web-publish run was authenticating with.
 #
 # CircleCI cannot filter jobs by changed path without converting this to a dynamic setup
 # workflow, so web-build runs even for a Gradle-only change. That is deliberate: the build
@@ -235,10 +236,15 @@ jobs:
     steps:
       - checkout
 
-      # Loads every SSH key attached to the project, which must include a deploy key with
-      # write access - see the header comment. Naming no fingerprint keeps the key
-      # rotatable without a commit.
-      - add_ssh_keys
+      # Pinned to the write-access deploy key. Without a fingerprint CircleCI offers every
+      # key on the project and SSH leads with the auto-created read-only checkout key,
+      # which GitHub accepts for authentication and then rejects for the push ("The key
+      # you are authenticating with has been marked as read only"). Pinning makes this
+      # key the only identity offered to github.com. Rotating the key means updating
+      # this fingerprint.
+      - add_ssh_keys:
+          fingerprints:
+            - "SHA256:vaTKb0KMOiHkGqSQ4/jL7alxnIDoUGkTS5CC63LRI3E"
 
       - run:
           name: Trust GitHub's SSH host keys
