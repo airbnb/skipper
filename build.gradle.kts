@@ -1,5 +1,6 @@
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.KotlinJvm
+import java.util.Base64
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -258,11 +259,21 @@ tasks.matching { it.name.contains("MavenCentral") }
 // release job supplies SIGNING_KEY and SIGNING_PASSWORD and every publication is signed.
 // These are read as environment variables rather than the plugin's own signingInMemoryKey
 // properties so the names match what the CI context already holds.
+//
+// SIGNING_KEY may be either the ASCII-armoured key itself or base64 of it. CI variable fields
+// routinely flatten a multi-line value onto one line, and a flattened armoured key fails
+// with nothing more helpful than "Could not read PGP secret key"; base64 survives any field.
+// The MIME decoder also tolerates a base64 blob that was itself line-wrapped.
 signing {
     val signingKey = providers.environmentVariable("SIGNING_KEY")
     val signingPassword = providers.environmentVariable("SIGNING_PASSWORD")
     if (signingKey.isPresent && signingPassword.isPresent) {
-        useInMemoryPgpKeys(signingKey.get(), signingPassword.get())
+        val armoured =
+            signingKey.get().trim().let { value ->
+                if (value.startsWith("-----BEGIN PGP")) value
+                else String(Base64.getMimeDecoder().decode(value), Charsets.UTF_8)
+            }
+        useInMemoryPgpKeys(armoured, signingPassword.get())
         sign(publishing.publications)
     }
 }

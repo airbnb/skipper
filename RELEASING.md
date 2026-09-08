@@ -16,12 +16,17 @@ nothing is committed here:
 ```
 ORG_GRADLE_PROJECT_mavenCentralUsername   Central Portal user token: username
 ORG_GRADLE_PROJECT_mavenCentralPassword   Central Portal user token: password
-SIGNING_KEY                               ASCII-armoured PGP private key
+SIGNING_KEY                               ASCII-armoured PGP private key, or base64 of it
 SIGNING_PASSWORD                          its passphrase
 ```
 
 Central requires every artifact to be signed and verifies the signature against a public
 keyserver, so the key's public half must be published there first.
+
+Prefer storing `SIGNING_KEY` as base64 (`gpg --armor --export-secret-keys KEY_ID | base64`).
+The armoured key is multi-line, and a variable field that flattens it onto one line fails
+inside the release job with only `Could not read PGP secret key` to go on — the same message
+a wrong passphrase gives. base64 survives any field, line-wrapped or not.
 
 None of these are needed to build or test. The Central task only asks for its credentials
 when actually run, so `./gradlew build` and `publishToMavenLocal` work with no configuration
