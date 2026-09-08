@@ -1,11 +1,19 @@
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.KotlinJvm
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     `java-library`
-    // Both are Gradle built-ins, so adding them resolves nothing over the network.
+    alias(libs.plugins.kotlin.jvm)
+    // Dokka produces the javadoc jar Maven Central requires; the vanniktech plugin owns the
+    // publication and the Central Portal upload. It applies maven-publish and signing itself,
+    // but they are listed here too: Gradle only generates the type-safe `publishing { }` and
+    // `signing { }` accessors used below for plugins declared in this block. Re-applying an
+    // already-applied plugin is a no-op.
+    alias(libs.plugins.dokka)
+    alias(libs.plugins.vanniktech.maven.publish)
     `maven-publish`
     signing
-    alias(libs.plugins.kotlin.jvm)
 }
 
 group = "com.airbnb.skipper"
@@ -24,8 +32,6 @@ java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(17))
     }
-    // Published alongside the binary so consumers get IDE navigation into the engine.
-    withSourcesJar()
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -161,27 +167,33 @@ tasks.named<KotlinCompile>("compileTestKotlin") {
 // ---------------------------------------------------------------------------------------
 // Publishing
 // ---------------------------------------------------------------------------------------
-// One publication, published to Artifactory. The destination is supplied entirely from the
-// environment: this is a public repository, so the URLs and credentials are configuration,
-// not source. Only the hostnames are withheld - nothing about the mechanism is.
+// One publication, two destinations, two cadences:
 //
-// The version selects which destination is used - anything ending in -SNAPSHOT goes to the
-// snapshot URL, everything else to the release URL. CI passes the version with
-// -PVERSION_NAME; scripts/next-version.sh computes it from the git history.
+//   * Maven Central  the public channel. Published from CI on a v* tag with a semantic
+//                    version. Central versions are permanent, public and undeletable, so
+//                    only tagged releases go there.
+//   * Artifactory    the internal channel. Published by hand for every commit on main with
+//                    a build number (0.<minor>.<commit count>), so internal consumers can
+//                    track "latest" without anyone choosing a version.
+//
+// com.vanniktech.maven.publish owns the publication - coordinates, sources jar, the Dokka
+// javadoc jar Central requires, the POM - and the Central Portal upload, which is a signed
+// bundle plus a validation poll rather than a plain Maven PUT. That is why maven-publish on
+// its own cannot reach Central. Artifactory is a second repository on the same publication.
 //
 // Every value below can be set either as a Gradle property (CI: prefix the name with
-// ORG_GRADLE_PROJECT_; locally: put it in ~/.gradle/gradle.properties) or as a plain
-// environment variable of the same name:
+// ORG_GRADLE_PROJECT_; locally: ~/.gradle/gradle.properties) or as an environment variable
+// of the same name. This is a public repository: no host or credential is committed here.
 //
-//   SNAPSHOT_REPOSITORY_URL   destination for -SNAPSHOT versions
-//   RELEASE_REPOSITORY_URL    destination for release versions
-//   artifactoryUsername       repository username
-//   artifactoryPassword       repository password or API token
+//   mavenCentralUsername / mavenCentralPassword          Central Portal user token
+//   SIGNING_KEY / SIGNING_PASSWORD                        armoured PGP private key + passphrase
+//                                                         (environment only - see `signing`)
+//   SNAPSHOT_REPOSITORY_URL / RELEASE_REPOSITORY_URL      Artifactory destinations
+//   artifactoryUsername / artifactoryPassword             Artifactory credentials
 //
-// Nothing here is required to build. When the relevant URL is unset the remote repository
-// is not registered at all, so `build`, `assemble` and `publishToMavenLocal` work with no
-// configuration whatsoever - which is what keeps pull-request builds green for anyone,
-// including contributors who could never hold these values.
+// Nothing here is required to build. With none of it set, `build`, `assemble` and
+// `publishToMavenLocal` work with no configuration whatsoever - which is what keeps
+// pull-request builds green for anyone, including contributors who could never hold these.
 
 // Reads a value from a Gradle property, falling back to an environment variable of the
 // same name. Returns null when neither is set.
@@ -195,43 +207,52 @@ tasks.withType<Jar>().configureEach {
     isReproducibleFileOrder = true
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("maven") {
-            from(components["java"])
+mavenPublishing {
+    // `skipper-core` rather than `skipper`: skipper-state-machine is a sibling module, and
+    // coordinates cannot be renamed once consumers depend on them.
+    coordinates("com.airbnb.skipper", "skipper-core", version.toString())
 
-            // `skipper-core` rather than `skipper`: skipper-state-machine is a sibling
-            // module, and coordinates cannot be renamed once consumers depend on them.
-            artifactId = "skipper-core"
+    // Central requires a javadoc jar. This module is Kotlin-first (128 .kt to 7 .java), so the
+    // stock `javadoc` task would document seven files and risk symbol-resolution failures
+    // against the jointly compiled Kotlin. Dokka's javadoc-format jar is the one that is both
+    // accepted by Central and actually useful.
+    configure(KotlinJvm(javadocJar = JavadocJar.Dokka("dokkaJavadoc"), sourcesJar = true))
 
-            pom {
-                name.set("Skipper")
-                description.set(
-                    "Durable workflow engine for the JVM, embedded in the service that uses it."
-                )
-                url.set("https://github.com/airbnb/skipper")
-                licenses {
-                    license {
-                        name.set("The Apache License, Version 2.0")
-                        url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
-                    }
-                }
-                developers {
-                    developer {
-                        id.set("airbnb")
-                        name.set("Airbnb, Inc.")
-                        url.set("https://github.com/airbnb")
-                    }
-                }
-                scm {
-                    url.set("https://github.com/airbnb/skipper")
-                    connection.set("scm:git:https://github.com/airbnb/skipper.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/airbnb/skipper.git")
-                }
+    pom {
+        name.set("Skipper")
+        description.set(
+            "Durable workflow engine for the JVM, embedded in the service that uses it."
+        )
+        url.set("https://github.com/airbnb/skipper")
+        licenses {
+            license {
+                name.set("The Apache License, Version 2.0")
+                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
             }
+        }
+        developers {
+            developer {
+                id.set("airbnb")
+                name.set("Airbnb, Inc.")
+                url.set("https://github.com/airbnb")
+            }
+        }
+        scm {
+            url.set("https://github.com/airbnb/skipper")
+            connection.set("scm:git:https://github.com/airbnb/skipper.git")
+            developerConnection.set("scm:git:ssh://git@github.com/airbnb/skipper.git")
         }
     }
 
+    // Uploads a signed bundle to the Central Portal and polls for validation. The deployment
+    // is then left for a human to release in the Portal UI rather than released automatically,
+    // so the first few releases can be inspected before they become permanent. Flip to
+    // automaticRelease = true once the pipeline has proven itself.
+    publishToMavenCentral()
+}
+
+// Artifactory: a second destination on the same publication.
+publishing {
     repositories {
         val destination =
             if (version.toString().endsWith("-SNAPSHOT")) {
@@ -255,21 +276,24 @@ publishing {
     }
 }
 
-// Artifactory rejects a re-upload of an existing release version, and the sentinel version
-// must never reach a shared repository at all. Fail early and legibly rather than letting
-// either turn into an HTTP error mid-upload.
-tasks.withType<PublishToMavenRepository>().configureEach {
-    doFirst {
-        check(version.toString() != LOCAL_VERSION) {
-            "Refusing to publish $LOCAL_VERSION. Pass -PVERSION_NAME=<version>, e.g. " +
-                "./gradlew publishAllPublicationsToArtifactoryRepository -PVERSION_NAME=0.1.0-SNAPSHOT"
+// Both destinations reject a re-upload of an existing version, and the sentinel version must
+// never reach a shared repository at all. Fail early and legibly rather than letting either
+// turn into an HTTP error mid-upload. publishToMavenLocal is deliberately not covered.
+tasks.matching { it is PublishToMavenRepository || it.name.endsWith("ToMavenCentral") }
+    .configureEach {
+        doFirst {
+            check(version.toString() != LOCAL_VERSION) {
+                "Refusing to publish $LOCAL_VERSION. Pass -PVERSION_NAME=<version>, e.g. " +
+                    "./gradlew publishToMavenCentral -PVERSION_NAME=0.2.0"
+            }
         }
     }
-}
 
-// Signing is optional on purpose. Artifactory accepts unsigned artifacts, so snapshots
-// publish with no key material in scope; when SIGNING_KEY is present (Maven Central
-// requires signatures) every publication is signed.
+// Signing is conditional on purpose. Artifactory accepts unsigned artifacts, so a local or
+// internal publish needs no key material in scope. Maven Central rejects unsigned artifacts,
+// so the CI release job supplies SIGNING_KEY and SIGNING_PASSWORD and every publication is
+// signed. These are read as environment variables rather than the plugin's own
+// signingInMemoryKey properties so the names match what the CI context already holds.
 signing {
     val signingKey = providers.environmentVariable("SIGNING_KEY")
     val signingPassword = providers.environmentVariable("SIGNING_PASSWORD")
