@@ -4,10 +4,9 @@ import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.api.WaitSignal
 import com.airbnb.skipper.internal.scheduler.Scheduler
-import com.google.inject.Inject
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutionException
-import org.assertj.core.api.Assertions.assertThat
+import javax.inject.Inject
 
 /**
  * Factory to create TestHelper instances.
@@ -205,9 +204,9 @@ class TestHelper(private val skipperEngine: SkipperEngine, private val scheduler
             lambda.run()
             throw AssertionError("Expected WaitSignal to be thrown but nothing was thrown!")
         } catch (e: CompletionException) {
-            assertThat(e.cause).isInstanceOf(WaitSignal::class.java)
+            if (e.cause !is WaitSignal) throw AssertionError("Expected WaitSignal but got ${e.cause}", e)
         } catch (e: ExecutionException) {
-            assertThat(e.cause).isInstanceOf(WaitSignal::class.java)
+            if (e.cause !is WaitSignal) throw AssertionError("Expected WaitSignal but got ${e.cause}", e)
         } catch (e: WaitSignal) {
             // expected
         }

@@ -29,8 +29,8 @@
 #
 # One more runs on release tags only:
 #
-#   publish-release  Publishes the tagged version to Maven Central, the only place Skipper is
-#                    published. Runs after jvm-build has passed on the same tag, so nothing
+#   publish-release  Publishes the tagged version of skipper-core and skipper-testutils to Maven
+#                    Central, the only place Skipper is published. Runs after jvm-build has passed on the same tag, so nothing
 #                    untested is ever published. The deployment is left for a human to
 #                    release in the Central Portal UI. Internal consumers get it from there:
 #                    Artifactory's Central mirror serves it without any direct upload.
@@ -110,7 +110,7 @@ jobs:
           name: Restore Gradle caches
           keys:
             # Exact match: same Gradle distribution, same declared dependencies.
-            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}-{{ checksum "testutils/build.gradle.kts" }}
             # Partial match: same Gradle distribution, dependencies have moved. Still
             # saves the wrapper download and most of the module cache.
             - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-
@@ -158,7 +158,7 @@ jobs:
           name: Save Gradle caches
           # Saved even when the build fails: the dependency download is the expensive
           # part and it is already done by the time anything can fail.
-          key: gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
+          key: gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}-{{ checksum "testutils/build.gradle.kts" }}
           paths:
             - ~/.gradle/caches
             - ~/.gradle/wrapper
@@ -172,6 +172,8 @@ jobs:
 
       - store_test_results:
           path: skipper-state-machine/build/test-results/test
+      - store_test_results:
+          path: testutils/build/test-results/test
 
       # Browsable HTML test report.
       - store_artifacts:
@@ -180,6 +182,8 @@ jobs:
 
       - store_artifacts:
           path: skipper-state-machine/build/reports/tests/test
+      - store_artifacts:
+          path: testutils/build/reports/tests/test
           destination: test-report-state-machine
 
       - store_artifacts:
@@ -188,6 +192,8 @@ jobs:
 
       - store_artifacts:
           path: skipper-state-machine/build/libs
+      - store_artifacts:
+          path: testutils/build/libs
           destination: libs-state-machine
 
   format-check:
@@ -202,7 +208,7 @@ jobs:
           # Same keys as jvm-build: the formatter jars are ordinary Gradle dependencies, so a
           # cache jvm-build saved already holds them.
           keys:
-            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}-{{ checksum "testutils/build.gradle.kts" }}
             - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-
 
       - run:
@@ -348,7 +354,7 @@ jobs:
       - restore_cache:
           name: Restore Gradle caches
           keys:
-            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}-{{ checksum "testutils/build.gradle.kts" }}
             - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-
 
       - run:
@@ -374,7 +380,7 @@ jobs:
           # already-published tag fails rather than silently replacing the artifact.
           command: |
             VERSION="${CIRCLE_TAG#v}"
-            echo "Publishing com.airbnb.skipper:skipper-core:$VERSION to Maven Central"
+            echo "Publishing com.airbnb.skipper:skipper-core and skipper-testutils $VERSION to Maven Central"
             ./gradlew --stacktrace publishToMavenCentral -PVERSION_NAME="$VERSION"
 
 workflows:
