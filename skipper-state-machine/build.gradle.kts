@@ -1,3 +1,6 @@
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.KotlinJvm
+import java.util.Base64
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -7,9 +10,15 @@ plugins {
     // all-open compiler plugin must run for BOTH main and test compilations. Bound to
     // @SkipperOpen below. (Core applies all-open to its test compilation only.)
     alias(libs.plugins.kotlin.allopen)
+    alias(libs.plugins.dokka)
+    alias(libs.plugins.vanniktech.maven.publish)
+    `maven-publish`
+    signing
 }
 
 group = "com.airbnb.skipper"
+// Versioned with the engine: one tag releases skipper-core, skipper-testutils and this module.
+version = rootProject.version
 
 // Build with a JDK 17 toolchain but emit JVM 8 bytecode, matching core's build.
 java {
@@ -106,4 +115,68 @@ tasks.withType<Test>().configureEach {
     // the Throwable-based Skipper error types; under the JDK 17 module system that access must be
     // opened to the unnamed module (same arg core's test task sets).
     jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
+}
+
+// ---------------------------------------------------------------------------------------
+// Publishing
+// ---------------------------------------------------------------------------------------
+// Published to Maven Central as com.airbnb.skipper:skipper-state-machine by the same
+// `publishToMavenCentral` run that publishes skipper-core; the configuration mirrors the root
+// project's (see the comments there). Consumers add it next to skipper-core; core never depends
+// on it.
+tasks.withType<Jar>().configureEach {
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+}
+
+mavenPublishing {
+    coordinates("com.airbnb.skipper", "skipper-state-machine", version.toString())
+    configure(KotlinJvm(javadocJar = JavadocJar.Dokka("dokkaJavadoc"), sourcesJar = true))
+    pom {
+        name.set("Skipper State Machine")
+        description.set("A state-machine DSL layered on the Skipper durable workflow engine.")
+        url.set("https://github.com/airbnb/skipper")
+        licenses {
+            license {
+                name.set("The Apache License, Version 2.0")
+                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+            }
+        }
+        developers {
+            developer {
+                id.set("airbnb")
+                name.set("Airbnb, Inc.")
+                url.set("https://github.com/airbnb")
+            }
+        }
+        scm {
+            url.set("https://github.com/airbnb/skipper")
+            connection.set("scm:git:https://github.com/airbnb/skipper.git")
+            developerConnection.set("scm:git:ssh://git@github.com/airbnb/skipper.git")
+        }
+    }
+    publishToMavenCentral()
+}
+
+tasks.matching { it.name.contains("MavenCentral") }
+    .configureEach {
+        doFirst {
+            check(version.toString() != "0.0.0-LOCAL") {
+                "Refusing to publish 0.0.0-LOCAL. Pass -PVERSION_NAME=<version>."
+            }
+        }
+    }
+
+signing {
+    val signingKey = providers.environmentVariable("SIGNING_KEY")
+    val signingPassword = providers.environmentVariable("SIGNING_PASSWORD")
+    if (signingKey.isPresent && signingPassword.isPresent) {
+        val armoured =
+            signingKey.get().trim().let { value ->
+                if (value.startsWith("-----BEGIN PGP")) value
+                else String(Base64.getMimeDecoder().decode(value), Charsets.UTF_8)
+            }
+        useInMemoryPgpKeys(armoured, signingPassword.get())
+        sign(publishing.publications)
+    }
 }
