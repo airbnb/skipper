@@ -17,9 +17,15 @@
 #                 build compiles the site, so without this a broken doc would only surface at
 #                 publish time.
 #
-# One more runs on main only:
+# Two more run on main only:
 #
 #   web-publish  Pushes the built site to the gh-pages branch, which GitHub Pages serves.
+#
+#   tag-release  Tags main with the version its commits imply (scripts/next-version.sh) once
+#                jvm-build and format-check have passed, so landing a `fix:` or `feat:` pull
+#                request produces its release tag without a manual step. Pushing the tag
+#                triggers the `release` workflow below. Does nothing when no releasable
+#                commit has landed since the last tag, or when the tag already exists.
 #
 # One more runs on release tags only:
 #
@@ -290,6 +296,50 @@ jobs:
           name: Publish the site to gh-pages
           command: ./scripts/publish-web.sh
 
+  tag-release:
+    executor: jvm
+    steps:
+      - checkout
+      - run:
+          name: Work out the version this main implies
+          # `git describe` needs the tags, and CircleCI's checkout may leave them out.
+          command: |
+            git fetch --tags --quiet origin
+            if V=$(scripts/next-version.sh); then
+              echo "export RELEASE_VERSION=$V" >> "$BASH_ENV"
+              echo "main implies $V"
+            else
+              echo "Nothing releasable has landed since the last tag; not tagging."
+              circleci-agent step halt
+            fi
+      # Same write-access deploy key web-publish pushes with; see the comment there for why the
+      # fingerprint is pinned.
+      - add_ssh_keys:
+          fingerprints:
+            - "SHA256:vaTKb0KMOiHkGqSQ4/jL7alxnIDoUGkTS5CC63LRI3E"
+      - run:
+          name: Trust GitHub's SSH host keys
+          command: |
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            curl -fsSL https://api.github.com/meta \
+              | jq -r '.ssh_keys[] | "github.com \(.)"' >> ~/.ssh/known_hosts
+      - run:
+          name: Tag the release
+          # Re-running this job, or two pipelines racing on main, must not fail on a tag that
+          # already exists: the first push wins and the rest are no-ops.
+          command: |
+            TAG="v$RELEASE_VERSION"
+            REMOTE=git@github.com:airbnb/skipper.git
+            if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$TAG" >/dev/null; then
+              echo "$TAG already exists; nothing to do."
+              exit 0
+            fi
+            git config user.name "skipper-ci"
+            git config user.email "skipper-ci@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $RELEASE_VERSION"
+            git push "$REMOTE" "refs/tags/$TAG"
+            echo "Pushed $TAG; the release workflow takes it from here."
+
   publish-release:
     executor: jvm
     steps:
@@ -338,6 +388,15 @@ workflows:
             - web-build
           # main only: a pull request must not overwrite the published site. The build
           # still runs on every branch, so a broken site is caught before merge.
+          filters:
+            branches:
+              only: main
+      - tag-release:
+          requires:
+            - jvm-build
+            - format-check
+          # main only: the tag is the release record, so it is only ever cut from a merged,
+          # tested main. The tag push then starts the `release` workflow below.
           filters:
             branches:
               only: main
