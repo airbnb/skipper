@@ -6,10 +6,27 @@ order: 18
 ---
 
 You test actions like any other code. Workflows are tested with **`WorkflowTest`**, a JUnit 5
-base class shipped in `skipper-core` that runs each test on its own Skipper runtime backed by the
+base class from `skipper-testutils` that runs each test on its own Skipper runtime backed by the
 embedded **in-memory** SQLite store. There is nothing to configure and nothing shared between
-tests. It pulls in no dependencies of its own: JUnit is already on your test classpath, and the
-class is in the jar you already have.
+tests. The artifact adds nothing to your classpath beyond `skipper-core` itself; JUnit is already
+there for your tests.
+
+```kotlin
+// build.gradle.kts
+dependencies {
+  testImplementation("com.airbnb.skipper:skipper-testutils:0.4.0")
+}
+```
+
+```xml
+<!-- pom.xml -->
+<dependency>
+  <groupId>com.airbnb.skipper</groupId>
+  <artifactId>skipper-testutils</artifactId>
+  <version>0.4.0</version>
+  <scope>test</scope>
+</dependency>
+```
 
 ```kotlin
 import com.airbnb.skipper.testutils.WorkflowTest
@@ -207,3 +224,9 @@ their no-arg constructor, as in production.
 one shared runtime for a whole suite), build a `SkipperRuntime` yourself: `SkipperConfig.forService(name)`
 already selects the in-memory store, `SimpleInjector.builder().bind(...)` supplies collaborators,
 and `WorkflowTestHelper(runtime, workflowId)` gives you the same wait helpers.
+
+The same artifact also carries the lower-level pieces Skipper's own tests use: `TestRuntime` (a
+pre-wired runtime whose `FeatureGate` and `Knobs` are Mockito mocks, so Mockito must be on your
+test classpath to use it) and the `SqliteTestSetupExtension` / `MySqlTestSetupExtension` JUnit
+extensions (the MySQL one needs MariaDB4j and the MariaDB driver). None of those are needed for
+`WorkflowTest`.

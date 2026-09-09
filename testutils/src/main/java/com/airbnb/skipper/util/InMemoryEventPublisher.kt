@@ -3,11 +3,11 @@ package com.airbnb.skipper.util
 import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.SkipperAnnotationNames.UTC_CLOCK
-import com.google.inject.Inject
-import com.google.inject.Singleton
 import java.time.Clock
 import java.util.LinkedList
+import javax.inject.Inject
 import javax.inject.Named
+import javax.inject.Singleton
 
 /**
  * An in-memory implementation of the EventBroker interface for testing purposes. It stores events

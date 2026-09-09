@@ -174,7 +174,7 @@ config change: see [Storage Backends](web/src/content/docs/storage.md).
 | [Compensation](web/src/content/docs/compensation.md)                 | Undo completed steps in reverse on failure — the saga pattern        |
 | [Versioning](web/src/content/docs/versioning.md)                     | Evolve workflow code while old instances are still in flight         |
 | [Admin UI and tracing](web/src/content/docs/observability.md)        | Inspect, replay, and manage live instances                          |
-| [Testing](web/src/content/docs/testing.md)                           | Drive workflows deterministically in unit tests                     |
+| [Testing](web/src/content/docs/testing.md)                           | `skipper-testutils`: extend `WorkflowTest` and drive workflows deterministically in unit tests |
 
 ## Is Skipper for you?
 

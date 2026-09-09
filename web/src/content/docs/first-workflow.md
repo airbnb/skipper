@@ -122,8 +122,8 @@ write a callback handler.
 
 ## 5. Test it
 
-Extend `WorkflowTest`, which ships in `skipper-core` and runs each test on its own in-memory
-runtime. Build the workflow, run it, and assert.
+Extend `WorkflowTest` from `com.airbnb.skipper:skipper-testutils` (a `testImplementation`
+dependency), which runs each test on its own in-memory runtime. Build the workflow, run it, and assert.
 
 ```kotlin
 class DemoTest : WorkflowTest() {

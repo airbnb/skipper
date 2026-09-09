@@ -70,21 +70,17 @@ sourceSets {
         resources.setSrcDirs(listOf("src/main/resources"))
     }
     test {
-        // src/test/java is mixed Java+Kotlin; testutils/src/main/java is the trimmed shared
-        // test harness; src/test/thrift-beans/java holds the hand-authored Thrift beans.
-        java.setSrcDirs(
-            listOf("src/test/java", "testutils/src/main/java", "src/test/thrift-beans/java")
-        )
+        // src/test/java is mixed Java+Kotlin; src/test/thrift-beans/java holds the hand-authored
+        // Thrift beans. The shared test harness is the :skipper-testutils project (testutils/).
+        java.setSrcDirs(listOf("src/test/java", "src/test/thrift-beans/java"))
         resources.setSrcDirs(listOf("src/test/resources"))
         testSubsetExcludes.forEach { java.exclude(it) }
     }
 }
 
-// The Kotlin plugin's default test Kotlin srcDirs are src/test/{kotlin,java}; add the testutils
-// Kotlin sources and apply the same OSS-subset excludes to the Kotlin compilation.
+// Apply the same OSS-subset excludes to the Kotlin test compilation.
 sourceSets.named("test").configure {
     val kotlinSrc = extensions.getByName("kotlin") as SourceDirectorySet
-    kotlinSrc.srcDir("testutils/src/main/java")
     testSubsetExcludes.forEach { kotlinSrc.exclude(it) }
 }
 
@@ -111,14 +107,12 @@ dependencies {
     api(libs.opentracing.util)
     api(libs.javax.inject)
     api(libs.jakarta.ws.rs.api)
-    // com.airbnb.skipper.testutils.WorkflowTest is a JUnit 5 base class shipped in this jar so that
-    // adopters get a test harness without a second artifact. compileOnly keeps JUnit out of the
-    // published POM: a consumer's test classpath already has it, and production code never
-    // touches the package.
-    compileOnly(libs.junit.jupiter.api)
 
     // ---- Test-only dependencies (OSS test subset) ----
     // The `hello` workflow fixtures are Lombok @Value/@Builder POJOs.
+    // The shared harness (TestRuntime, TestHelper, WorkflowTest, setup extensions) is its own
+    // published project; the engine's tests consume it like an adopter would.
+    testImplementation(project(":skipper-testutils"))
     testCompileOnly(libs.lombok)
     testAnnotationProcessor(libs.lombok)
 
