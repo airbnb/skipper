@@ -146,7 +146,7 @@ class RunRequest(
             return this
         }
 
-        fun callbackHandler(callbackHandler: Class<out WorkflowCallbackHandler>?,): RunRequestBuilder {
+        fun callbackHandler(callbackHandler: Class<out WorkflowCallbackHandler>?): RunRequestBuilder {
             this.callbackHandler = callbackHandler
             return this
         }
@@ -161,7 +161,7 @@ class RunRequest(
             return this
         }
 
-        fun allowQueryOnNonExistentWorkflow(allowQueryOnNonExistentWorkflow: Boolean,): RunRequestBuilder {
+        fun allowQueryOnNonExistentWorkflow(allowQueryOnNonExistentWorkflow: Boolean): RunRequestBuilder {
             this.allowQueryOnNonExistentWorkflow = allowQueryOnNonExistentWorkflow
             return this
         }

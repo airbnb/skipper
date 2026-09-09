@@ -1,0 +1,51 @@
+# Formatting rules for the Kotlin sources, read by ktlint through Spotless (`./gradlew
+# spotlessApply` / `spotlessCheck`; see build.gradle.kts). The settings mirror the ones Airbnb's
+# internal linter applies to this code, so the two agree on what "formatted" means.
+#
+# Java is not configured here. google-java-format has no configuration and ignores this file.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_size = 2
+indent_style = space
+insert_final_newline = true
+max_line_length = 120
+tab_width = 2
+trim_trailing_whitespace = true
+ij_continuation_indent_size = 4
+
+[*.{kt,kts}]
+max_line_length = 150
+indent_size = 4
+tab_width = 4
+continuation_indent_size = 4
+ij_continuation_indent_size = 4
+# Import layout: one alphabetical block, no wildcard imports (except the packages listed).
+ij_kotlin_imports_layout = *
+ij_kotlin_name_count_to_use_star_import = 999
+ij_kotlin_name_count_to_use_star_import_for_members = 999
+ij_kotlin_packages_to_use_import_on_demand = kotlinx.android.synthetic.**,io.ktor.**
+# Explicitly disabled enforcement (allows for either style)
+ktlint_standard_trailing-comma-on-declaration-site = disabled
+ktlint_standard_trailing-comma-on-call-site = disabled
+ktlint_standard_multiline-expression-wrapping = disabled
+ktlint_standard_string-template-indent = disabled
+# Disabled in treehouse pending a repo-wide cleanup there; mirrored so the two agree.
+ktlint_ignore_back_ticked_identifier = true
+ktlint_standard_backing-property-naming = disabled
+ktlint_standard_class-naming = disabled
+ktlint_standard_comment-wrapping = disabled
+ktlint_standard_enum-entry-name-case = disabled
+ktlint_standard_filename = disabled
+ktlint_standard_function-naming = disabled
+ktlint_standard_if-else-wrapping = disabled
+ktlint_standard_kdoc-wrapping = disabled
+ktlint_standard_no-consecutive-comments = disabled
+ktlint_standard_package-name = disabled
+ktlint_standard_property-naming = disabled
+ktlint_standard_spacing-between-declarations-with-annotations = disabled
+ktlint_standard_value-argument-comment = disabled
+ktlint_standard_value-parameter-comment = disabled

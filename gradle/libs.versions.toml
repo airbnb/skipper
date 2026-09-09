@@ -27,6 +27,12 @@ jakartaWsRsApi = "2.1.6"
 dokka = "1.9.20"
 vanniktechMavenPublish = "0.34.0"
 
+# Formatting. Spotless drives the two formatters below; their versions are pinned here too so a
+# formatter upgrade is a deliberate, reviewable change rather than a side effect of a plugin bump.
+spotless = "8.10.2"
+ktlint = "1.2.1"
+googleJavaFormat = "1.26.0"
+
 # Test-only pins (OSS test subset). junit-jupiter/vintage share one version; junit4 is the
 # legacy engine the `util` suite still targets. kotlin-test tracks the Kotlin version;
 # coroutines-test tracks kotlinxCoroutines; opentracing-mock tracks opentracing.
@@ -107,3 +113,4 @@ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-allopen = { id = "org.jetbrains.kotlin.plugin.allopen", version.ref = "kotlin" }
 dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
 vanniktech-maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "vanniktechMavenPublish" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }

@@ -1394,7 +1394,7 @@ class MySqlWorkflowStore
             }
         }
 
-        override fun resetWorkflowFromError(workflowId: String,): Tuple2<WorkflowInstance, Option<ActionCheckpoint>> {
+        override fun resetWorkflowFromError(workflowId: String): Tuple2<WorkflowInstance, Option<ActionCheckpoint>> {
             return transactionManager.execute { conn ->
                 try {
                     metrics.timer(METRICS_COMPONENT, "resetWorkflowFromError").time().use { c ->

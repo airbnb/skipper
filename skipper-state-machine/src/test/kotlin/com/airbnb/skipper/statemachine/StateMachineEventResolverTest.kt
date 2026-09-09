@@ -155,7 +155,7 @@ class StateMachineEventResolverTest {
         }
     }
 
-    private fun createAliasedResolver(aliasMigrations: Map<String, String> = emptyMap(),): StateMachineEventResolver<AliasedEvent> =
+    private fun createAliasedResolver(aliasMigrations: Map<String, String> = emptyMap()): StateMachineEventResolver<AliasedEvent> =
         StateMachineEventResolver(
             stateMachineClass = AliasedTestStateMachine::class.java,
             handlerEventClasses = emptyList(),

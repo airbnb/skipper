@@ -1,15 +1,21 @@
 # CircleCI configuration for airbnb/skipper.
 #
-# Two jobs run on every push:
+# Three jobs run on every push:
 #
-#   jvm-build  Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
-#              skipper-state-machine plugin module, and runs both test subsets. A bare
-#              `gradlew build` from the root covers every project in the build.
+#   jvm-build     Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
+#                 skipper-state-machine plugin module, and runs both test subsets. A bare
+#                 `gradlew build` from the root covers every project in the build.
 #
-#   web-build  Builds the Astro documentation site in web/ and stores it as an artifact,
-#              so every branch and pull request gets a browsable copy. Nothing else in the
-#              build compiles the site, so without this a broken doc would only surface at
-#              publish time.
+#   format-check  Fails when any Kotlin or Java source is not formatted: `gradlew spotlessCheck`
+#                 (ktlint for Kotlin, google-java-format for Java; see build.gradle.kts).
+#                 `./gradlew spotlessApply` repairs a failure. Its own job rather than part of
+#                 jvm-build so a formatting slip is a distinct, fast signal on the pull request;
+#                 jvm-build skips spotlessCheck so one slip does not turn two checks red.
+#
+#   web-build     Builds the Astro documentation site in web/ and stores it as an artifact,
+#                 so every branch and pull request gets a browsable copy. Nothing else in the
+#                 build compiles the site, so without this a broken doc would only surface at
+#                 publish time.
 #
 # One more runs on main only:
 #
@@ -125,7 +131,8 @@ jobs:
 
       - run:
           name: Build and test
-          command: ./gradlew --stacktrace build
+          # spotlessCheck is excluded here because format-check runs it as its own job.
+          command: ./gradlew --stacktrace build -x spotlessCheck
 
       - run:
           name: Validate the publication metadata
@@ -176,6 +183,25 @@ jobs:
       - store_artifacts:
           path: skipper-state-machine/build/libs
           destination: libs-state-machine
+
+  format-check:
+    # Reuses the JDK 17 image: Spotless and both formatters are JVM tools, and
+    # google-java-format 1.26 needs a JDK 17 or newer. Nothing here compiles anything.
+    executor: jvm
+    steps:
+      - checkout
+
+      - restore_cache:
+          name: Restore Gradle caches
+          # Same keys as jvm-build: the formatter jars are ordinary Gradle dependencies, so a
+          # cache jvm-build saved already holds them.
+          keys:
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-
+
+      - run:
+          name: Check Kotlin and Java formatting
+          command: ./gradlew --stacktrace spotlessCheck
 
   web-build:
     executor: node
@@ -305,6 +331,7 @@ workflows:
   build:
     jobs:
       - jvm-build
+      - format-check
       - web-build
       - web-publish:
           requires:
