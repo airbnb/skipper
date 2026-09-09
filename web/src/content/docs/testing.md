@@ -1,137 +1,140 @@
 ---
 title: Testing
-description: Run workflows end to end in-memory and assert on their behavior.
+description: Run workflows end to end in-memory with the WorkflowTest base class and assert on their behavior.
 section: Guides
 order: 18
 ---
 
-You test actions like any other code. Workflows are tested by running them end to end against
-Skipper's default **in-memory** store, which needs no setup: build a `SkipperRuntime`, start its
-scheduler, drive the workflow, and assert. Because the whole path from workflow to actions runs
-for real, these are integration tests; control the scenario by mocking the collaborators your
-actions call, not the actions themselves.
-
-## Test setup
-
-One runtime per test class (or per test) is enough. Stop the scheduler when you are done.
+You test actions like any other code. Workflows are tested with **`WorkflowTest`**, a JUnit 5
+base class shipped in `skipper-core` that runs each test on its own Skipper runtime backed by the
+embedded **in-memory** SQLite store. There is nothing to configure and nothing shared between
+tests. It pulls in no dependencies of its own: JUnit is already on your test classpath, and the
+class is in the jar you already have.
 
 ```kotlin
-class OrderWorkflowTest {
-  private lateinit var runtime: SkipperRuntime
-  private lateinit var factory: IWorkflowFactory
+import com.airbnb.skipper.testing.WorkflowTest
+import com.airbnb.skipper.testing.workflowBuilder
 
-  @BeforeEach
-  fun setUp() {
-    runtime = SkipperRuntime(SkipperConfig.forService("order-test")) // in-memory SQLite
-    runtime.skipperSchedulerManager.get().start()
-    factory = runtime.workflowFactory.get()
-  }
-
-  @AfterEach
-  fun tearDown() = runtime.skipperSchedulerManager.get().stop()
-}
+class OrderWorkflowTest : WorkflowTest() { /* ... */ }
 ```
 
 ```java
-public class OrderWorkflowTest {
-  private SkipperRuntime runtime;
-  private IWorkflowFactory factory;
+import com.airbnb.skipper.testing.WorkflowTest;
 
-  @BeforeEach
-  void setUp() {
-    runtime = new SkipperRuntime(SkipperConfig.forService("order-test")); // in-memory SQLite
-    runtime.getSkipperSchedulerManager().get().start();
-    factory = runtime.getWorkflowFactory().get();
-  }
-
-  @AfterEach
-  void tearDown() throws Exception { runtime.getSkipperSchedulerManager().get().stop(); }
-}
+public class OrderWorkflowTest extends WorkflowTest { /* ... */ }
 ```
 
-Use a fresh workflow id per test (a UUID suffix works well); ids are the idempotency key, so
-reusing one across tests would join the earlier instance instead of starting a new one.
+Because the whole path from workflow to actions runs for real, these are integration tests:
+control the scenario by supplying fakes for the collaborators your actions call, not by mocking
+the actions themselves.
+
+## What the base class gives you
+
+| Member | Purpose |
+| --- | --- |
+| `workflowBuilder<T>()` / `workflowBuilder(T.class)` | An `InvocationBuilder` for this test's workflow instance. |
+| `workflow<T>()` / `workflow(T.class)` | A handle on that same instance, for signals, queries, or reading the result. |
+| `workflowId` | The instance id, unique per test. |
+| `helper` | Wait helpers: `waitForWorkflowToComplete()`, `expectWorkflowToWait()`, `waitForWorkflowToReachStatus(...)`, `waitForCondition { }`, `currentView()`. |
+| `clock` | A `MutableClock` fixed at the epoch. Timers and `waitUntil` deadlines fire only when you call `clock.fastForward(...)`. |
+| `@Bind` | Annotate a field to hand its value to workflows and actions that `@Inject` that type. |
+| `configure(config)` | Override to adjust the `SkipperConfig` (retry strategy, checkpoint mode, ...) before the runtime starts. |
+| `printHistory()` | Dumps the instance's status, state and checkpoints; useful when a wait times out. |
+
+If you add your own `@BeforeEach`, there is nothing to call: the base class's setup runs on its
+own and yours runs after it.
 
 ## A basic test
 
-A workflow that completes without waiting can simply be awaited.
+Drive the workflow, wait for the status you expect, then assert. For a workflow that completes
+without waiting, awaiting the result is enough.
 
 ```kotlin
 @Test
-fun happyPath() = runBlocking {
-  val workflow = factory<OrderWorkflow>("order-${UUID.randomUUID()}")
-  val result = workflow.processOrder(OrderRequest("cust1", 100))
+fun happyPath() {
+  val workflow = workflowBuilder<OrderWorkflow>().build()
+
+  val result = workflow.processOrder(OrderRequest("cust1", 100)).get()
+
   assertEquals("completed", result.status)
+  assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().status)
 }
 ```
 
 ```java
 @Test
 public void happyPath() throws Exception {
-  OrderWorkflow workflow = factory.invoke(OrderWorkflow.class, "order-" + UUID.randomUUID());
+  OrderWorkflow workflow = workflowBuilder(OrderWorkflow.class).build();
+
   OrderResult result = workflow.processOrder(new OrderRequest("cust1", 100)).get();
+
   assertEquals("completed", result.getStatus());
+  assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().getStatus());
 }
 ```
 
-## Waiting for a status
-
-For workflows that pause, drive them with `.runAsync()` and poll the engine's own view of the
-instance rather than your `@StateField`s: the engine status is what tells you the workflow has
-actually parked. A small helper covers every test:
-
-```kotlin
-private fun awaitStatus(id: String, expected: WorkflowInstanceStatusView) {
-  val deadline = Instant.now().plusSeconds(30)
-  while (Instant.now().isBefore(deadline)) {
-    if (factory<OrderWorkflow>(id).getWorkflowInstanceView().status == expected) return
-    Thread.sleep(50)
-  }
-  fail("$id never reached $expected")
-}
-```
-
-```java
-private void awaitStatus(String id, WorkflowInstanceStatusView expected) throws InterruptedException {
-  Instant deadline = Instant.now().plusSeconds(30);
-  while (Instant.now().isBefore(deadline)) {
-    if (factory.invoke(OrderWorkflow.class, id).getWorkflowInstanceView().getStatus() == expected) return;
-    Thread.sleep(50);
-  }
-  fail(id + " never reached " + expected);
-}
-```
-
-`WorkflowInstanceStatusView` has `RUNNING`, `WAITING`, `COMPLETED`, `ERROR`, `RETRIES_EXHAUSTED`,
-`TIMEOUT`, `COMPENSATION_COMPLETED`, and the other statuses you will assert on.
+`waitForWorkflowToComplete()` returns once the instance is in any terminal status and hands back
+its `WorkflowInstanceView`, so assert on `status` rather than assuming success.
 
 ## Testing waits and signals
 
-Drive the workflow to its wait, assert it is waiting, send the signal, then let it finish.
+Start the workflow, wait until the engine reports it is parked, send the signal, then let it
+finish. Re-invoking the workflow method on a completed instance returns the recorded result.
 
 ```kotlin
 @Test
-fun requiresApproval() = runBlocking {
-  val id = "transfer-${UUID.randomUUID()}"
-  factory.builder<TransferWorkflow>(id).runAsync().build()
-    .transfer(TransferRequest("Mary", "Bob", 1001))
+fun requiresApproval() {
+  val workflow = workflowBuilder<TransferWorkflow>().build()
+  workflow.transfer(TransferRequest("Mary", "Bob", 1001)) // amount > 1000 requires approval
 
-  awaitStatus(id, WorkflowInstanceStatusView.WAITING)   // amount > 1000 requires approval
-  factory<TransferWorkflow>(id).approve(true)            // signal
-  awaitStatus(id, WorkflowInstanceStatusView.COMPLETED)
+  helper.expectWorkflowToWait()
+  workflow<TransferWorkflow>().approve(true)                // signal
+  helper.waitForWorkflowToComplete()
+
+  assertEquals("approved", workflow<TransferWorkflow>().transfer(TransferRequest("Mary", "Bob", 1001)).get().status)
 }
 ```
 
 ```java
 @Test
 public void requiresApproval() throws Exception {
-  String id = "transfer-" + UUID.randomUUID();
-  factory.builder(TransferWorkflow.class, id).runAsync().build()
-      .transfer(new TransferRequest("Mary", "Bob", 1001)); // returns a future we ignore
+  TransferWorkflow workflow = workflowBuilder(TransferWorkflow.class).build();
+  workflow.transfer(new TransferRequest("Mary", "Bob", 1001)); // amount > 1000 requires approval
 
-  awaitStatus(id, WorkflowInstanceStatusView.WAITING);   // amount > 1000 requires approval
-  factory.invoke(TransferWorkflow.class, id).approve(true); // signal
-  awaitStatus(id, WorkflowInstanceStatusView.COMPLETED);
+  helper.expectWorkflowToWait();
+  workflow(TransferWorkflow.class).approve(true);              // signal
+  helper.waitForWorkflowToComplete();
+
+  assertEquals("approved", workflow(TransferWorkflow.class).transfer(new TransferRequest("Mary", "Bob", 1001)).get().getStatus());
+}
+```
+
+## Testing timeouts
+
+Time does not pass on its own inside a `WorkflowTest`, so a `waitUntil` deadline is tested by
+moving the clock past it:
+
+```kotlin
+@Test
+fun approvalTimesOut() {
+  workflowBuilder<TransferWorkflow>().build().transfer(TransferRequest("Mary", "Bob", 1001))
+  helper.expectWorkflowToWait()
+
+  clock.fastForward(Duration.ofDays(2)) // past the one-day approval window
+
+  assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().status)
+}
+```
+
+```java
+@Test
+public void approvalTimesOut() {
+  workflowBuilder(TransferWorkflow.class).build().transfer(new TransferRequest("Mary", "Bob", 1001));
+  helper.expectWorkflowToWait();
+
+  clock.fastForward(Duration.ofDays(2)); // past the one-day approval window
+
+  assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().getStatus());
 }
 ```
 
@@ -141,64 +144,66 @@ Make a later action fail and assert that earlier actions were compensated.
 
 ```kotlin
 @Test
-fun compensatesOnFailure() = runBlocking {
-  whenever(shippingService.schedule(any())).thenThrow(RuntimeException("Shipping failed"))
+fun compensatesOnFailure() {
+  shippingService.failNext = true
 
-  val id = "order-${UUID.randomUUID()}"
-  factory.builder<OrderWorkflow>(id).runAsync().build().processOrder(orderRequest)
+  workflowBuilder<OrderWorkflow>().build().processOrder(orderRequest)
 
-  awaitStatus(id, WorkflowInstanceStatusView.COMPENSATION_COMPLETED)
-  verify(paymentService).refund(any())
-  verify(inventoryService).cancelReservation(any())
+  helper.waitForWorkflowToReachStatus(WorkflowInstanceStatusView.COMPENSATION_COMPLETED)
+  assertTrue(paymentService.refunded)
+  assertTrue(inventoryService.reservationCancelled)
 }
 ```
 
 ```java
 @Test
-public void compensatesOnFailure() throws Exception {
-  when(shippingService.schedule(any())).thenThrow(new RuntimeException("Shipping failed"));
+public void compensatesOnFailure() {
+  shippingService.failNext = true;
 
-  String id = "order-" + UUID.randomUUID();
-  factory.builder(OrderWorkflow.class, id).runAsync().build().processOrder(orderRequest);
+  workflowBuilder(OrderWorkflow.class).build().processOrder(orderRequest);
 
-  awaitStatus(id, WorkflowInstanceStatusView.COMPENSATION_COMPLETED);
-  verify(paymentService).refund(any());
-  verify(inventoryService).cancelReservation(any());
+  helper.waitForWorkflowToReachStatus(WorkflowInstanceStatusView.COMPENSATION_COMPLETED);
+  assertTrue(paymentService.refunded);
+  assertTrue(inventoryService.reservationCancelled);
 }
 ```
 
-## Mocking dependencies
+## Supplying collaborators with `@Bind`
 
-Skipper instantiates your `Actions` classes through the config's `SkipperInjector`, and the
-default `SimpleInjector` fills `@Inject` fields from what you bind. Bind mocks of the services
-your actions call before building the runtime:
+Skipper instantiates your `Actions` classes and fills their `@Inject` fields from an injector. In
+a `WorkflowTest`, every field annotated with `@Bind` becomes a binding keyed by the field's
+declared type, so a fake or a mock declared on the test reaches the action:
 
 ```kotlin
-val paymentService: PaymentService = mock()
-val config = SkipperConfig.forService("order-test").apply {
-  injector = SimpleInjector.builder()
-    .bind(PaymentService::class.java, paymentService)
-    .build()
+class OrderWorkflowTest : WorkflowTest() {
+  @Bind val paymentService: PaymentService = mock()          // any mocking library, or a hand-written fake
+  @Bind(to = ShippingService::class) val shipping = FakeShippingService()
 }
 ```
 
 ```java
-PaymentService paymentService = mock(PaymentService.class);
-SkipperConfig config = SkipperConfig.forService("order-test");
-config.setInjector(SimpleInjector.builder()
-    .bind(PaymentService.class, paymentService)
-    .build());
+public class OrderWorkflowTest extends WorkflowTest {
+  @Bind PaymentService paymentService = mock(PaymentService.class);
+  @Bind(to = ShippingService.class) FakeShippingService shipping = new FakeShippingService();
+}
 ```
 
 ```java
 public class PaymentActions extends Actions {
-  @Inject PaymentService paymentService;   // filled by the injector
+  @Inject PaymentService paymentService;   // filled from the @Bind field
 
   @Execute
   public String charge(ChargeRequest req) { return paymentService.charge(req); }
 }
 ```
 
-The actions themselves are **not** mocked, so a workflow test exercises the real
-workflow-and-action path end to end. If your service already uses a DI framework, implement
-`SkipperInjector` over it once and set that on the config instead.
+Use `to` when the field's type is the concrete fake but the action injects an interface, and
+`qualifier` to match a `@Named` injection point. Types without a binding are created through
+their no-arg constructor, as in production.
+
+## Without the base class
+
+`WorkflowTest` is a convenience over public API. If it does not fit (a different test framework,
+one shared runtime for a whole suite), build a `SkipperRuntime` yourself: `SkipperConfig.forService(name)`
+already selects the in-memory store, `SimpleInjector.builder().bind(...)` supplies collaborators,
+and `WorkflowTestHelper(runtime, workflowId)` gives you the same wait helpers.
