@@ -6,11 +6,11 @@
 #                 skipper-state-machine plugin module, and runs both test subsets. A bare
 #                 `gradlew build` from the root covers every project in the build.
 #
-#   format-check  Fails when any Kotlin or Java source is not formatted. Runs
-#                 scripts/check-format.sh, which applies the same formatters at the same
-#                 versions and settings as `yak lint` does to this code in treehouse (ktlint
-#                 for Kotlin, google-java-format for Java), so a file that is clean there is
-#                 clean here and vice versa. `./gradlew format` repairs a failure.
+#   format-check  Fails when any Kotlin or Java source is not formatted: `gradlew spotlessCheck`
+#                 (ktlint for Kotlin, google-java-format for Java; see build.gradle.kts).
+#                 `./gradlew spotlessApply` repairs a failure. Its own job rather than part of
+#                 jvm-build so a formatting slip is a distinct, fast signal on the pull request;
+#                 jvm-build skips spotlessCheck so one slip does not turn two checks red.
 #
 #   web-build     Builds the Astro documentation site in web/ and stores it as an artifact,
 #                 so every branch and pull request gets a browsable copy. Nothing else in the
@@ -131,7 +131,8 @@ jobs:
 
       - run:
           name: Build and test
-          command: ./gradlew --stacktrace build
+          # spotlessCheck is excluded here because format-check runs it as its own job.
+          command: ./gradlew --stacktrace build -x spotlessCheck
 
       - run:
           name: Validate the publication metadata
@@ -184,31 +185,23 @@ jobs:
           destination: libs-state-machine
 
   format-check:
-    # Reuses the JDK 17 image: both formatters are JVM tools, and google-java-format 1.26
-    # needs a JDK 17 or newer to run. Nothing here compiles anything.
+    # Reuses the JDK 17 image: Spotless and both formatters are JVM tools, and
+    # google-java-format 1.26 needs a JDK 17 or newer. Nothing here compiles anything.
     executor: jvm
     steps:
       - checkout
 
       - restore_cache:
-          name: Restore the formatter binaries
-          # Keyed on the script, which is where the versions and checksums are pinned, so
-          # bumping a formatter naturally invalidates the cache.
+          name: Restore Gradle caches
+          # Same keys as jvm-build: the formatter jars are ordinary Gradle dependencies, so a
+          # cache jvm-build saved already holds them.
           keys:
-            - format-tools-v1-{{ checksum "scripts/check-format.sh" }}
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "gradle/libs.versions.toml" }}-{{ checksum "build.gradle.kts" }}-{{ checksum "skipper-state-machine/build.gradle.kts" }}
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-
 
       - run:
           name: Check Kotlin and Java formatting
-          command: ./scripts/check-format.sh
-
-      - save_cache:
-          name: Save the formatter binaries
-          key: format-tools-v1-{{ checksum "scripts/check-format.sh" }}
-          paths:
-            - ~/.cache/skipper-format
-          # The download happens before any file is checked, so the cache is worth saving
-          # even when the check fails.
-          when: always
+          command: ./gradlew --stacktrace spotlessCheck
 
   web-build:
     executor: node

@@ -1,7 +1,6 @@
-# Formatting rules for the Kotlin sources, read by ktlint (scripts/check-format.sh, and the
-# format-check CircleCI job). This is a copy of the sections of treehouse's root .editorconfig
-# that ktlint honours, so `yak lint` in treehouse and the check here agree on what "formatted"
-# means. Keep the two in sync: when treehouse changes its ktlint settings, mirror the change here.
+# Formatting rules for the Kotlin sources, read by ktlint through Spotless (`./gradlew
+# spotlessApply` / `spotlessCheck`; see build.gradle.kts). The settings mirror the ones Airbnb's
+# internal linter applies to this code, so the two agree on what "formatted" means.
 #
 # Java is not configured here. google-java-format has no configuration and ignores this file.
 

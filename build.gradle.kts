@@ -15,6 +15,7 @@ plugins {
     alias(libs.plugins.vanniktech.maven.publish)
     `maven-publish`
     signing
+    alias(libs.plugins.spotless)
 }
 
 group = "com.airbnb.skipper"
@@ -281,26 +282,26 @@ signing {
 // ---------------------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------------------
-// `./gradlew format` reformats every Kotlin and Java source; `./gradlew checkFormat` fails if
-// any of them would change. Both are thin wrappers over scripts/check-format.sh, which is what
-// the format-check CI job runs, so the definition of "formatted" lives in one place and the
-// Gradle tasks cannot drift from CI. The script pins the formatter versions and mirrors the
-// settings `yak lint` applies to this code in treehouse; see its header.
+// `./gradlew spotlessApply` reformats every Kotlin and Java source; `./gradlew spotlessCheck`
+// fails if any would change, and `check` (so `build`) depends on it. The format-check CI job
+// runs spotlessCheck on every push.
 //
-// Deliberately not a Spotless setup: Spotless drives ktlint through its own adapter rather
-// than the ktlint CLI treehouse runs, which is one more place a subtle difference could creep
-// in. checkFormat is also not attached to `check`: the first run downloads the formatters, and
-// a plain `gradlew build` should keep working offline and without surprises.
-val formatScript = layout.projectDirectory.file("scripts/check-format.sh")
-
-tasks.register<Exec>("checkFormat") {
-    group = "verification"
-    description = "Fails if any Kotlin or Java source is not formatted (same check as CI)."
-    commandLine(formatScript.asFile.absolutePath)
-}
-
-tasks.register<Exec>("format") {
-    group = "formatting"
-    description = "Reformats every Kotlin and Java source with ktlint and google-java-format."
-    commandLine(formatScript.asFile.absolutePath, "--fix")
+// Configured once here for the whole build rather than per project: skipper-state-machine's
+// sources are covered by the targets below, so there is a single spotlessApply and one place
+// that says what "formatted" means. Formatter versions come from the version catalog.
+//
+//   Kotlin  ktlint, configured by the .editorconfig at the repository root
+//   Java    google-java-format, Google style (it has no configuration)
+//
+// Both are the formatters Airbnb's internal linter uses, at the same versions, so code moved
+// between here and the internal monorepo keeps its formatting either way.
+spotless {
+    kotlin {
+        target("src/**/*.kt", "testutils/src/**/*.kt", "skipper-state-machine/src/**/*.kt")
+        ktlint(libs.versions.ktlint.get())
+    }
+    java {
+        target("src/**/*.java", "testutils/src/**/*.java", "skipper-state-machine/src/**/*.java")
+        googleJavaFormat(libs.versions.googleJavaFormat.get())
+    }
 }
