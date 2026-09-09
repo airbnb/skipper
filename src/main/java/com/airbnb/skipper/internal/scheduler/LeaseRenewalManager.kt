@@ -61,19 +61,6 @@ class LeaseRenewalManager
         }
 
         /**
-         * When a task lease is renewed, its version might have been updated and the old task object
-         * might have become stale. Upon lease renewal, this component keeps track of the latest task
-         * version.
-         *
-         * Use this method to get the latest task version for a given task. If the task is not in
-         * flight, the original task is returned.
-         *
-         * @param task the task to get the latest version for
-         * @return the latest task version or the original task if it is not in flight
-         */
-        fun getLatestTaskVersion(task: Task<*>): Task<*> = Option.of(tasksInFlight[task.id]).map { it!!.task }.getOrElse(task)
-
-        /**
          * Attempt to renew the lease for the first expiring task. If the lease is successfully renewed,
          * the task is updated in the list of tasks in flight. If the lease renewal fails, the task is
          * ignored and the method returns an empty option.
