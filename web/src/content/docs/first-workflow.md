@@ -30,7 +30,8 @@ public class Demo extends Workflow {
 ```
 
 A workflow method takes **at most one argument**, which must be serializable (a primitive
-or a POJO/data class without top-level generics). The same rule applies to the return type.
+or a POJO/data class without top-level generics, with `equals()`/`hashCode()` defined — see
+**[Serialization](/docs/storage/#serialization)**). The same rule applies to the return type.
 
 ## 2. Create an action
 
@@ -121,42 +122,42 @@ write a callback handler.
 
 ## 5. Test it
 
-Skipper ships test helpers that run a workflow end to end against an in-memory backend.
-Drive the workflow, wait for it to reach the state you expect, then assert.
+A test needs nothing beyond a `SkipperRuntime` on the default in-memory store: build one per
+test, start its scheduler, run the workflow end to end, and assert on the result.
 
 ```kotlin
-class DemoTest : SkipperTest() { // runs against the default in-memory store
+class DemoTest {
+  private val runtime = SkipperRuntime(SkipperConfig.forService("demo-test")) // in-memory SQLite
+
+  @BeforeEach fun start() = runtime.skipperSchedulerManager.get().start()
+  @AfterEach fun stop() = runtime.skipperSchedulerManager.get().stop()
 
   @Test
   fun testEcho() = runBlocking {
-    val workflow = workflowBuilder<Demo>().build()
-
-    workflow.echo("Hello, world!")
-    helper.waitForWorkflowToComplete()
-
-    val result = workflow.echo("Hello, world!") // safe to read after completion
-    assertEquals("Hello, world!".reversed(), result)
+    val demo = runtime.workflowFactory.get()<Demo>("demo-${UUID.randomUUID()}")
+    assertEquals("Hello, world!".reversed(), demo.echo("Hello, world!"))
   }
 }
 ```
 
 ```java
-public class DemoTest extends SkipperTest { // runs against the default in-memory store
+public class DemoTest {
+  private final SkipperRuntime runtime =
+      new SkipperRuntime(SkipperConfig.forService("demo-test")); // in-memory SQLite
+
+  @BeforeEach void start() { runtime.getSkipperSchedulerManager().get().start(); }
+  @AfterEach void stop() throws Exception { runtime.getSkipperSchedulerManager().get().stop(); }
 
   @Test
   public void testEcho() throws Exception {
-    Demo workflow = workflowBuilder(Demo.class).build();
-
-    workflow.echo("Hello, world!");
-    helper.waitForWorkflowToComplete();
-
-    String result = workflow.echo("Hello, world!").get(); // safe to read after completion
-    assertEquals(new StringBuilder("Hello, world!").reverse().toString(), result);
+    Demo demo = runtime.getWorkflowFactory().get().invoke(Demo.class, "demo-" + UUID.randomUUID());
+    assertEquals(new StringBuilder("Hello, world!").reverse().toString(), demo.echo("Hello, world!").get());
   }
 }
 ```
 
-See **[Testing](/docs/testing/)** for more, including how to mock action dependencies.
+See **[Testing](/docs/testing/)** for workflows that wait on signals, compensation, and how to
+hand your actions mocked collaborators.
 
 ## Java
 

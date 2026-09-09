@@ -25,9 +25,13 @@ SkipperConfig config = SkipperConfig.forService("my-service"); // in-memory SQLi
 
 The in-memory store keeps no data after the process exits, which is exactly what you want for
 getting started, local development, and tests. For a durable single-node store, back SQLite
-with a file instead:
+with a file instead. Give both factories the same path so the store and the scheduler share one
+database:
 
 ```kotlin
+import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
+import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore
+
 val config = SkipperConfig.forService("my-service").apply {
   workflowStore = SqliteWorkflowStore.Factory("skipper.db")
   scheduler = SqliteScheduler.Factory("skipper.db")
@@ -35,10 +39,29 @@ val config = SkipperConfig.forService("my-service").apply {
 ```
 
 ```java
+import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler;
+import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore;
+
 SkipperConfig config = SkipperConfig.forService("my-service");
 config.setWorkflowStore(new SqliteWorkflowStore.Factory("skipper.db"));
 config.setScheduler(new SqliteScheduler.Factory("skipper.db"));
 ```
+
+If you already manage a `javax.sql.DataSource` (for pooling, or to point at a path decided at
+runtime), set `sqliteDataSource` on the config instead and keep the no-argument factories:
+
+```kotlin
+config.sqliteDataSource = SQLiteDataSource().apply { url = "jdbc:sqlite:skipper.db" }
+```
+
+```java
+SQLiteDataSource ds = new SQLiteDataSource();
+ds.setUrl("jdbc:sqlite:skipper.db");
+config.setSqliteDataSource(ds);
+```
+
+The SQLite backend creates and migrates its own schema on startup (from `db/sqlite` in the jar),
+so there is no manual migration step in either mode.
 
 SQLite is single-node by design. To run multiple Skipper instances against shared state — the
 typical production setup — use MySQL.
@@ -98,6 +121,10 @@ deploy the code.
 
 Workflow state, action results, signals, and errors are persisted as serialized blobs.
 Types must be serializable — a primitive, or a POJO/data class that Jackson can serialize
-(no top-level generics). Serialization is kept backwards compatible so that data written by
-an older version can still be read after an upgrade. See
-**[Troubleshooting](/docs/troubleshooting/)** if you hit a serialization error.
+(no top-level generics). Before persisting an argument, Skipper checks it by serializing it,
+reading it back, and comparing the two with `equals()`, so **the type must implement `equals()`
+and `hashCode()` over its serialized fields**. Kotlin data classes do this automatically; a
+Java class needs them written out (or Lombok's `@Value`/`@Data`). Java records are not
+supported, because the bundled Jackson predates record support. Serialization is kept
+backwards compatible so that data written by an older version can still be read after an
+upgrade. See **[Troubleshooting](/docs/troubleshooting/)** if you hit a serialization error.

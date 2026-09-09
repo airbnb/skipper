@@ -94,8 +94,9 @@ factory(CheckoutWorkflow::class.java, "order-${order.id}").clearReview(true)
 
 ## Why Skipper
 
-- **Your storage, your rules.** Workflow state persists behind pluggable interfaces to a store
-  you already run: MySQL today, an embedded SQLite backend in the box, and room for your own.
+- **Your storage, your rules.** Workflow state persists behind pluggable interfaces: an embedded
+  SQLite backend in the box for zero-setup starts, MySQL for a shared production store, and room
+  for your own.
 - **Long waits cost nothing.** A workflow can hibernate for a day or a week awaiting a signal or
   an approval while holding no thread, then resume exactly where it paused.
 - **You can see what is running.** A built-in admin UI — one JAX-RS resource you register with
@@ -109,7 +110,7 @@ current version.
 ```kotlin
 // build.gradle.kts
 dependencies {
-  implementation("com.airbnb.skipper:skipper-core:0.2.0")
+  implementation("com.airbnb.skipper:skipper-core:0.3.0")
 }
 ```
 
@@ -118,7 +119,7 @@ dependencies {
 
 ```groovy
 // build.gradle
-implementation 'com.airbnb.skipper:skipper-core:0.2.0'
+implementation 'com.airbnb.skipper:skipper-core:0.3.0'
 ```
 
 ```xml
@@ -126,7 +127,7 @@ implementation 'com.airbnb.skipper:skipper-core:0.2.0'
 <dependency>
   <groupId>com.airbnb.skipper</groupId>
   <artifactId>skipper-core</artifactId>
-  <version>0.2.0</version>
+  <version>0.3.0</version>
 </dependency>
 ```
 
@@ -136,20 +137,29 @@ Then wire it up once at startup:
 
 ```kotlin
 // In main(), or wherever your service wires up its singletons on startup.
-val config = SkipperConfig.forService("my-service").apply {
-  mySqlDataSource = dataSource       // the store defaults to MySQL
-}
+val config = SkipperConfig.forService("my-service")   // embedded SQLite, in-memory: nothing else to set up
 val runtime = SkipperRuntime(config)
 
 // Start the scheduler once — it is what drives workflows forward. Stop it on shutdown.
 runtime.skipperSchedulerManager.get().start()
 ```
 
-Apply the bundled Flyway migrations to that database once before the first run; Skipper does not
-run them for you. Build the runtime once and hold it for the life of the process — it is what
-hands you the workflow factory. Swapping the store, to SQLite for local runs and tests or to your
-own implementation, is a config change: see
-[Storage Backends](web/src/content/docs/storage.md).
+That default is for getting started, local runs, and tests. Build the runtime once and hold it
+for the life of the process — it is what hands you the workflow factory. For production, point the
+store at a database you already run:
+
+```kotlin
+val config = SkipperConfig.forService("my-service").apply {
+  workflowStore = MySqlWorkflowStore.Factory()
+  scheduler = MySqlScheduler.Factory()
+  mySqlDataSource = dataSource
+}
+```
+
+MySQL needs Skipper's schema to exist: apply the bundled Flyway migrations to that database once
+before the first run, since Skipper does not run them for you there. The SQLite backend bootstraps
+its own schema. A durable single-node SQLite file, or your own store implementation, is likewise a
+config change: see [Storage Backends](web/src/content/docs/storage.md).
 
 **Read next:** [Quickstart](web/src/content/docs/quickstart.md) ·
 [Core Concepts](web/src/content/docs/core-concepts.md) ·

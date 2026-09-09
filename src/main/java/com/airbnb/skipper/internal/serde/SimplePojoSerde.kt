@@ -150,13 +150,24 @@ class SimplePojoSerde(
             try {
                 Objects.equals(obj, deserialize(serializeInternal(obj)))
             } catch (e: Exception) {
-                throw IllegalArgumentException(String.format("the object %s is not serializable", obj), e)
+                throw IllegalArgumentException(
+                    String.format(
+                        "the object %s (%s) is not serializable: Jackson could not round-trip it. It needs a" +
+                            " no-arg constructor and public fields or getters/setters, and no top-level generics",
+                        obj,
+                        obj.javaClass.name
+                    ),
+                    e
+                )
             }
         if (!areEqual) {
             throw IllegalArgumentException(
                 String.format(
-                    "the object %s is not serializable because it does not produces consistent serialization",
-                    obj
+                    "the object %s (%s) is not serializable: it does not compare equal to itself after a" +
+                        " serialize/deserialize round trip. Implement equals() and hashCode() over the" +
+                        " serialized fields (a Kotlin data class does this for you)",
+                    obj,
+                    obj.javaClass.name
                 )
             )
         }

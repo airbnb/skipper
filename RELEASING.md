@@ -71,26 +71,37 @@ repository, so a local experiment cannot become a release by accident.
 
 Releases are **immutable**: Maven Central will not accept a re-upload of a version that
 already exists. A mistake is corrected by publishing a higher version, never by replacing
-one. Check `scripts/next-version.sh` output before tagging.
+one.
 
-1. Be on an up-to-date `main` with a clean working tree.
+1. **Merge a releasable pull request.** Squash-merging a PR whose title starts with `fix:`,
+   `perf:`, `feat:` or a `!:` breaking marker is what starts a release. Check the version it
+   will produce before merging if it matters:
 
-2. Tag it. The tag is the release record, so it goes up before the artifact does:
+   ```bash
+   scripts/next-version.sh   # on an up-to-date main, with the PR's title in mind
+   ```
+
+2. **CI tags it.** On `main`, once `jvm-build` and `format-check` pass, the `tag-release` job
+   runs `scripts/next-version.sh` and pushes the `v*` tag it prints. It does nothing when no
+   releasable commit has landed since the last tag, or when the tag already exists, so
+   re-runs and racing pipelines are safe. The tag is the release record, so it goes up before
+   the artifact does.
+
+   To cut a release by hand instead (or if the job is ever unavailable), the same steps work
+   locally on a clean, up-to-date `main`:
 
    ```bash
    V=$(scripts/next-version.sh) && git tag -a "v$V" -m "Release $V" && git push origin "v$V"
    ```
 
-   A non-zero exit here means nothing releasable has landed since the last tag.
-
-   **First release only:** tag `v0.2.0` by hand instead. Versions `0.1.1`–`0.1.7` were
+   **First release only:** `v0.2.0` was tagged by hand. Versions `0.1.1`–`0.1.7` were
    consumed by an earlier per-commit build-number scheme and still exist in the internal
-   mirror, so the first semantic release has to sort above them or "latest" there would
+   mirror, so the first semantic release had to sort above them or "latest" there would
    point at the older artifact. The script takes over from that tag onward.
 
-3. **CI takes it from here.** The tag triggers the `release` workflow: `jvm-build` runs the
-   full test suite on the tagged commit, then `publish-release` signs the artifacts and
-   uploads them to the Central Portal, where they sit as a validated deployment.
+3. **The tag triggers the `release` workflow:** `jvm-build` runs the full test suite on the
+   tagged commit, then `publish-release` signs the artifacts and uploads them to the Central
+   Portal, where they sit as a validated deployment.
 
 4. **Release it in the Portal.** Sign in at central.sonatype.com, open *Deployments*, check
    the artifacts look right, and press *Publish*. Until you do, nothing is public and the
@@ -103,9 +114,9 @@ one. Check `scripts/next-version.sh` output before tagging.
    gh release create "v$V" --generate-notes
    ```
 
-6. Bump the version in the dependency snippets — `README.md` and
-   `web/src/content/docs/quickstart.md` — to `$V`. The README badge updates itself; the
-   copy-pasteable snippets do not.
+6. Make sure the dependency snippets in `README.md` and `web/src/content/docs/quickstart.md`
+   say `$V`. A releasable PR should bump them itself, since its title decides the version;
+   the README badge updates on its own, the copy-pasteable snippets do not.
 
 ## Notes
 

@@ -324,6 +324,11 @@ class InvocationBuilder<T : Workflow>(
 }
 
 /**
+ * Reified-type convenience for [IWorkflowFactory.builder]: `factory.builder<MyWorkflow>(id)`.
+ */
+inline fun <reified T : Workflow> IWorkflowFactory.builder(workflowId: String): InvocationBuilder<T> = builder(T::class.java, workflowId)
+
+/**
  * Reified-type convenience that omits the request context entirely. Use this in tests or in
  * deployments that don't carry per-request identity.
  */

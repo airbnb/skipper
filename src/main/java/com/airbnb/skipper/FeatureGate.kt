@@ -62,5 +62,15 @@ interface FeatureGate {
          * legacy behavior. Persistence is on by default for opted-in signals.
          */
         DISABLE_SIGNAL_PERSISTENCE("disable_signal_persistence"),
+
+        /**
+         * When the engine reschedules a workflow task honouring an active lease (the path a signal
+         * takes to wake a workflow), ask the scheduler to also bump the task row's version instead of
+         * returning the row untouched (`ScheduleRequest.isBumpVersionWhenHonoringLease`). The lease
+         * holder's final versioned `remove` then fails, the row survives, and the task is rescheduled
+         * to run right away (or at lease expiry as a fallback). Without this, a signal that lands between the handler
+         * persisting WAITING and removing its task is silently lost.
+         */
+        BUMP_TASK_VERSION_ON_HONORED_LEASE("bump_task_version_on_honored_lease"),
     }
 }

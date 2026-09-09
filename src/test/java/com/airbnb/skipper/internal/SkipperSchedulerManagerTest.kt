@@ -30,6 +30,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -114,6 +115,35 @@ class SkipperSchedulerManagerTest {
             )
         val result = future.get(5, TimeUnit.SECONDS)
         assertEquals(scheduledTask.id, result.id)
+    }
+
+    @Test
+    fun testStopReturnsPromptlyWhenIdle() {
+        // The consumer loops block in the in-memory queue's take(); stop() must wake them so the
+        // executor terminates well inside the grace period rather than always timing out and forcing.
+        val handlers: Map<Task.Type, TaskHandler> = HashMap.of(Task.Type.WORKFLOW, DemoHandler(CompletableFuture()))
+        val manager =
+            SkipperSchedulerManager(
+                schedulerQueue,
+                scheduler,
+                executor,
+                taskHandlerExecutor,
+                handlers,
+                metrics,
+                10,
+                leaseManager,
+                featureGate,
+                knobs,
+                SingleMemberClusterMembershipManager(),
+                BucketPartitioner(),
+                Duration.ofSeconds(30),
+            )
+        manager.start()
+        val started = System.nanoTime()
+        manager.stop()
+        val elapsed = Duration.ofNanos(System.nanoTime() - started)
+        assertTrue(elapsed < Duration.ofSeconds(5), "stop() took $elapsed with an idle scheduler")
+        assertTrue(executor.isTerminated, "loop executor reached termination instead of being forced")
     }
 
     @ParameterizedTest

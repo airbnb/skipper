@@ -8,10 +8,11 @@ The site has two halves: a marketing landing page and a full documentation tree 
 companion State Machine section, and an API reference), with client-side search and a
 Kotlin/Java code toggle throughout.
 
-> **Status / placeholders.** Content is derived from Skipper's internal docs and re-voiced for
-> an external audience. A few things are intentionally ahead of the public release and are clearly
-> marked as illustrative in-page: Maven coordinates (`dev.skipper:skipper`), the GitHub repository
-> URL, the embedded-SQLite default storage backend, and the reified `factory.builder<T>(id)` helper.
+> **Status.** Content is derived from Skipper's internal docs and re-voiced for an external
+> audience. The embedded-SQLite default storage backend and the file-backed
+> `SqliteWorkflowStore.Factory("skipper.db")` form described in the docs exist in the engine; the
+> test harness (`SkipperTest`) described in earlier drafts is not published, and the Testing guide
+> shows runtime-based tests instead.
 
 ## Develop
 
@@ -145,4 +146,4 @@ format (`dist/404.html` doubles as the error document).
 - The top-nav links collapse on mobile with no hamburger menu yet (the footer and hero CTAs cover
   navigation in the meantime); the docs sidebar becomes a card on mobile.
 - Replace the placeholder GitHub URL and Maven coordinates once the public repo and first release
-  exist; revisit the SQLite-default and reified-builder docs when those land in the engine.
+  exist. The SQLite default and the reified `factory.builder<T>(id)` helper now exist in the engine.

@@ -1,5 +1,6 @@
 package com.airbnb.skipper.internal.scheduler
 
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_LEASE_DURATION
 import com.airbnb.skipper.SkipperAnnotationNames.UNEXPECTED_ERROR_RETRY_DELAY
@@ -25,6 +26,7 @@ class TimerTaskHandler
         @Named(UTC_CLOCK) private val clock: Clock,
         private val metrics: Metrics,
         @Named(SCHEDULER_LEASE_DURATION) private val leaseDuration: Duration,
+        private val featureGate: FeatureGate,
     ) : TaskHandler {
         override fun handle(
             task: Task<*>,
@@ -66,6 +68,9 @@ class TimerTaskHandler
                             .payload(null)
                             .type(Task.Type.WORKFLOW)
                             .honorActiveLeaseWhenOverwriting(true)
+                            .bumpVersionWhenHonoringLease(
+                                featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE),
+                            )
                             .build(),
                     )
                     log.info(
