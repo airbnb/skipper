@@ -14,7 +14,7 @@ there for your tests.
 ```kotlin
 // build.gradle.kts
 dependencies {
-  testImplementation("com.airbnb.skipper:skipper-testutils:0.4.0")
+  testImplementation("com.airbnb.skipper:skipper-testutils:0.5.0")
 }
 ```
 
@@ -23,7 +23,7 @@ dependencies {
 <dependency>
   <groupId>com.airbnb.skipper</groupId>
   <artifactId>skipper-testutils</artifactId>
-  <version>0.4.0</version>
+  <version>0.5.0</version>
   <scope>test</scope>
 </dependency>
 ```
