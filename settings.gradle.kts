@@ -26,3 +26,9 @@ rootProject.name = "skipper"
 // artifact) that depends on the root `skipper` project. Core does not depend on it, so the engine
 // builds and publishes exactly as it did before this module existed.
 include("skipper-state-machine")
+
+// skipper-testutils is the test harness adopters extend (WorkflowTest, TestRuntime, the setup
+// extensions): its own artifact, depending on the root `skipper` project, published alongside it.
+// The directory keeps its historical name so sources line up with the internal build.
+include("skipper-testutils")
+project(":skipper-testutils").projectDir = file("testutils")

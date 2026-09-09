@@ -122,42 +122,35 @@ write a callback handler.
 
 ## 5. Test it
 
-A test needs nothing beyond a `SkipperRuntime` on the default in-memory store: build one per
-test, start its scheduler, run the workflow end to end, and assert on the result.
+Extend `WorkflowTest` from `com.airbnb.skipper:skipper-testutils` (a `testImplementation`
+dependency), which runs each test on its own in-memory runtime. Build the workflow, run it, and assert.
 
 ```kotlin
-class DemoTest {
-  private val runtime = SkipperRuntime(SkipperConfig.forService("demo-test")) // in-memory SQLite
-
-  @BeforeEach fun start() = runtime.skipperSchedulerManager.get().start()
-  @AfterEach fun stop() = runtime.skipperSchedulerManager.get().stop()
-
+class DemoTest : WorkflowTest() {
   @Test
-  fun testEcho() = runBlocking {
-    val demo = runtime.workflowFactory.get()<Demo>("demo-${UUID.randomUUID()}")
-    assertEquals("Hello, world!".reversed(), demo.echo("Hello, world!"))
+  fun testEcho() {
+    val demo = workflowBuilder<Demo>().build()
+
+    assertEquals("Hello, world!".reversed(), demo.echo("Hello, world!").get())
+    assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().status)
   }
 }
 ```
 
 ```java
-public class DemoTest {
-  private final SkipperRuntime runtime =
-      new SkipperRuntime(SkipperConfig.forService("demo-test")); // in-memory SQLite
-
-  @BeforeEach void start() { runtime.getSkipperSchedulerManager().get().start(); }
-  @AfterEach void stop() throws Exception { runtime.getSkipperSchedulerManager().get().stop(); }
-
+public class DemoTest extends WorkflowTest {
   @Test
   public void testEcho() throws Exception {
-    Demo demo = runtime.getWorkflowFactory().get().invoke(Demo.class, "demo-" + UUID.randomUUID());
+    Demo demo = workflowBuilder(Demo.class).build();
+
     assertEquals(new StringBuilder("Hello, world!").reverse().toString(), demo.echo("Hello, world!").get());
+    assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().getStatus());
   }
 }
 ```
 
-See **[Testing](/docs/testing/)** for workflows that wait on signals, compensation, and how to
-hand your actions mocked collaborators.
+See **[Testing](/docs/testing/)** for workflows that wait on signals or timers, compensation, and
+how to hand your actions fakes with `@Bind`.
 
 ## Java
 

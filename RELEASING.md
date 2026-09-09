@@ -1,7 +1,9 @@
 # Releasing Skipper
 
-Skipper publishes `com.airbnb.skipper:skipper-core` to **Maven Central**, from CI, on every
-`v*` tag. That is the only place it is published.
+Skipper publishes two artifacts to **Maven Central**, from CI, on every `v*` tag:
+`com.airbnb.skipper:skipper-core` (the engine) and `com.airbnb.skipper:skipper-testutils` (the
+test harness, built from `testutils/`). They share one version. That is the only place either is
+published.
 
 Every version on Central is permanent, public and undeletable, so only deliberately tagged
 releases go there. Internal consumers need nothing extra: Artifactory mirrors Central, so a
