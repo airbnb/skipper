@@ -4,9 +4,9 @@
 <p>A workflow test that never completes usually means the scheduler isn’t running or the
 workflow is stuck waiting.</p>
 <ul>
-<li>Make sure the scheduler is started. If you extend <code>SkipperTest</code>, this happens
-automatically — but if you override the setup method, call <code>super.setUp()</code>. Without
-<code>SkipperTest</code>, start <code>SkipperSchedulerManager</code> yourself.</li>
+<li>Make sure the scheduler is started. If you extend <code>WorkflowTest</code>, this happens
+automatically. Otherwise call <code>runtime.skipperSchedulerManager.get().start()</code> on your
+<code>SkipperRuntime</code> before invoking workflows.</li>
 <li>Scroll up in the test logs for exceptions thrown during execution.</li>
 <li>Call <code>printEvents()</code> (provided by the test base) to print the workflow’s event history —
 far easier to read than raw logs for understanding where it got stuck.</li>
