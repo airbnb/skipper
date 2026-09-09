@@ -1618,20 +1618,33 @@ class SqliteWorkflowStore
             }
         }
 
-        class Factory : ComponentFactory<WorkflowStore> {
-            override fun create(config: SkipperConfig): WorkflowStore {
-                return SqliteWorkflowStore(
-                    JdbcTransactionManager.SqliteFactory().create(config),
-                    config.metrics.create(config),
-                    config.serde.create(config),
-                    config.simplePojoSerde.create(config),
-                    config.requestContextSerde.create(config),
-                    config.utcClock,
-                    config.tenant,
-                    config.tablePrefix
-                )
+        /**
+         * Builds a [SqliteWorkflowStore] from a [SkipperConfig].
+         *
+         * With no [path], the database is the one described by [SkipperConfig.sqliteDataSource], or the
+         * ephemeral shared in-memory default when that is `null`. Passing a [path] (for example
+         * `"skipper.db"`) opens a durable on-disk database at that file instead; use the same path for
+         * [com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler.Factory] so both live in one file.
+         */
+        class Factory
+            @JvmOverloads
+            constructor(
+                private val path: String? = null,
+            ) : ComponentFactory<WorkflowStore> {
+                override fun create(config: SkipperConfig): WorkflowStore {
+                    val dataSource = path?.let { JdbcTransactionManager.SqliteFactory.fileDataSource(it) }
+                    return SqliteWorkflowStore(
+                        JdbcTransactionManager.SqliteFactory(dataSource).create(config),
+                        config.metrics.create(config),
+                        config.serde.create(config),
+                        config.simplePojoSerde.create(config),
+                        config.requestContextSerde.create(config),
+                        config.utcClock,
+                        config.tenant,
+                        config.tablePrefix
+                    )
+                }
             }
-        }
 
         companion object {
             private val log = org.slf4j.LoggerFactory.getLogger(SqliteWorkflowStore::class.java)

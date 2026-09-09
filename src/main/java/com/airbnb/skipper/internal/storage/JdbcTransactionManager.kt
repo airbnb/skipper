@@ -207,65 +207,78 @@ class JdbcTransactionManager(private val ds: DataSource) {
      * scheduler touches the database. This mirrors how the MySQL backend uses Flyway, and lets the
      * in-memory default self-bootstrap with zero external infrastructure.
      */
-    class SqliteFactory : ComponentFactory<JdbcTransactionManager> {
-        override fun create(config: SkipperConfig): JdbcTransactionManager {
-            val dataSource = config.sqliteDataSource ?: buildSharedInMemoryDataSource()
-            migrateSqliteSchema(dataSource, config.tablePrefix)
-            return JdbcTransactionManager(dataSource)
-        }
-
-        /**
-         * Builds the default shared in-memory SQLite DataSource.
-         *
-         * A plain `jdbc:sqlite::memory:` URL gives every connection its own private database, which
-         * breaks Skipper's multi-store-over-one-database model. We instead use a uniquely-named
-         * shared-cache in-memory URL (`jdbc:sqlite:file:<uuid>?mode=memory&cache=shared`) so that all
-         * connections from this DataSource see the same database. The UUID makes each built default
-         * DataSource distinct, so independent (e.g. parallel) consumers do not collide on one shared
-         * in-memory database.
-         *
-         * A shared-cache in-memory SQLite database is destroyed when its last connection closes. To
-         * keep it alive for the DataSource's lifetime, we open one keep-alive connection and never
-         * close it — it is intentionally leaked for the life of the process / DataSource. The pooled
-         * connections handed out by `getConnection()` may open and close freely without losing the
-         * database's contents.
-         */
-        private fun buildSharedInMemoryDataSource(): DataSource {
-            val url = "jdbc:sqlite:file:" + UUID.randomUUID() + "?mode=memory&cache=shared"
-            val dataSource = SQLiteDataSource()
-            dataSource.url = url
-            try {
-                // Held open for the DataSource's lifetime so the shared in-memory database is not destroyed
-                // when individual pooled connections close. Intentionally never closed.
-                @Suppress("UNUSED_VARIABLE")
-                val keepAlive = dataSource.connection
-            } catch (e: java.sql.SQLException) {
-                throw SneakyThrow.sneakyThrow(e)
+    class SqliteFactory
+        @JvmOverloads
+        constructor(
+            /** Overrides [SkipperConfig.sqliteDataSource] when set; see [fileDataSource]. */
+            private val dataSourceOverride: DataSource? = null,
+        ) : ComponentFactory<JdbcTransactionManager> {
+            override fun create(config: SkipperConfig): JdbcTransactionManager {
+                val dataSource = dataSourceOverride ?: config.sqliteDataSource ?: buildSharedInMemoryDataSource()
+                migrateSqliteSchema(dataSource, config.tablePrefix)
+                return JdbcTransactionManager(dataSource)
             }
-            return dataSource
-        }
 
-        companion object {
             /**
-             * Bootstraps the SQLite schema on [dataSource] via Flyway, pointed at the SQLite-dialect
-             * migrations (`classpath:db/sqlite`). Flyway tracks applied migrations, so this is idempotent
-             * and safe to call on every factory build.
+             * Builds the default shared in-memory SQLite DataSource.
              *
-             * The migration DDL is templated with the `${tablePrefix}` Flyway placeholder, so
-             * [tablePrefix] must be supplied here: Flyway's `placeholderReplacement` defaults to `true`,
-             * and resolving the migration (even on an up-to-date, no-op run) fails with "No value
-             * provided for placeholder: tablePrefix" if it is missing.
+             * A plain `jdbc:sqlite::memory:` URL gives every connection its own private database, which
+             * breaks Skipper's multi-store-over-one-database model. We instead use a uniquely-named
+             * shared-cache in-memory URL (`jdbc:sqlite:file:<uuid>?mode=memory&cache=shared`) so that all
+             * connections from this DataSource see the same database. The UUID makes each built default
+             * DataSource distinct, so independent (e.g. parallel) consumers do not collide on one shared
+             * in-memory database.
+             *
+             * A shared-cache in-memory SQLite database is destroyed when its last connection closes. To
+             * keep it alive for the DataSource's lifetime, we open one keep-alive connection and never
+             * close it — it is intentionally leaked for the life of the process / DataSource. The pooled
+             * connections handed out by `getConnection()` may open and close freely without losing the
+             * database's contents.
              */
-            private fun migrateSqliteSchema(
-                dataSource: DataSource,
-                tablePrefix: String
-            ) {
-                val flyway = Flyway()
-                flyway.setDataSource(dataSource)
-                flyway.setLocations("classpath:db/sqlite")
-                flyway.setPlaceholders(mapOf("tablePrefix" to tablePrefix))
-                flyway.migrate()
+            private fun buildSharedInMemoryDataSource(): DataSource {
+                val url = "jdbc:sqlite:file:" + UUID.randomUUID() + "?mode=memory&cache=shared"
+                val dataSource = SQLiteDataSource()
+                dataSource.url = url
+                try {
+                    // Held open for the DataSource's lifetime so the shared in-memory database is not destroyed
+                    // when individual pooled connections close. Intentionally never closed.
+                    @Suppress("UNUSED_VARIABLE")
+                    val keepAlive = dataSource.connection
+                } catch (e: java.sql.SQLException) {
+                    throw SneakyThrow.sneakyThrow(e)
+                }
+                return dataSource
+            }
+
+            companion object {
+                /** A [DataSource] for a durable on-disk SQLite database at [path] (`jdbc:sqlite:<path>`). */
+                @JvmStatic
+                fun fileDataSource(path: String): DataSource {
+                    val dataSource = SQLiteDataSource()
+                    dataSource.url = "jdbc:sqlite:$path"
+                    return dataSource
+                }
+
+                /**
+                 * Bootstraps the SQLite schema on [dataSource] via Flyway, pointed at the SQLite-dialect
+                 * migrations (`classpath:db/sqlite`). Flyway tracks applied migrations, so this is idempotent
+                 * and safe to call on every factory build.
+                 *
+                 * The migration DDL is templated with the `${tablePrefix}` Flyway placeholder, so
+                 * [tablePrefix] must be supplied here: Flyway's `placeholderReplacement` defaults to `true`,
+                 * and resolving the migration (even on an up-to-date, no-op run) fails with "No value
+                 * provided for placeholder: tablePrefix" if it is missing.
+                 */
+                private fun migrateSqliteSchema(
+                    dataSource: DataSource,
+                    tablePrefix: String
+                ) {
+                    val flyway = Flyway()
+                    flyway.setDataSource(dataSource)
+                    flyway.setLocations("classpath:db/sqlite")
+                    flyway.setPlaceholders(mapOf("tablePrefix" to tablePrefix))
+                    flyway.migrate()
+                }
             }
         }
-    }
 }

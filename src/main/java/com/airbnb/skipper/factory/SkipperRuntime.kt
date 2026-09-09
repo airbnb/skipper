@@ -30,8 +30,12 @@ import com.airbnb.skipper.internal.scheduler.Task
 import com.airbnb.skipper.internal.scheduler.TaskHandler
 import com.airbnb.skipper.internal.scheduler.TimerTaskHandler
 import com.airbnb.skipper.internal.scheduler.WorkflowExecutionTaskHandler
+import com.airbnb.skipper.internal.scheduler.mysql.MySqlScheduler
+import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
 import com.airbnb.skipper.internal.serde.Serde
 import com.airbnb.skipper.internal.storage.WorkflowStore
+import com.airbnb.skipper.internal.storage.mysql.MySqlWorkflowStore
+import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore
 import com.airbnb.skipper.util.SkipperInternalDeps
 import io.opentracing.util.GlobalTracer
 import io.vavr.collection.HashMap
@@ -53,9 +57,33 @@ class SkipperRuntime
         val config: SkipperConfig,
         val injector: SkipperInjector = config.injector
     ) {
+        init {
+            validateStorageBackends(config)
+        }
+
         // ---------------------------------------------------------------------------
         // Helpers
         // ---------------------------------------------------------------------------
+
+        /**
+         * The store and scheduler default to the embedded SQLite backend. A config written for the
+         * MySQL-default era (`mySqlDataSource = ds` and nothing else) would otherwise start silently on
+         * an in-memory database that ignores the DataSource, hiding every persisted workflow.
+         */
+        private fun validateStorageBackends(config: SkipperConfig) {
+            val sqliteStore = config.workflowStore is SqliteWorkflowStore.Factory
+            val sqliteScheduler = config.scheduler is SqliteScheduler.Factory
+            val mysqlStore = config.workflowStore is MySqlWorkflowStore.Factory
+            val mysqlScheduler = config.scheduler is MySqlScheduler.Factory
+            check(config.mySqlDataSource == null || !(sqliteStore || sqliteScheduler)) {
+                "mySqlDataSource is set but the workflow store and scheduler are the embedded SQLite defaults, " +
+                    "which would ignore it. Set workflowStore = MySqlWorkflowStore.Factory() and " +
+                    "scheduler = MySqlScheduler.Factory() to use MySQL, or remove mySqlDataSource."
+            }
+            check(!((sqliteStore && mysqlScheduler) || (mysqlStore && sqliteScheduler))) {
+                "workflowStore and scheduler use different backends (SQLite vs MySQL); they must share one database."
+            }
+        }
 
         private fun <T> singleton(factory: () -> T): Provider<T> {
             val lazy = lazy(factory)
@@ -207,7 +235,8 @@ class SkipperRuntime
             ExecutionTimeoutHandler(
                 scheduler.get(),
                 skipperEngine.get(),
-                config.utcClock
+                config.utcClock,
+                featureGate.get()
             )
         }
 
@@ -218,7 +247,8 @@ class SkipperRuntime
                 config.taskUnexpectedErrorRetryDelay,
                 config.utcClock,
                 metrics.get(),
-                config.schedulerTaskLeaseDuration
+                config.schedulerTaskLeaseDuration,
+                featureGate.get()
             )
         }
 

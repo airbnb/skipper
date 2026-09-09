@@ -12,6 +12,7 @@ import com.airbnb.skipper.internal.cluster.BucketPartitioner
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.common.SneakyThrow
 import com.airbnb.skipper.internal.scheduler.LeaseRenewalManager
+import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.SchedulerExecutionQueue
 import com.airbnb.skipper.internal.scheduler.Task
@@ -24,6 +25,7 @@ import io.vavr.control.Option
 import java.time.Duration
 import java.time.Instant
 import java.util.HashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
@@ -67,6 +69,9 @@ class SkipperSchedulerManager
         @param:Named(GRACEFUL_SHUTDOWN_TIMEOUT) private val gracefulShutdownTimeout: Duration,
     ) {
         private val stop = AtomicBoolean(false)
+
+        /** Futures of the long-running loops started by [start]; cancelled by [stop] to unblock them. */
+        private val loopFutures = CopyOnWriteArrayList<Future<*>>()
         private val started = AtomicBoolean(false)
 
         // Widened from package-private to a public @JvmField so the same-package Java test
@@ -81,10 +86,10 @@ class SkipperSchedulerManager
                 return
             }
             for (type in List.of(*Task.Type.values())) {
-                executor.submit { startTakingTasks(type) }
+                loopFutures.add(executor.submit { startTakingTasks(type) })
             }
-            executor.submit { startFetchingTasks() }
-            executor.submit { renewExpiringLeases() }
+            loopFutures.add(executor.submit { startFetchingTasks() })
+            loopFutures.add(executor.submit { renewExpiringLeases() })
             clusterMembershipManager.start()
             registerQueueMonitoring()
             started.set(true)
@@ -115,6 +120,12 @@ class SkipperSchedulerManager
                         )
                     }
                 } catch (e: Exception) {
+                    if (stop.get()) {
+                        // stop() cancels this loop's future, which interrupts the blocking take(); that
+                        // surfaces here as a wrapped InterruptedException and is the normal way out.
+                        log.info("stopping skipper scheduler manager.startTakingTasks for task type {}", type)
+                        return
+                    }
                     metrics
                         .counter(
                             ImmutableMap.of(ERROR_TAG, e.javaClass.simpleName),
@@ -165,6 +176,9 @@ class SkipperSchedulerManager
                             Thread.sleep(1000)
                         }
                     } catch (e: Exception) {
+                        if (stop.get()) {
+                            break // stop() interrupted the sleep above; leaving quietly is the normal exit
+                        }
                         log.error("Error fetching tasks", e)
                         metrics
                             .counter(
@@ -332,6 +346,10 @@ class SkipperSchedulerManager
                             )
                         }
                     } catch (e: Exception) {
+                        if (stop.get()) {
+                            log.info("stopping skipper scheduler manager.renewExpiringLeases")
+                            break // stop() interrupted the sleep above; leaving quietly is the normal exit
+                        }
                         log.error("unexpected error while trying to renew leases", e)
                         metrics.counter(METRICS_COMPONENT, "renewLeaseErrors").inc()
                     }
@@ -355,6 +373,10 @@ class SkipperSchedulerManager
             // Initiate graceful shutdown - stop accepting new tasks
             executor.shutdown()
             taskHandlerExecutor.shutdown()
+            // The consumer loops block indefinitely in the in-memory queue's take(); interrupt just those
+            // (not the in-flight task wrappers that share the executor) so the executor can actually reach
+            // termination within the grace period instead of always timing out and being forced.
+            loopFutures.forEach { it.cancel(true) }
             // Wait for in-flight tasks to complete
             try {
                 log.info(
@@ -392,6 +414,100 @@ class SkipperSchedulerManager
             }
         }
 
+        /** Removes the finished [task], or hands off to [handleVersionMoved] if its row version moved under us. */
+        private fun removeOrHandleVersionMoved(
+            task: Task<*>,
+            tags: MutableMap<String, String>,
+        ) {
+            if (leaseManager.isRerunRequested(task)) {
+                scheduleRerunNow(task, tags)
+                return
+            }
+            try {
+                log.debug("removing task: {}", task.id)
+                scheduler.remove(leaseManager.getLatestTaskVersion(task))
+            } catch (e: OptimisticLockingError) {
+                handleVersionMoved(task, tags, "remove")
+            }
+        }
+
+        /**
+         * A versioned write on a task we just finished handling failed because the row's version moved.
+         * Two things move it: another worker fetched the task after our lease expired, or a rerun was
+         * recorded on the leased row (`ScheduleRequest.isBumpVersionWhenHonoringLease`, the path a
+         * signal takes). They are told apart by `run_after`: a fetch always re-leases the row to
+         * `now + leaseDuration`, whereas the rerun bump leaves `run_after` exactly as we last knew it.
+         *
+         * When the lease is still ours, the rerun request is served right away: the row is overwritten
+         * (no lease honoured, since ours is the lease) to PENDING with `retry_count` reset and an
+         * immediate `run_after`, so the next fetch picks it up instead of waiting for the lease to lapse.
+         * If that overwrite loses its own race, the row still survives and runs at lease expiry.
+         */
+        private fun handleVersionMoved(
+            task: Task<*>,
+            tags: MutableMap<String, String>,
+            operation: String,
+        ) {
+            var current = scheduler.getTask<Any>(task.id)
+            if (current.isEmpty) {
+                tags[RESULT_TAG] = "removedElsewhere"
+                log.info("task {} was removed by another worker before {}", task.id, operation)
+                return
+            }
+            var known = leaseManager.getLatestTaskVersion(task)
+            if (current.get().runAfter != known.runAfter && !leaseManager.isRerunRequested(task)) {
+                // A renewal may have moved run_after between the two reads; compare once more before
+                // concluding that another worker owns the row.
+                current = scheduler.getTask<Any>(task.id)
+                known = leaseManager.getLatestTaskVersion(task)
+                if (current.isEmpty || current.get().runAfter != known.runAfter) {
+                    tags[RESULT_TAG] = "leaseLost"
+                    log.warn(
+                        "task {} was re-leased by another worker before {}; leaving it to them. known={}, current={}",
+                        task.id,
+                        operation,
+                        known,
+                        current.getOrNull(),
+                    )
+                    return
+                }
+            }
+            scheduleRerunNow(task, tags)
+        }
+
+        /**
+         * Serves a rerun requested while we held the lease: overwrite the row (no lease honoured, since
+         * ours is the lease) to PENDING with `retry_count` reset and an immediate `run_after`, so the
+         * next fetch picks it up instead of waiting for the lease to lapse. If the overwrite loses its
+         * own race the row still survives and runs at lease expiry.
+         */
+        private fun scheduleRerunNow(
+            task: Task<*>,
+            tags: MutableMap<String, String>,
+        ) {
+            tags[RESULT_TAG] = "rerunRequested"
+            try {
+                scheduler.schedule(
+                    ScheduleRequest.builder<Any>()
+                        .id(task.id)
+                        .dedupToken(task.dedupToken)
+                        .type(task.type)
+                        .payload(null) // the handler hydrates by id; the stored payload would be stale
+                        .runAfter(Instant.EPOCH)
+                        .inMemoryExecutionEnabled(false)
+                        .honorActiveLeaseWhenOverwriting(false)
+                        .build(),
+                )
+                metrics.counter(METRICS_COMPONENT, "rerunRequestedWhileLeased").inc()
+                log.info("task {} was re-requested while leased; rescheduled to run now", task.id)
+            } catch (e: OptimisticLockingError) {
+                log.info(
+                    "task {} was re-requested while leased and moved again; it will run when its lease expires",
+                    task.id,
+                )
+            }
+        }
+
         /** Immediately stops the scheduler without waiting for in-flight tasks. For test use only. */
         fun forceStop() {
             stop.set(true)
@@ -420,7 +536,11 @@ class SkipperSchedulerManager
                         handler
                             .handle(task, taskHandlerExecutor)
                             .get(task.executionTimeout.seconds, TimeUnit.SECONDS)
-                    if (rescheduleTime.isDefined) {
+                    if (leaseManager.isRerunRequested(task)) {
+                        // A renewal already folded the rerun request back into our version, so the row would
+                        // not fail a versioned write any more; the request lives on in the in-flight record.
+                        scheduleRerunNow(task, tags)
+                    } else if (rescheduleTime.isDefined) {
                         log.info("rescheduling task: {} to {}", task.id, rescheduleTime.get())
                         try {
                             scheduler.rescheduleForRetry(
@@ -428,28 +548,16 @@ class SkipperSchedulerManager
                                 rescheduleTime.get(),
                             )
                             tags[RESULT_TAG] = "reschedule"
-                        } catch (e: Exception) {
-                            // This means the task is currently being processed by another thread, or it
-                            // has already been dequeued. In any case, we should just ignore it and let
-                            // the other thread handle it.
-                            when (e) {
-                                is OptimisticLockingError,
-                                is IllegalArgumentException -> {
-                                    tags[RESULT_TAG] = "rescheduleFailed"
-                                    log.warn(
-                                        "failed to reschedule task, another thread already processed" +
-                                            " it: {}",
-                                        task.id,
-                                        e,
-                                    )
-                                }
-                                else -> throw e
-                            }
+                        } catch (e: OptimisticLockingError) {
+                            handleVersionMoved(task, tags, "reschedule")
+                        } catch (e: IllegalArgumentException) {
+                            // The task has already been dequeued; let whoever did that handle it.
+                            tags[RESULT_TAG] = "rescheduleFailed"
+                            log.warn("failed to reschedule task, another thread already processed it: {}", task.id, e)
                         }
                     } else {
                         tags[RESULT_TAG] = "remove"
-                        log.debug("removing task: {}", task.id)
-                        scheduler.remove(leaseManager.getLatestTaskVersion(task))
+                        removeOrHandleVersionMoved(task, tags)
                     }
                 } catch (e: ExecutionException) {
                     // If option is empty, it means the task has been processed and should be dequeued.
@@ -460,7 +568,7 @@ class SkipperSchedulerManager
                     tags[RESULT_TAG] = "error"
                     tags[ERROR_TAG] = e.cause!!.javaClass.simpleName
                     log.warn("task processing threw unexpected error. task={}", task, e)
-                    scheduler.remove(leaseManager.getLatestTaskVersion(task))
+                    removeOrHandleVersionMoved(task, tags)
                 } catch (e: InterruptedException) {
                     tags[RESULT_TAG] = "error"
                     tags[ERROR_TAG] = e.javaClass.simpleName
@@ -481,9 +589,9 @@ class SkipperSchedulerManager
                 }
             } else {
                 log.error("no handler found for task type {}. task={}", task, task.type)
-                scheduler.remove(leaseManager.getLatestTaskVersion(task))
                 tags[RESULT_TAG] = "error"
                 tags[ERROR_TAG] = "unhandledTaskType"
+                removeOrHandleVersionMoved(task, tags)
                 metrics.counter(tags, METRICS_COMPONENT, "handledTasks").inc()
             }
         }
