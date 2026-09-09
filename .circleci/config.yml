@@ -10,7 +10,7 @@
 #                 scripts/check-format.sh, which applies the same formatters at the same
 #                 versions and settings as `yak lint` does to this code in treehouse (ktlint
 #                 for Kotlin, google-java-format for Java), so a file that is clean there is
-#                 clean here and vice versa. `scripts/check-format.sh --fix` repairs a failure.
+#                 clean here and vice versa. `./gradlew format` repairs a failure.
 #
 #   web-build     Builds the Astro documentation site in web/ and stores it as an artifact,
 #                 so every branch and pull request gets a browsable copy. Nothing else in the

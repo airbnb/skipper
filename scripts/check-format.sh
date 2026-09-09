@@ -14,6 +14,9 @@
 #   scripts/check-format.sh          exit 1 and list the files that are not formatted
 #   scripts/check-format.sh --fix    rewrite them in place
 #
+# `./gradlew checkFormat` and `./gradlew format` are the same two commands, wrapped as Gradle
+# tasks (see build.gradle.kts). Contributors can use either; CI calls the script directly.
+#
 # Needs curl, git and a JDK 17 or newer on PATH (google-java-format 1.26 refuses older ones).
 # The formatter binaries are downloaded once, checksum-verified, and cached in
 # $SKIPPER_FORMAT_TOOLS_DIR (default ~/.cache/skipper-format). The CircleCI format-check job

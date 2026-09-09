@@ -277,3 +277,30 @@ signing {
         sign(publishing.publications)
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------------------
+// `./gradlew format` reformats every Kotlin and Java source; `./gradlew checkFormat` fails if
+// any of them would change. Both are thin wrappers over scripts/check-format.sh, which is what
+// the format-check CI job runs, so the definition of "formatted" lives in one place and the
+// Gradle tasks cannot drift from CI. The script pins the formatter versions and mirrors the
+// settings `yak lint` applies to this code in treehouse; see its header.
+//
+// Deliberately not a Spotless setup: Spotless drives ktlint through its own adapter rather
+// than the ktlint CLI treehouse runs, which is one more place a subtle difference could creep
+// in. checkFormat is also not attached to `check`: the first run downloads the formatters, and
+// a plain `gradlew build` should keep working offline and without surprises.
+val formatScript = layout.projectDirectory.file("scripts/check-format.sh")
+
+tasks.register<Exec>("checkFormat") {
+    group = "verification"
+    description = "Fails if any Kotlin or Java source is not formatted (same check as CI)."
+    commandLine(formatScript.asFile.absolutePath)
+}
+
+tasks.register<Exec>("format") {
+    group = "formatting"
+    description = "Reformats every Kotlin and Java source with ktlint and google-java-format."
+    commandLine(formatScript.asFile.absolutePath, "--fix")
+}
