@@ -81,12 +81,25 @@ scheduler, so it executes on whichever host picks it up.</p>
 <code>runAsync=true</code> that wait is served by polling storage, which gives up after
 <code>resultPollingTimeLimit</code> (30 seconds by default) and throws <code>TimeoutException</code>. So for workflows
 that wait on signals for <strong>hours or days</strong>, don’t try to wait at all — detach the invocation and
-take the outcome from a <code>WorkflowCallbackHandler</code>:</p>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> workflow </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> workflowFactory.</span><span style="color:#B392F0">builder</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">OrderWorkflow</span><span style="color:#E1E4E8">>(id)</span></span>
+take the outcome from a <code>WorkflowCallbackHandler</code>. A detached method must return <code>Unit</code> (it is
+rejected at validation otherwise), so expose what it produces through state and a <code>@QueryMethod</code>,
+or through the callback’s <code>WorkflowInstanceView</code>:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">class</span><span style="color:#B392F0"> ApprovalWorkflow</span><span style="color:#E1E4E8"> : </span><span style="color:#B392F0">Workflow</span><span style="color:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#B392F0">  @StateField</span><span style="color:#F97583"> var</span><span style="color:#E1E4E8"> outcome: </span><span style="color:#B392F0">String</span><span style="color:#E1E4E8">? </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> null</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#B392F0">  @WorkflowMethod</span></span>
+<span class="line"><span style="color:#F97583">  suspend</span><span style="color:#F97583"> fun</span><span style="color:#B392F0"> process</span><span style="color:#E1E4E8">(req: </span><span style="color:#B392F0">ApprovalRequest</span><span style="color:#E1E4E8">) { </span><span style="color:#6A737D">/* ... */</span><span style="color:#E1E4E8"> outcome </span><span style="color:#F97583">=</span><span style="color:#9ECBFF"> "approved"</span><span style="color:#E1E4E8"> }</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#B392F0">  @QueryMethod</span></span>
+<span class="line"><span style="color:#F97583">  fun</span><span style="color:#B392F0"> outcome</span><span style="color:#E1E4E8">(): </span><span style="color:#B392F0">String</span><span style="color:#E1E4E8">? </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> outcome</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> workflow </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> workflowFactory.</span><span style="color:#B392F0">builder</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">ApprovalWorkflow</span><span style="color:#E1E4E8">>(id)</span></span>
 <span class="line"><span style="color:#E1E4E8">  .</span><span style="color:#B392F0">callbackHandler</span><span style="color:#E1E4E8">(MyCallbackHandler::</span><span style="color:#B392F0">class</span><span style="color:#E1E4E8">.java)</span></span>
 <span class="line"><span style="color:#E1E4E8">  .</span><span style="color:#B392F0">runAsync</span><span style="color:#E1E4E8">()</span></span>
 <span class="line"><span style="color:#E1E4E8">  .</span><span style="color:#B392F0">detached</span><span style="color:#E1E4E8">()</span></span>
-<span class="line"><span style="color:#E1E4E8">  .</span><span style="color:#B392F0">build</span><span style="color:#E1E4E8">()</span></span></code></pre>
+<span class="line"><span style="color:#E1E4E8">  .</span><span style="color:#B392F0">build</span><span style="color:#E1E4E8">()</span></span>
+<span class="line"><span style="color:#E1E4E8">workflow.</span><span style="color:#B392F0">process</span><span style="color:#E1E4E8">(req)   </span><span style="color:#6A737D">// returns as soon as the instance is persisted and scheduled</span></span></code></pre>
 <h2 id="fire-and-forget">Fire-and-forget</h2>
 <p><code>.detached()</code> returns as soon as the instance is persisted and scheduled, so a result-less
 <code>suspend fun</code> is all you need — no <code>CompletableFuture</code> in the signature:</p>
