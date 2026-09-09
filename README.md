@@ -175,7 +175,7 @@ steps or long waits, and you would rather not operate a separate workflow cluste
 
 ## Contributing
 
-Issues and pull requests are welcome; `./gradlew build` is what CI runs.
+Issues and pull requests are welcome. CI runs `./gradlew build` and `scripts/check-format.sh`, which fails on any Kotlin or Java file that ktlint or google-java-format would change; `scripts/check-format.sh --fix` reformats them.
 
 ## License
 

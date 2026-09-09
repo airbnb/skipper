@@ -1,15 +1,21 @@
 # CircleCI configuration for airbnb/skipper.
 #
-# Two jobs run on every push:
+# Three jobs run on every push:
 #
-#   jvm-build  Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
-#              skipper-state-machine plugin module, and runs both test subsets. A bare
-#              `gradlew build` from the root covers every project in the build.
+#   jvm-build     Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
+#                 skipper-state-machine plugin module, and runs both test subsets. A bare
+#                 `gradlew build` from the root covers every project in the build.
 #
-#   web-build  Builds the Astro documentation site in web/ and stores it as an artifact,
-#              so every branch and pull request gets a browsable copy. Nothing else in the
-#              build compiles the site, so without this a broken doc would only surface at
-#              publish time.
+#   format-check  Fails when any Kotlin or Java source is not formatted. Runs
+#                 scripts/check-format.sh, which applies the same formatters at the same
+#                 versions and settings as `yak lint` does to this code in treehouse (ktlint
+#                 for Kotlin, google-java-format for Java), so a file that is clean there is
+#                 clean here and vice versa. `scripts/check-format.sh --fix` repairs a failure.
+#
+#   web-build     Builds the Astro documentation site in web/ and stores it as an artifact,
+#                 so every branch and pull request gets a browsable copy. Nothing else in the
+#                 build compiles the site, so without this a broken doc would only surface at
+#                 publish time.
 #
 # One more runs on main only:
 #
@@ -177,6 +183,33 @@ jobs:
           path: skipper-state-machine/build/libs
           destination: libs-state-machine
 
+  format-check:
+    # Reuses the JDK 17 image: both formatters are JVM tools, and google-java-format 1.26
+    # needs a JDK 17 or newer to run. Nothing here compiles anything.
+    executor: jvm
+    steps:
+      - checkout
+
+      - restore_cache:
+          name: Restore the formatter binaries
+          # Keyed on the script, which is where the versions and checksums are pinned, so
+          # bumping a formatter naturally invalidates the cache.
+          keys:
+            - format-tools-v1-{{ checksum "scripts/check-format.sh" }}
+
+      - run:
+          name: Check Kotlin and Java formatting
+          command: ./scripts/check-format.sh
+
+      - save_cache:
+          name: Save the formatter binaries
+          key: format-tools-v1-{{ checksum "scripts/check-format.sh" }}
+          paths:
+            - ~/.cache/skipper-format
+          # The download happens before any file is checked, so the cache is worth saving
+          # even when the check fails.
+          when: always
+
   web-build:
     executor: node
     steps:
@@ -305,6 +338,7 @@ workflows:
   build:
     jobs:
       - jvm-build
+      - format-check
       - web-build
       - web-publish:
           requires:
