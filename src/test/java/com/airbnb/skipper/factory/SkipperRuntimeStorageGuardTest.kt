@@ -23,6 +23,17 @@ class SkipperRuntimeStorageGuardTest {
     }
 
     @Test
+    fun sqliteDataSourceWithMySqlFactoriesIsRejected() {
+        val config = SkipperConfig.forService("guard")
+        config.workflowStore = MySqlWorkflowStore.Factory()
+        config.scheduler = MySqlScheduler.Factory()
+        config.mySqlDataSource = mock<DataSource>()
+        config.sqliteDataSource = mock<DataSource>()
+        val error = assertThrows<IllegalStateException> { SkipperRuntime(config) }
+        assertTrue(error.message!!.contains("sqliteDataSource"), error.message)
+    }
+
+    @Test
     fun mixedBackendsAreRejected() {
         val config = SkipperConfig.forService("guard")
         config.workflowStore = MySqlWorkflowStore.Factory()

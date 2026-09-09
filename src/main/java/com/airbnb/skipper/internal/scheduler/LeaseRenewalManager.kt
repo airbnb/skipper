@@ -73,9 +73,6 @@ class LeaseRenewalManager
          */
         fun getLatestTaskVersion(task: Task<*>): Task<*> = Option.of(tasksInFlight[task.id]).map { it!!.task }.getOrElse(task)
 
-        /** Whether a rerun of [task] was requested while we held its lease; see [TaskInFlight.rerunRequested]. */
-        fun isRerunRequested(task: Task<*>): Boolean = tasksInFlight[task.id]?.rerunRequested ?: false
-
         /**
          * Attempt to renew the lease for the first expiring task. If the lease is successfully renewed,
          * the task is updated in the list of tasks in flight. If the lease renewal fails, the task is

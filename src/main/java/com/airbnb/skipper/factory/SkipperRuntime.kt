@@ -80,6 +80,11 @@ class SkipperRuntime
                     "which would ignore it. Set workflowStore = MySqlWorkflowStore.Factory() and " +
                     "scheduler = MySqlScheduler.Factory() to use MySQL, or remove mySqlDataSource."
             }
+            check(config.sqliteDataSource == null || !(mysqlStore || mysqlScheduler)) {
+                "sqliteDataSource is set but the workflow store and scheduler are the MySQL factories, which would " +
+                    "ignore it. Use SqliteWorkflowStore.Factory() and SqliteScheduler.Factory() for SQLite, or remove " +
+                    "sqliteDataSource."
+            }
             check(!((sqliteStore && mysqlScheduler) || (mysqlStore && sqliteScheduler))) {
                 "workflowStore and scheduler use different backends (SQLite vs MySQL); they must share one database."
             }

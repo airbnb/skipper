@@ -10,9 +10,9 @@ Kotlin/Java code toggle throughout.
 
 > **Status.** Content is derived from Skipper's internal docs and re-voiced for an external
 > audience. The embedded-SQLite default storage backend and the file-backed
-> `SqliteWorkflowStore.Factory("skipper.db")` form described in the docs are real as of the
-> `fix/onboarding-blockers` change; the test harness (`SkipperTest`) described in earlier drafts is
-> not published, and the Testing guide now shows runtime-based tests instead.
+> `SqliteWorkflowStore.Factory("skipper.db")` form described in the docs exist in the engine; the
+> test harness (`SkipperTest`) described in earlier drafts is not published, and the Testing guide
+> shows runtime-based tests instead.
 
 ## Develop
 

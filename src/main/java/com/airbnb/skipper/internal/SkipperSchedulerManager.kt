@@ -414,85 +414,117 @@ class SkipperSchedulerManager
             }
         }
 
-        /** Removes the finished [task], or hands off to [handleVersionMoved] if its row version moved under us. */
-        private fun removeOrHandleVersionMoved(
-            task: Task<*>,
-            tags: MutableMap<String, String>,
-        ) {
-            if (leaseManager.isRerunRequested(task)) {
-                scheduleRerunNow(task, tags)
-                return
-            }
-            try {
-                log.debug("removing task: {}", task.id)
-                scheduler.remove(leaseManager.getLatestTaskVersion(task))
-            } catch (e: OptimisticLockingError) {
-                handleVersionMoved(task, tags, "remove")
-            }
-        }
-
         /**
-         * A versioned write on a task we just finished handling failed because the row's version moved.
-         * Two things move it: another worker fetched the task after our lease expired, or a rerun was
-         * recorded on the leased row (`ScheduleRequest.isBumpVersionWhenHonoringLease`, the path a
-         * signal takes). They are told apart by `run_after`: a fetch always re-leases the row to
-         * `now + leaseDuration`, whereas the rerun bump leaves `run_after` exactly as we last knew it.
+         * Performs the final versioned [write] (remove or reschedule-for-retry) for a task we just finished
+         * handling, using one consistent snapshot of what we know about it, and deals with the row's
+         * version having moved under us.
          *
-         * When the lease is still ours, the rerun request is served right away: the row is overwritten
-         * (no lease honoured, since ours is the lease) to PENDING with `retry_count` reset and an
-         * immediate `run_after`, so the next fetch picks it up instead of waiting for the lease to lapse.
-         * If that overwrite loses its own race, the row still survives and runs at lease expiry.
+         * Three things move the version while we hold the lease, and they are told apart as follows:
+         * - **Our own renewal** landed between reading our known version and the write: the row's version
+         *   equals the (now updated) in-flight version. Just retry the write with it.
+         * - **A rerun was recorded on our leased row** (`ScheduleRequest.isBumpVersionWhenHonoringLease`,
+         *   the path a signal takes): the version differs but `run_after` is exactly what we know, since
+         *   the bump leaves it alone. Or the renewer already adopted that bump and flagged the in-flight
+         *   entry, in which case the row no longer disagrees with us and the flag is the only trace.
+         *   Either way the request is served by [scheduleRerunNow] instead of removing the row.
+         * - **Another worker fetched the task** after our lease lapsed: a fetch always re-leases the row to
+         *   `now + leaseDuration`, so `run_after` differs. The row is theirs now; leave it.
+         *
+         * [resultTag] is recorded on success; `null` keeps whatever the caller already set.
          */
-        private fun handleVersionMoved(
+        private fun finishTask(
             task: Task<*>,
             tags: MutableMap<String, String>,
-            operation: String,
+            resultTag: String?,
+            write: (Task<*>) -> Unit,
         ) {
-            var current = scheduler.getTask<Any>(task.id)
-            if (current.isEmpty) {
-                tags[RESULT_TAG] = "removedElsewhere"
-                log.info("task {} was removed by another worker before {}", task.id, operation)
-                return
-            }
-            var known = leaseManager.getLatestTaskVersion(task)
-            if (current.get().runAfter != known.runAfter && !leaseManager.isRerunRequested(task)) {
-                // A renewal may have moved run_after between the two reads; compare once more before
-                // concluding that another worker owns the row.
-                current = scheduler.getTask<Any>(task.id)
-                known = leaseManager.getLatestTaskVersion(task)
-                if (current.isEmpty || current.get().runAfter != known.runAfter) {
-                    tags[RESULT_TAG] = "leaseLost"
-                    log.warn(
-                        "task {} was re-leased by another worker before {}; leaving it to them. known={}, current={}",
-                        task.id,
-                        operation,
-                        known,
-                        current.getOrNull(),
-                    )
+            repeat(MAX_FINISH_ATTEMPTS) {
+                val known = snapshot(task)
+                if (known.rerunRequested) {
+                    scheduleRerunNow(task, tags)
                     return
                 }
+                try {
+                    write(known.task)
+                    resultTag?.let { tags[RESULT_TAG] = it }
+                    return
+                } catch (e: OptimisticLockingError) {
+                    log.debug("version of task {} moved before its final write; working out why", task.id)
+                }
+                val current = scheduler.getTask<Any>(task.id)
+                if (current.isEmpty) {
+                    tags[RESULT_TAG] = "removedElsewhere"
+                    log.info("task {} was removed by another worker before its final write", task.id)
+                    return
+                }
+                val afterwards = snapshot(task)
+                when {
+                    afterwards.rerunRequested -> {
+                        scheduleRerunNow(task, tags)
+                        return
+                    }
+                    current.get().version == afterwards.task.version -> {
+                        // Our own renewal raced the write; the snapshot now carries the renewed version.
+                    }
+                    current.get().runAfter == afterwards.task.runAfter -> {
+                        scheduleRerunNow(task, tags)
+                        return
+                    }
+                    else -> {
+                        tags[RESULT_TAG] = "leaseLost"
+                        log.warn(
+                            "task {} was re-leased by another worker before its final write; leaving it to them." +
+                                " known={}, current={}",
+                            task.id,
+                            afterwards.task,
+                            current.get(),
+                        )
+                        return
+                    }
+                }
             }
-            scheduleRerunNow(task, tags)
+            tags[RESULT_TAG] = "leaseContended"
+            log.warn("task {} kept moving during its final write; leaving it to run when its lease expires", task.id)
         }
+
+        /** What we know about [task]: the version we hold, and whether a rerun was requested, read together. */
+        private fun snapshot(task: Task<*>): Snapshot =
+            leaseManager
+                .getTaskInFlight(task.id)
+                .map { Snapshot(it.task, it.rerunRequested) }
+                .getOrElse(Snapshot(task, false))
+
+        private data class Snapshot(
+            val task: Task<*>,
+            val rerunRequested: Boolean,
+        )
 
         /**
          * Serves a rerun requested while we held the lease: overwrite the row (no lease honoured, since
          * ours is the lease) to PENDING with `retry_count` reset and an immediate `run_after`, so the
          * next fetch picks it up instead of waiting for the lease to lapse. If the overwrite loses its
          * own race the row still survives and runs at lease expiry.
+         *
+         * Only WORKFLOW tasks are rerun this way: their handler hydrates the payload from the store, so
+         * the stale stored payload can be dropped. Other task types need their payload and are left to
+         * re-run at lease expiry, where the row still carries it.
          */
         private fun scheduleRerunNow(
             task: Task<*>,
             tags: MutableMap<String, String>,
         ) {
             tags[RESULT_TAG] = "rerunRequested"
+            if (task.type != Task.Type.WORKFLOW) {
+                log.info("task {} ({}) was re-requested while leased; it will run when its lease expires", task.id, task.type)
+                return
+            }
             try {
                 scheduler.schedule(
                     ScheduleRequest.builder<Any>()
                         .id(task.id)
                         .dedupToken(task.dedupToken)
                         .type(task.type)
-                        .payload(null) // the handler hydrates by id; the stored payload would be stale
+                        .payload(null) // WorkflowExecutionTaskHandler hydrates by id; the stored payload would be stale
                         .runAfter(Instant.EPOCH)
                         .inMemoryExecutionEnabled(false)
                         .honorActiveLeaseWhenOverwriting(false)
@@ -536,28 +568,17 @@ class SkipperSchedulerManager
                         handler
                             .handle(task, taskHandlerExecutor)
                             .get(task.executionTimeout.seconds, TimeUnit.SECONDS)
-                    if (leaseManager.isRerunRequested(task)) {
-                        // A renewal already folded the rerun request back into our version, so the row would
-                        // not fail a versioned write any more; the request lives on in the in-flight record.
-                        scheduleRerunNow(task, tags)
-                    } else if (rescheduleTime.isDefined) {
+                    if (rescheduleTime.isDefined) {
                         log.info("rescheduling task: {} to {}", task.id, rescheduleTime.get())
                         try {
-                            scheduler.rescheduleForRetry(
-                                leaseManager.getLatestTaskVersion(task),
-                                rescheduleTime.get(),
-                            )
-                            tags[RESULT_TAG] = "reschedule"
-                        } catch (e: OptimisticLockingError) {
-                            handleVersionMoved(task, tags, "reschedule")
+                            finishTask(task, tags, "reschedule") { scheduler.rescheduleForRetry(it, rescheduleTime.get()) }
                         } catch (e: IllegalArgumentException) {
                             // The task has already been dequeued; let whoever did that handle it.
                             tags[RESULT_TAG] = "rescheduleFailed"
                             log.warn("failed to reschedule task, another thread already processed it: {}", task.id, e)
                         }
                     } else {
-                        tags[RESULT_TAG] = "remove"
-                        removeOrHandleVersionMoved(task, tags)
+                        finishTask(task, tags, "remove") { scheduler.remove(it) }
                     }
                 } catch (e: ExecutionException) {
                     // If option is empty, it means the task has been processed and should be dequeued.
@@ -568,7 +589,7 @@ class SkipperSchedulerManager
                     tags[RESULT_TAG] = "error"
                     tags[ERROR_TAG] = e.cause!!.javaClass.simpleName
                     log.warn("task processing threw unexpected error. task={}", task, e)
-                    removeOrHandleVersionMoved(task, tags)
+                    finishTask(task, tags, resultTag = null) { scheduler.remove(it) }
                 } catch (e: InterruptedException) {
                     tags[RESULT_TAG] = "error"
                     tags[ERROR_TAG] = e.javaClass.simpleName
@@ -591,7 +612,7 @@ class SkipperSchedulerManager
                 log.error("no handler found for task type {}. task={}", task, task.type)
                 tags[RESULT_TAG] = "error"
                 tags[ERROR_TAG] = "unhandledTaskType"
-                removeOrHandleVersionMoved(task, tags)
+                finishTask(task, tags, resultTag = null) { scheduler.remove(it) }
                 metrics.counter(tags, METRICS_COMPONENT, "handledTasks").inc()
             }
         }
@@ -602,6 +623,9 @@ class SkipperSchedulerManager
             private const val DEFAULT_MAX_FETCH_SIZE = 5
             private const val DYNAMIC_FETCH_SIZE_MARKER = -1
             private const val MAX_DYNAMIC_FETCH_SIZE = 20
+
+            /** Attempts [finishTask] makes before leaving a contended row to lease expiry. */
+            private const val MAX_FINISH_ATTEMPTS = 3
             private const val METRICS_COMPONENT = "schedulerManager"
             private const val RESULT_TAG = "result"
             private const val ERROR_TAG = "error"
