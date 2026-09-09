@@ -248,7 +248,7 @@ class SkipperEngineTest {
         mode = EnumSource.Mode.INCLUDE,
         names = ["COMPENSATION_IN_PROGRESS", "COMPENSATION_ERROR"],
     )
-    fun testStartWorkflowWhenWorkflowExistsAndIsInCompensationState(status: WorkflowInstance.Status,) {
+    fun testStartWorkflowWhenWorkflowExistsAndIsInCompensationState(status: WorkflowInstance.Status) {
         val instance =
             TestUtils.getWorkflowInstance().toBuilder()
                 .status(status)

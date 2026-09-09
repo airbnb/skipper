@@ -216,7 +216,7 @@ open class CompensationExecutor
             )
         }
 
-        private fun getCompensableCheckpoints(executionContext: ExecutionContext,): List<ActionCheckpoint> {
+        private fun getCompensableCheckpoints(executionContext: ExecutionContext): List<ActionCheckpoint> {
             return List.ofAll(executionContext.actionCheckpoints)
                 .appendAll(executionContext.dirtyCheckpoints)
                 .filter { checkpoint -> !checkpoint.isTransient }
