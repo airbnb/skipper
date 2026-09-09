@@ -122,7 +122,7 @@ data class WorkflowCreationRequest(
          *
          * @return `this`.
          */
-        fun callbackHandler(callbackHandler: Class<out WorkflowCallbackHandler>?,): WorkflowCreationRequestBuilder {
+        fun callbackHandler(callbackHandler: Class<out WorkflowCallbackHandler>?): WorkflowCreationRequestBuilder {
             this.callbackHandler = callbackHandler
             return this
         }

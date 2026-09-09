@@ -675,7 +675,7 @@ class ActionExecutorTest {
 
     @ParameterizedTest
     @ValueSource(strings = ["methodThatThrows", "methodThatThrowsWrapped"])
-    fun testExecuteActionWhenActionThrowsUnexpectedError_ErrorIsConvertedToNonRetryable(methodName: String,) {
+    fun testExecuteActionWhenActionThrowsUnexpectedError_ErrorIsConvertedToNonRetryable(methodName: String) {
         val expectedErrorMessage = "error!"
         val expectedErrorClass = IllegalArgumentException::class.java
         val workflow = TestUtils.getWorkflowInstance()
@@ -708,7 +708,7 @@ class ActionExecutorTest {
     @ValueSource(
         strings = ["methodThatThrowsUnexpectedAsync", "methodThatThrowsWrappedUnexpectedAsync"]
     )
-    fun testExecuteActionWhenActionThrowsAsyncUnexpectedError_ErrorIsConvertedToNonRetryable(methodName: String,) {
+    fun testExecuteActionWhenActionThrowsAsyncUnexpectedError_ErrorIsConvertedToNonRetryable(methodName: String) {
         val workflow = TestUtils.getWorkflowInstance()
         val executionContext =
             newExecContext().toBuilder().workflow(workflow).actionCheckpoints(List.empty()).build()

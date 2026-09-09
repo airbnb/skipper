@@ -35,7 +35,7 @@ class WorkflowSearchFilter internal constructor(
         /**
          * @return `this`.
          */
-        fun workflowEntryPoints(workflowEntryPoints: List<@JvmSuppressWildcards WorkflowEntryPoint>?,): WorkflowSearchFilterBuilder {
+        fun workflowEntryPoints(workflowEntryPoints: List<@JvmSuppressWildcards WorkflowEntryPoint>?): WorkflowSearchFilterBuilder {
             this.workflowEntryPoints = workflowEntryPoints
             return this
         }
@@ -43,7 +43,7 @@ class WorkflowSearchFilter internal constructor(
         /**
          * @return `this`.
          */
-        fun statuses(statuses: List<@JvmSuppressWildcards WorkflowInstance.Status>?,): WorkflowSearchFilterBuilder {
+        fun statuses(statuses: List<@JvmSuppressWildcards WorkflowInstance.Status>?): WorkflowSearchFilterBuilder {
             this.statuses = statuses
             return this
         }

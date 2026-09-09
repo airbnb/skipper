@@ -14,5 +14,5 @@ interface ActionStore {
      */
     fun createActionCheckpoint(checkpoint: ActionCheckpoint): CompletableFuture<ActionCheckpoint>
 
-    fun getActionCheckpoint(checkpointId: CheckpointTag,): CompletableFuture<Optional<ActionCheckpoint>>
+    fun getActionCheckpoint(checkpointId: CheckpointTag): CompletableFuture<Optional<ActionCheckpoint>>
 }

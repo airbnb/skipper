@@ -137,7 +137,7 @@ data class ScheduleRequest<T> internal constructor(
         /**
          * @return `this`.
          */
-        fun honorActiveLeaseWhenOverwriting(honorActiveLeaseWhenOverwriting: Boolean,): ScheduleRequestBuilder<T> {
+        fun honorActiveLeaseWhenOverwriting(honorActiveLeaseWhenOverwriting: Boolean): ScheduleRequestBuilder<T> {
             this.honorActiveLeaseWhenOverwriting = honorActiveLeaseWhenOverwriting
             return this
         }

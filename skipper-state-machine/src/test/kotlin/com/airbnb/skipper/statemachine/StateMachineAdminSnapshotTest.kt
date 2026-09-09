@@ -104,7 +104,7 @@ class StateMachineAdminSnapshotTest {
         return builder
     }
 
-    private fun createResolver(aliasMigrations: Map<String, String> = emptyMap(),): StateMachineEventResolver<SnapshotTestEvent> {
+    private fun createResolver(aliasMigrations: Map<String, String> = emptyMap()): StateMachineEventResolver<SnapshotTestEvent> {
         val builder = buildTestBuilder()
         return StateMachineEventResolver(
             stateMachineClass = SnapshotTestStateMachine::class.java,

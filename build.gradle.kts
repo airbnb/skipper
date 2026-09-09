@@ -15,6 +15,7 @@ plugins {
     alias(libs.plugins.vanniktech.maven.publish)
     `maven-publish`
     signing
+    alias(libs.plugins.spotless)
 }
 
 group = "com.airbnb.skipper"
@@ -275,5 +276,32 @@ signing {
             }
         useInMemoryPgpKeys(armoured, signingPassword.get())
         sign(publishing.publications)
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------------------
+// `./gradlew spotlessApply` reformats every Kotlin and Java source; `./gradlew spotlessCheck`
+// fails if any would change, and `check` (so `build`) depends on it. The format-check CI job
+// runs spotlessCheck on every push.
+//
+// Configured once here for the whole build rather than per project: skipper-state-machine's
+// sources are covered by the targets below, so there is a single spotlessApply and one place
+// that says what "formatted" means. Formatter versions come from the version catalog.
+//
+//   Kotlin  ktlint, configured by the .editorconfig at the repository root
+//   Java    google-java-format, Google style (it has no configuration)
+//
+// Both are the formatters Airbnb's internal linter uses, at the same versions, so code moved
+// between here and the internal monorepo keeps its formatting either way.
+spotless {
+    kotlin {
+        target("src/**/*.kt", "testutils/src/**/*.kt", "skipper-state-machine/src/**/*.kt")
+        ktlint(libs.versions.ktlint.get())
+    }
+    java {
+        target("src/**/*.java", "testutils/src/**/*.java", "skipper-state-machine/src/**/*.java")
+        googleJavaFormat(libs.versions.googleJavaFormat.get())
     }
 }

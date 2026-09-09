@@ -799,7 +799,7 @@ class WorkflowExecutionTaskHandler
             }
         }
 
-        private fun getCallbackHandler(workflowInstance: WorkflowInstance,): Option<WorkflowCallbackHandler> {
+        private fun getCallbackHandler(workflowInstance: WorkflowInstance): Option<WorkflowCallbackHandler> {
             if (workflowInstance.callbackHandler != null) {
                 return Option.of(callbackHandlerInjector.getInstance(workflowInstance.callbackHandler))
             }
