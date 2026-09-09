@@ -61,19 +61,6 @@ class LeaseRenewalManager
         }
 
         /**
-         * When a task lease is renewed, its version might have been updated and the old task object
-         * might have become stale. Upon lease renewal, this component keeps track of the latest task
-         * version.
-         *
-         * Use this method to get the latest task version for a given task. If the task is not in
-         * flight, the original task is returned.
-         *
-         * @param task the task to get the latest version for
-         * @return the latest task version or the original task if it is not in flight
-         */
-        fun getLatestTaskVersion(task: Task<*>): Task<*> = Option.of(tasksInFlight[task.id]).map { it!!.task }.getOrElse(task)
-
-        /**
          * Attempt to renew the lease for the first expiring task. If the lease is successfully renewed,
          * the task is updated in the list of tasks in flight. If the lease renewal fails, the task is
          * ignored and the method returns an empty option.
@@ -99,7 +86,7 @@ class LeaseRenewalManager
                 try {
                     val renewedTask: Task<*> = scheduler.renewLease(taskToRenew)
                     tasksInFlight.computeIfPresent(renewedTask.id) { _, taskInFlight ->
-                        TaskInFlight(taskInFlight.handle, renewedTask.runAfter, renewedTask)
+                        TaskInFlight(taskInFlight.handle, renewedTask.runAfter, renewedTask, taskInFlight.rerunRequested)
                     }
                     metrics.counter(METRICS_COMPONENT, "renewLeaseSucceeded").inc()
                     return Option.of(renewedTask)
@@ -111,6 +98,24 @@ class LeaseRenewalManager
                         e !is IllegalStateException
                     ) {
                         throw e
+                    }
+                    if (e is OptimisticLockingError) {
+                        // The version moved, but did the lease? A rerun recorded on our leased row
+                        // (ScheduleRequest.isBumpVersionWhenHonoringLease) bumps the version and leaves
+                        // run_after alone; a competing fetch always moves run_after. If the lease is still
+                        // ours, adopt the new version and keep renewing rather than cancelling the run.
+                        val current: Option<Task<*>> = scheduler.getTask<Any>(taskToRenew.id).map { it as Task<*> }
+                        if (current.isDefined && current.get().runAfter == taskToRenew.runAfter) {
+                            tasksInFlight.computeIfPresent(taskToRenew.id) { _, taskInFlight ->
+                                TaskInFlight(taskInFlight.handle, taskInFlight.leaseExpiration, current.get(), rerunRequested = true)
+                            }
+                            metrics.counter(METRICS_COMPONENT, "renewLeaseVersionAdopted").inc()
+                            log.info(
+                                "task {} was re-requested while leased; continuing to renew its lease",
+                                taskToRenew.id,
+                            )
+                            return Option.none()
+                        }
                     }
                     // Most certainly this means another thread already got a hold of the task.
                     // We should just ignore it and let the other thread handle it.
@@ -143,33 +148,42 @@ class LeaseRenewalManager
         val totalTasksInFlight: Int
             get() = tasksInFlight.size
 
-        class TaskInFlight(
-            val handle: Future<*>,
-            val leaseExpiration: Instant,
-            val task: Task<*>,
-        ) {
-            override fun equals(other: Any?): Boolean {
-                if (other === this) return true
-                if (other !is TaskInFlight) return false
-                if (handle != other.handle) return false
-                if (leaseExpiration != other.leaseExpiration) return false
-                if (task != other.task) return false
-                return true
-            }
+        class TaskInFlight
+            @JvmOverloads
+            constructor(
+                val handle: Future<*>,
+                val leaseExpiration: Instant,
+                val task: Task<*>,
+                /**
+                 * Set once a rerun request was observed on this task's row while we held its lease (see
+                 * `ScheduleRequest.isBumpVersionWhenHonoringLease`). A later successful renewal writes
+                 * our version back over the row, erasing that mark from the database, so the owner keeps
+                 * it here and reschedules instead of removing when the task finishes.
+                 */
+                val rerunRequested: Boolean = false,
+            ) {
+                override fun equals(other: Any?): Boolean {
+                    if (other === this) return true
+                    if (other !is TaskInFlight) return false
+                    if (handle != other.handle) return false
+                    if (leaseExpiration != other.leaseExpiration) return false
+                    if (task != other.task) return false
+                    return true
+                }
 
-            override fun hashCode(): Int {
-                val prime = 59
-                var result = 1
-                result = result * prime + handle.hashCode()
-                result = result * prime + leaseExpiration.hashCode()
-                result = result * prime + task.hashCode()
-                return result
-            }
+                override fun hashCode(): Int {
+                    val prime = 59
+                    var result = 1
+                    result = result * prime + handle.hashCode()
+                    result = result * prime + leaseExpiration.hashCode()
+                    result = result * prime + task.hashCode()
+                    return result
+                }
 
-            override fun toString(): String =
-                "LeaseRenewalManager.TaskInFlight(handle=$handle" +
-                    ", leaseExpiration=$leaseExpiration, task=$task)"
-        }
+                override fun toString(): String =
+                    "LeaseRenewalManager.TaskInFlight(handle=$handle" +
+                        ", leaseExpiration=$leaseExpiration, task=$task)"
+            }
 
         companion object {
             private val log = LoggerFactory.getLogger(LeaseRenewalManager::class.java)

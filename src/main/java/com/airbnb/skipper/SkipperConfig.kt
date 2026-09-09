@@ -6,11 +6,13 @@ import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.cluster.SingleMemberClusterMembershipManager
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.mysql.MySqlScheduler
+import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
 import com.airbnb.skipper.internal.serde.Serde
 import com.airbnb.skipper.internal.serde.SimplePojoSerde
 import com.airbnb.skipper.internal.serde.SmartSerde
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.internal.storage.mysql.MySqlWorkflowStore
+import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore
 import com.airbnb.skipper.util.SpanTagger
 import com.google.common.util.concurrent.ThreadFactoryBuilder
 import java.time.Clock
@@ -36,10 +38,17 @@ import javax.sql.DataSource
 class SkipperConfig(
     /** The provider for the `Clock` to use throughout the system. */
     var utcClock: Clock = Clock.systemUTC(),
-    /** The factory for the `WorkflowStore` implementation to use. Defaults to MySQL-backed storage. */
-    var workflowStore: ComponentFactory<out WorkflowStore> = MySqlWorkflowStore.Factory(),
-    /** The factory for the `Scheduler` implementation to use. Defaults to MySQL-backed scheduling. */
-    var scheduler: ComponentFactory<out Scheduler> = MySqlScheduler.Factory(),
+    /**
+     * The factory for the `WorkflowStore` implementation to use. Defaults to the embedded SQLite store,
+     * which needs no configuration: with [sqliteDataSource] unset it runs against an ephemeral in-memory
+     * database. Set [MySqlWorkflowStore.Factory] (with [mySqlDataSource]) for a shared production store.
+     */
+    var workflowStore: ComponentFactory<out WorkflowStore> = SqliteWorkflowStore.Factory(),
+    /**
+     * The factory for the `Scheduler` implementation to use. Defaults to the embedded SQLite scheduler;
+     * pair it with the same backend as [workflowStore].
+     */
+    var scheduler: ComponentFactory<out Scheduler> = SqliteScheduler.Factory(),
     /**
      * The factory for the internal [SimplePojoSerde] Skipper uses to encode workflow-state
      * envelopes and extra-request-data. Defaults to a serde built against Skipper's own pinned

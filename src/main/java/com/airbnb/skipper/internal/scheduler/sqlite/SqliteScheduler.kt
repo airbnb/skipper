@@ -96,7 +96,10 @@ class SqliteScheduler
                             request.id,
                             runAfter
                         )
-                        return@execute existingTask.get()
+                        if (!request.isBumpVersionWhenHonoringLease) {
+                            return@execute existingTask.get()
+                        }
+                        return@execute recordRerunRequest(conn, existingTask.get())
                     }
                     log.info(
                         "task with id: {} is being overwritten. runAfter={}. hasActiveLease={}." +
@@ -687,19 +690,74 @@ class SqliteScheduler
             }
         }
 
-        class Factory : ComponentFactory<Scheduler> {
-            override fun create(config: SkipperConfig): Scheduler {
-                return SqliteScheduler(
-                    JdbcTransactionManager.SqliteFactory().create(config),
-                    config.utcClock,
-                    config.tenant,
-                    config.metrics.create(config),
-                    config.simplePojoSerde.create(config),
-                    config.schedulerTaskLeaseDuration,
-                    config.tablePrefix
-                )
+        /**
+         * Records a rerun request on a task whose lease is being honoured, by bumping only its version.
+         * `run_after` and `status` are left alone so the lease holder keeps ownership; the bump is what
+         * makes the holder's final versioned `remove` (or `rescheduleForRetry`) fail, so the row is kept
+         * and rescheduled instead of being deleted with the request inside it. Consumers of the version
+         * tell this bump from a competing fetch by `run_after`, which a fetch always moves.
+         *
+         * Runs inside the caller's transaction, right after `getTaskForUpdate`, so a zero-row update can
+         * only mean a concurrent writer slipped in; that is reported as [OptimisticLockingError] like
+         * every other versioned write here.
+         */
+        private fun <T> recordRerunRequest(
+            conn: java.sql.Connection,
+            task: Task<T>,
+        ): Task<T> {
+            val sql = "UPDATE $schedulerTasksTable SET version = ? WHERE task_id = ? AND owner = ? AND version = ?"
+            try {
+                conn.prepareStatement(sql).use { ps ->
+                    ps.setInt(1, task.version + 1)
+                    ps.setString(2, task.id)
+                    ps.setString(3, owner)
+                    ps.setInt(4, task.version)
+                    if (ps.executeUpdate() != 1) {
+                        metrics
+                            .counter(
+                                ImmutableMap.of("source", "schedule"),
+                                METRICS_COMPONENT,
+                                "optimisticLockingError",
+                            )
+                            .inc()
+                        throw OptimisticLockingError(
+                            "failed to record rerun request for leased task with id: " + task.id,
+                        )
+                    }
+                }
+            } catch (e: SQLException) {
+                throw InternalError("unable to record rerun request for task with id: " + task.id, e)
             }
+            metrics.counter(METRICS_COMPONENT, "rerunRecordedOnLeasedTask").inc()
+            return task.toBuilder().version(task.version + 1).build()
         }
+
+        /**
+         * Builds a [SqliteScheduler] from a [SkipperConfig].
+         *
+         * With no [path], the database is the one described by [SkipperConfig.sqliteDataSource], or the
+         * ephemeral shared in-memory default when that is `null`. Passing a [path] (for example
+         * `"skipper.db"`) opens a durable on-disk database at that file instead; use the same path for
+         * [com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore.Factory] so both live in one file.
+         */
+        class Factory
+            @JvmOverloads
+            constructor(
+                private val path: String? = null,
+            ) : ComponentFactory<Scheduler> {
+                override fun create(config: SkipperConfig): Scheduler {
+                    val dataSource = path?.let { JdbcTransactionManager.SqliteFactory.fileDataSource(it) }
+                    return SqliteScheduler(
+                        JdbcTransactionManager.SqliteFactory(dataSource).create(config),
+                        config.utcClock,
+                        config.tenant,
+                        config.metrics.create(config),
+                        config.simplePojoSerde.create(config),
+                        config.schedulerTaskLeaseDuration,
+                        config.tablePrefix,
+                    )
+                }
+            }
 
         companion object {
             private val log = org.slf4j.LoggerFactory.getLogger(SqliteScheduler::class.java)

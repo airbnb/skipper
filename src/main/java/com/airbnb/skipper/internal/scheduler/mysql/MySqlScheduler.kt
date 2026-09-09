@@ -85,7 +85,10 @@ class MySqlScheduler
                             request.id,
                             runAfter,
                         )
-                        return@execute existingTask.get()
+                        if (!request.isBumpVersionWhenHonoringLease) {
+                            return@execute existingTask.get()
+                        }
+                        return@execute recordRerunRequest(conn, existingTask.get())
                     }
                     log.info(
                         "task with id: {} is being overwritten. runAfter={}. hasActiveLease={}." +
@@ -741,6 +744,48 @@ class MySqlScheduler
                     throw InternalError(e)
                 }
             }
+
+        /**
+         * Records a rerun request on a task whose lease is being honoured, by bumping only its version.
+         * `run_after` and `status` are left alone so the lease holder keeps ownership; the bump is what
+         * makes the holder's final versioned `remove` (or `rescheduleForRetry`) fail, so the row is kept
+         * and rescheduled instead of being deleted with the request inside it. Consumers of the version
+         * tell this bump from a competing fetch by `run_after`, which a fetch always moves.
+         *
+         * Runs inside the caller's transaction, right after `getTaskForUpdate`, so a zero-row update can
+         * only mean a concurrent writer slipped in; that is reported as [OptimisticLockingError] like
+         * every other versioned write here.
+         */
+        private fun <T> recordRerunRequest(
+            conn: java.sql.Connection,
+            task: Task<T>,
+        ): Task<T> {
+            val sql = "UPDATE $schedulerTasksTable SET version = ? WHERE task_id = ? AND owner = ? AND version = ?"
+            try {
+                conn.prepareStatement(sql).use { ps ->
+                    ps.setInt(1, task.version + 1)
+                    ps.setString(2, task.id)
+                    ps.setString(3, owner)
+                    ps.setInt(4, task.version)
+                    if (ps.executeUpdate() != 1) {
+                        metrics
+                            .counter(
+                                ImmutableMap.of("source", "schedule"),
+                                METRICS_COMPONENT,
+                                "optimisticLockingError",
+                            )
+                            .inc()
+                        throw OptimisticLockingError(
+                            "failed to record rerun request for leased task with id: " + task.id,
+                        )
+                    }
+                }
+            } catch (e: SQLException) {
+                throw InternalError("unable to record rerun request for task with id: " + task.id, e)
+            }
+            metrics.counter(METRICS_COMPONENT, "rerunRecordedOnLeasedTask").inc()
+            return task.toBuilder().version(task.version + 1).build()
+        }
 
         class Factory : ComponentFactory<Scheduler> {
             override fun create(config: SkipperConfig): Scheduler =

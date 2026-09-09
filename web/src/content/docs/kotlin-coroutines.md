@@ -65,14 +65,27 @@ Unless the invocation is detached, a suspend caller waits for the result in **bo
 `runAsync=true` that wait is served by polling storage, which gives up after
 `resultPollingTimeLimit` (30 seconds by default) and throws `TimeoutException`. So for workflows
 that wait on signals for **hours or days**, don't try to wait at all — detach the invocation and
-take the outcome from a `WorkflowCallbackHandler`:
+take the outcome from a `WorkflowCallbackHandler`. A detached method must return `Unit` (it is
+rejected at validation otherwise), so expose what it produces through state and a `@QueryMethod`,
+or through the callback's `WorkflowInstanceView`:
 
 ```kotlin
-val workflow = workflowFactory.builder<OrderWorkflow>(id)
+class ApprovalWorkflow : Workflow() {
+  @StateField var outcome: String? = null
+
+  @WorkflowMethod
+  suspend fun process(req: ApprovalRequest) { /* ... */ outcome = "approved" }
+
+  @QueryMethod
+  fun outcome(): String? = outcome
+}
+
+val workflow = workflowFactory.builder<ApprovalWorkflow>(id)
   .callbackHandler(MyCallbackHandler::class.java)
   .runAsync()
   .detached()
   .build()
+workflow.process(req)   // returns as soon as the instance is persisted and scheduled
 ```
 
 ## Fire-and-forget

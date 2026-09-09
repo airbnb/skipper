@@ -1,5 +1,6 @@
 package com.airbnb.skipper.internal.scheduler
 
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.SkipperAnnotationNames.UTC_CLOCK
 import com.airbnb.skipper.internal.SkipperEngine
 import io.vavr.control.Option
@@ -22,6 +23,7 @@ class ExecutionTimeoutHandler
         private val scheduler: Scheduler,
         private val skipperEngine: SkipperEngine,
         @Named(UTC_CLOCK) private val clock: Clock,
+        private val featureGate: FeatureGate,
     ) : TaskHandler {
         override fun handle(
             task: Task<*>,
@@ -54,6 +56,9 @@ class ExecutionTimeoutHandler
                     .payload(null)
                     .type(Task.Type.WORKFLOW)
                     .honorActiveLeaseWhenOverwriting(true)
+                    .bumpVersionWhenHonoringLease(
+                        featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE),
+                    )
                     .build(),
             )
             log.info("scheduled workflow execution for expired workflow: {}", workflowId)

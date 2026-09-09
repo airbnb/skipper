@@ -415,6 +415,9 @@ class SkipperEngineTest {
         for (gateValue in gateValues) {
             whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.FORCE_SIGNAL_WORKFLOW_EXEC_IN_SCHEDULER))
                 .thenReturn(gateValue)
+            // The bump-on-honoured-lease gate must be forwarded to the scheduler on the request.
+            whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE))
+                .thenReturn(gateValue)
 
             val originalWorkflowInstance =
                 getWorkflowInstance().toBuilder().status(status).build()
@@ -471,6 +474,7 @@ class SkipperEngineTest {
                         )
                         .type(Task.Type.WORKFLOW)
                         .honorActiveLeaseWhenOverwriting(true)
+                        .bumpVersionWhenHonoringLease(gateValue)
                         .inMemoryExecutionEnabled(!gateValue)
                         .build(),
                 )

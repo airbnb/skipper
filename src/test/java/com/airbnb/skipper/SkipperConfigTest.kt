@@ -1,11 +1,25 @@
 package com.airbnb.skipper
 
+import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
+import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 class SkipperConfigTest {
+    @Test
+    fun testDefaultsToEmbeddedSqliteBackend() {
+        // The documented zero-configuration default: forService(name) alone must not require a MySQL
+        // DataSource. Both halves must default to the same backend.
+        val config = SkipperConfig.forService("default")
+        assertTrue(config.workflowStore is SqliteWorkflowStore.Factory)
+        assertTrue(config.scheduler is SqliteScheduler.Factory)
+        assertNull(config.mySqlDataSource)
+        assertNull(config.sqliteDataSource)
+    }
+
     @Test
     fun testSkipperConfigDefaultCheckpointMode() {
         val config = SkipperConfig(serviceName = "default")

@@ -1,6 +1,7 @@
 package com.airbnb.skipper.internal.scheduler
 
 import com.airbnb.skipper.Metrics
+import com.airbnb.skipper.OptimisticLockingError
 import com.airbnb.skipper.internal.TestUtils
 import com.airbnb.skipper.testutils.TestRuntime
 import io.vavr.control.Option
@@ -12,6 +13,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Future
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -94,6 +96,74 @@ class LeaseRenewalManagerTest {
         // Once more should return false
         result = leaseManager.attemptToRenewOneTask()
         assertFalse(result.isDefined)
+    }
+
+    @Test
+    fun renewalConflictWithOurLeaseIntactAdoptsTheBumpedVersion() {
+        // A rerun was recorded on our leased row: version moved, run_after did not. Renewal must not
+        // treat that as a lost lease (which would cancel the in-flight run and let the row re-run
+        // concurrently at expiry); it adopts the new version and remembers the request.
+        val mockScheduler = mock<Scheduler>()
+        val mockClock = mock<Clock>()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val task = TestUtils.getTestTask(TestUtils.getWorkflowInstance())
+        val bumped = task.toBuilder().version(task.version + 1).build()
+        whenever(mockScheduler.renewLease<Any>(any())).thenThrow(OptimisticLockingError("bumped"))
+        @Suppress("UNCHECKED_CAST")
+        whenever(mockScheduler.getTask<Any>(task.id)).thenReturn(Option.of(bumped as Task<Any>))
+        val leaseManager = LeaseRenewalManager(mockScheduler, mockClock, metrics, leaseRenewalGracePeriod)
+        val handle = CompletableFuture<Any?>()
+        leaseManager.addTaskInFlight(LeaseRenewalManager.TaskInFlight(handle, mockClock.instant(), task))
+
+        val result = leaseManager.attemptToRenewOneTask()
+
+        assertFalse(result.isDefined)
+        assertFalse(handle.isCancelled, "the in-flight run must not be cancelled")
+        val entry = leaseManager.tasksInFlight[task.id]!!
+        assertEquals(bumped.version, entry.task.version)
+        assertTrue(entry.rerunRequested)
+    }
+
+    @Test
+    fun laterSuccessfulRenewalKeepsTheRerunRequestedMark() {
+        val mockScheduler = mock<Scheduler>()
+        val mockClock = mock<Clock>()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val task = TestUtils.getTestTask(TestUtils.getWorkflowInstance())
+        whenever(mockScheduler.renewLease<Any>(any())).thenAnswer { invocation ->
+            val input = invocation.getArgument<Task<*>>(0)
+            input.toBuilder().version(input.version + 1).runAfter(input.runAfter.plusSeconds(60)).build()
+        }
+        val leaseManager = LeaseRenewalManager(mockScheduler, mockClock, metrics, leaseRenewalGracePeriod)
+        leaseManager.addTaskInFlight(
+            LeaseRenewalManager.TaskInFlight(CompletableFuture<Any?>(), mockClock.instant(), task, rerunRequested = true),
+        )
+
+        assertTrue(leaseManager.attemptToRenewOneTask().isDefined)
+
+        // The renewal wrote our version back over the row, erasing the bump there; the in-process mark is
+        // now the only trace of the request and must survive.
+        assertTrue(leaseManager.tasksInFlight[task.id]!!.rerunRequested)
+    }
+
+    @Test
+    fun renewalConflictWithLeaseTakenElsewhereStillCancelsTheRun() {
+        val mockScheduler = mock<Scheduler>()
+        val mockClock = mock<Clock>()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val task = TestUtils.getTestTask(TestUtils.getWorkflowInstance())
+        val reLeased = task.toBuilder().version(task.version + 1).runAfter(task.runAfter.plusSeconds(480)).build()
+        whenever(mockScheduler.renewLease<Any>(any())).thenThrow(OptimisticLockingError("stale"))
+        @Suppress("UNCHECKED_CAST")
+        whenever(mockScheduler.getTask<Any>(task.id)).thenReturn(Option.of(reLeased as Task<Any>))
+        val leaseManager = LeaseRenewalManager(mockScheduler, mockClock, metrics, leaseRenewalGracePeriod)
+        val handle = CompletableFuture<Any?>()
+        leaseManager.addTaskInFlight(LeaseRenewalManager.TaskInFlight(handle, mockClock.instant(), task))
+
+        assertFalse(leaseManager.attemptToRenewOneTask().isDefined)
+
+        assertTrue(handle.isCancelled)
+        assertNull(leaseManager.tasksInFlight[task.id])
     }
 
     @Test

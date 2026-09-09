@@ -12,8 +12,12 @@ See [Quickstart](/docs/quickstart/) and [Storage Backends](/docs/storage/).
 | Member | Description |
 |---|---|
 | `SkipperConfig.forService(name)` | Create a config with a unique service name. |
-| `workflowStore` / `scheduler` | The storage and scheduler factories. Default to an embedded SQLite store. |
+| `workflowStore` / `scheduler` | The storage and scheduler factories. Default to the embedded SQLite store and scheduler (`SqliteWorkflowStore.Factory()` / `SqliteScheduler.Factory()`, in `com.airbnb.skipper.internal.storage.sqlite` and `...internal.scheduler.sqlite`). Pass a file path to either for a durable on-disk database. |
+| `sqliteDataSource` | Optional JDBC `DataSource` for the SQLite backend; `null` means an ephemeral in-memory database. |
 | `mySqlDataSource` | JDBC `DataSource` for the MySQL adapter. |
+| `gracefulShutdownTimeout` | How long `stop()` waits for in-flight tasks before forcing shutdown (default 30 s). |
+| `featureGate` | `FeatureGate` factory. The default enables every key; see the `FeatureGate.Keys` KDoc for what each gates. |
+| `injector` | `SkipperInjector` used to instantiate your workflow, action, and callback classes; `SimpleInjector.builder()` lets you bind the collaborators actions need. |
 | `defaultRetryStrategy` | Default retry strategy for actions that don't specify one. |
 | `defaultCheckpointMode` | When action checkpoints are flushed (eventual vs immediate). |
 | `exceptionClassifier` | Global `ExceptionClassifier` factory. |

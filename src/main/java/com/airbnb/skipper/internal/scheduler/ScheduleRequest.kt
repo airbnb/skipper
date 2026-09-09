@@ -37,6 +37,13 @@ data class ScheduleRequest<T> internal constructor(
     @get:JvmName("isInMemoryExecutionEnabled")
     val inMemoryExecutionEnabled: Boolean,
     val isHonorActiveLeaseWhenOverwriting: Boolean,
+    /**
+     * When [isHonorActiveLeaseWhenOverwriting] applies and the existing task is leased, bump the task
+     * row's version instead of returning the row untouched, so the lease holder's final versioned
+     * `remove` fails and the task survives to re-run when the lease expires. Set by callers from
+     * `FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE`; ignored when no lease is honoured.
+     */
+    val isBumpVersionWhenHonoringLease: Boolean = false,
 ) {
     fun toBuilder(): ScheduleRequestBuilder<T> =
         ScheduleRequestBuilder<T>()
@@ -48,6 +55,7 @@ data class ScheduleRequest<T> internal constructor(
             .executionTimeout(executionTimeout)
             .inMemoryExecutionEnabled(inMemoryExecutionEnabled)
             .honorActiveLeaseWhenOverwriting(isHonorActiveLeaseWhenOverwriting)
+            .bumpVersionWhenHonoringLease(isBumpVersionWhenHonoringLease)
 
     class ScheduleRequestBuilder<T> internal constructor() {
         private var type: Task.Type? = null
@@ -58,6 +66,7 @@ data class ScheduleRequest<T> internal constructor(
         private var executionTimeout: Duration = Duration.ofMinutes(5)
         private var inMemoryExecutionEnabled: Boolean = true
         private var honorActiveLeaseWhenOverwriting: Boolean = false
+        private var bumpVersionWhenHonoringLease: Boolean = false
 
         /**
          * @return `this`.
@@ -142,6 +151,11 @@ data class ScheduleRequest<T> internal constructor(
             return this
         }
 
+        fun bumpVersionWhenHonoringLease(bumpVersionWhenHonoringLease: Boolean): ScheduleRequestBuilder<T> {
+            this.bumpVersionWhenHonoringLease = bumpVersionWhenHonoringLease
+            return this
+        }
+
         fun build(): ScheduleRequest<T> =
             ScheduleRequest(
                 type ?: throw NullPointerException("type is marked non-null but is null"),
@@ -153,6 +167,7 @@ data class ScheduleRequest<T> internal constructor(
                 executionTimeout,
                 inMemoryExecutionEnabled,
                 honorActiveLeaseWhenOverwriting,
+                bumpVersionWhenHonoringLease,
             )
 
         override fun toString(): String =
@@ -160,7 +175,8 @@ data class ScheduleRequest<T> internal constructor(
                 ", payload=$payload, runAfter=$runAfter" +
                 ", executionTimeout\$value=$executionTimeout" +
                 ", inMemoryExecutionEnabled\$value=$inMemoryExecutionEnabled" +
-                ", honorActiveLeaseWhenOverwriting\$value=$honorActiveLeaseWhenOverwriting)"
+                ", honorActiveLeaseWhenOverwriting\$value=$honorActiveLeaseWhenOverwriting" +
+                ", bumpVersionWhenHonoringLease\$value=$bumpVersionWhenHonoringLease)"
     }
 
     companion object {

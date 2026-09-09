@@ -219,6 +219,52 @@ abstract class BaseSchedulerTest {
     }
 
     @Test
+    fun testScheduleWhenHonorActiveLeaseIsActiveRecordsRerunWhenRequested() {
+        val t1 = Instant.EPOCH
+        whenever(mockClock.instant()).thenReturn(t1)
+        scheduler()
+            .schedule(
+                ScheduleRequest.builder<String>()
+                    .id("test")
+                    .payload("payload")
+                    .type(Task.Type.WORKFLOW)
+                    .dedupToken("test")
+                    .runAfter(t1)
+                    .build()
+            )
+        // Lease the task, as the handler thread would.
+        val leased: Task<String> = scheduler().fetch<String>(10).get(0)
+        assertTrue(leased.hasActiveLease(mockClock.instant(), leaseDuration))
+
+        // A signal arrives while the lease is held and asks for a rerun, honouring the lease.
+        val bumped =
+            scheduler()
+                .schedule(
+                    ScheduleRequest.builder<String>()
+                        .id("test")
+                        .payload("payload2")
+                        .type(Task.Type.WORKFLOW)
+                        .dedupToken("test")
+                        .runAfter(t1.plusSeconds(10))
+                        .honorActiveLeaseWhenOverwriting(true)
+                        .bumpVersionWhenHonoringLease(true)
+                        .build()
+                )
+        // The lease itself is untouched: same runAfter, same status, same payload, one row.
+        assertEquals(1, scheduler().realSize())
+        assertEquals(leased.runAfter, bumped.runAfter)
+        assertEquals(leased.status, bumped.status)
+        assertEquals(leased.payload, bumped.payload)
+        // ...but the version moved, so the lease holder's versioned remove now fails and the row survives.
+        assertEquals(leased.version + 1, bumped.version)
+        assertThrows(OptimisticLockingError::class.java) { scheduler().remove(leased) }
+        assertEquals(1, scheduler().realSize())
+        // Once the lease expires the surviving row is fetched again and the workflow re-runs.
+        whenever(mockClock.instant()).thenReturn(t1.plus(leaseDuration).plusSeconds(1))
+        assertEquals("test", scheduler().fetch<String>(10).get(0).id)
+    }
+
+    @Test
     fun testMarkJobAsFailed() {
         val t1 = Instant.EPOCH
         whenever(mockClock.instant()).thenReturn(t1)
