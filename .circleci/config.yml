@@ -29,8 +29,8 @@
 #
 # One more runs on release tags only:
 #
-#   publish-release  Publishes the tagged version of skipper-core and skipper-testutils to Maven
-#                    Central, the only place Skipper is published. Runs after jvm-build has passed on the same tag, so nothing
+#   publish-release  Publishes the tagged version of skipper-core, skipper-testutils and
+#                    skipper-state-machine to Maven Central, the only place Skipper is published. Runs after jvm-build has passed on the same tag, so nothing
 #                    untested is ever published. The deployment is left for a human to
 #                    release in the Central Portal UI. Internal consumers get it from there:
 #                    Artifactory's Central mirror serves it without any direct upload.
@@ -380,7 +380,7 @@ jobs:
           # already-published tag fails rather than silently replacing the artifact.
           command: |
             VERSION="${CIRCLE_TAG#v}"
-            echo "Publishing com.airbnb.skipper:skipper-core and skipper-testutils $VERSION to Maven Central"
+            echo "Publishing com.airbnb.skipper skipper-core, skipper-testutils and skipper-state-machine $VERSION to Maven Central"
             ./gradlew --stacktrace publishToMavenCentral -PVERSION_NAME="$VERSION"
 
 workflows:
