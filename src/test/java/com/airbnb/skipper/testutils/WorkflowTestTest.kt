@@ -1,4 +1,4 @@
-package com.airbnb.skipper.testing
+package com.airbnb.skipper.testutils
 
 import com.airbnb.skipper.Actions
 import com.airbnb.skipper.Execute

@@ -111,7 +111,7 @@ dependencies {
     api(libs.opentracing.util)
     api(libs.javax.inject)
     api(libs.jakarta.ws.rs.api)
-    // com.airbnb.skipper.testing.WorkflowTest is a JUnit 5 base class shipped in this jar so that
+    // com.airbnb.skipper.testutils.WorkflowTest is a JUnit 5 base class shipped in this jar so that
     // adopters get a test harness without a second artifact. compileOnly keeps JUnit out of the
     // published POM: a consumer's test classpath already has it, and production code never
     // touches the package.

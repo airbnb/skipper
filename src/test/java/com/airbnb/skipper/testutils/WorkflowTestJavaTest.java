@@ -1,4 +1,4 @@
-package com.airbnb.skipper.testing;
+package com.airbnb.skipper.testutils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

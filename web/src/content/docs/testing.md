@@ -12,14 +12,14 @@ tests. It pulls in no dependencies of its own: JUnit is already on your test cla
 class is in the jar you already have.
 
 ```kotlin
-import com.airbnb.skipper.testing.WorkflowTest
-import com.airbnb.skipper.testing.workflowBuilder
+import com.airbnb.skipper.testutils.WorkflowTest
+import com.airbnb.skipper.testutils.workflowBuilder
 
 class OrderWorkflowTest : WorkflowTest() { /* ... */ }
 ```
 
 ```java
-import com.airbnb.skipper.testing.WorkflowTest;
+import com.airbnb.skipper.testutils.WorkflowTest;
 
 public class OrderWorkflowTest extends WorkflowTest { /* ... */ }
 ```

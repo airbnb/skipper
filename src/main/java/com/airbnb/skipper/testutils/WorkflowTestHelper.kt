@@ -1,4 +1,4 @@
-package com.airbnb.skipper.testing
+package com.airbnb.skipper.testutils
 
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.api.WorkflowInstanceStatusView
