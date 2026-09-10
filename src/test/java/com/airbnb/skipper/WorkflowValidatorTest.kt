@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIf
 
 class WorkflowValidatorTest {
     private lateinit var workflowValidator: WorkflowValidator
@@ -110,6 +111,9 @@ class WorkflowValidatorTest {
     }
 
     @Test
+    // The check relies on Jackson failing to round-trip a generic data class; Jackson 2.16+ can, so on a
+    // newer runtime a generic invocation argument is accepted instead of rejected.
+    @EnabledIf("com.airbnb.skipper.internal.serde.JacksonVersions#isCompiledAgainstVersion")
     fun testWorkflowInvocationInputMustBeSerializable() {
         data class NonSerializable<T>(val value: T? = null)
         val workflow: Workflow = object : Workflow() {

@@ -2,7 +2,6 @@ package com.airbnb.skipper.internal.serde
 
 import com.airbnb.skipper.ComponentFactory
 import com.airbnb.skipper.SkipperConfig
-import com.fasterxml.jackson.module.kotlin.KotlinModule
 import java.time.Instant
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -58,7 +57,7 @@ class SimplePojoSerdeMapperSeamTest {
         val default = SimplePojoSerde()
         // Simulates a host wiring its own module. On a newer Jackson the host would instead pass
         // `KotlinModule.Builder().build()`; here we use the constructor available in Skipper's set.
-        val hostSupplied = SimplePojoSerde(SimplePojoSerde.buildObjectMapper(KotlinModule()))
+        val hostSupplied = SimplePojoSerde(SimplePojoSerde.buildObjectMapper(SimplePojoSerde.defaultKotlinModule()))
 
         for (sample in samples) {
             assertThat(hostSupplied.serialize(sample))
@@ -70,7 +69,7 @@ class SimplePojoSerdeMapperSeamTest {
     /** A seam-built serde must round-trip every sample back to an equal object. */
     @Test
     fun seamBuiltMapperRoundTrips() {
-        val hostSupplied = SimplePojoSerde(SimplePojoSerde.buildObjectMapper(KotlinModule()))
+        val hostSupplied = SimplePojoSerde(SimplePojoSerde.buildObjectMapper(SimplePojoSerde.defaultKotlinModule()))
 
         for (sample in samples) {
             assertThat(hostSupplied.deserialize(hostSupplied.serialize(sample))).isEqualTo(sample)
@@ -81,7 +80,7 @@ class SimplePojoSerdeMapperSeamTest {
     @Test
     fun defaultAndSeamBuiltMappersCrossRead() {
         val default = SimplePojoSerde()
-        val hostSupplied = SimplePojoSerde(SimplePojoSerde.buildObjectMapper(KotlinModule()))
+        val hostSupplied = SimplePojoSerde(SimplePojoSerde.buildObjectMapper(SimplePojoSerde.defaultKotlinModule()))
 
         for (sample in samples) {
             assertThat(default.deserialize(hostSupplied.serialize(sample))).isEqualTo(sample)
@@ -105,7 +104,7 @@ class SimplePojoSerdeMapperSeamTest {
     fun skipperConfigHonorsHostPluggedSerde() {
         val config = SkipperConfig.forService("seam-test")
         config.simplePojoSerde =
-            ComponentFactory { SimplePojoSerde(SimplePojoSerde.buildObjectMapper(KotlinModule())) }
+            ComponentFactory { SimplePojoSerde(SimplePojoSerde.buildObjectMapper(SimplePojoSerde.defaultKotlinModule())) }
 
         val configured = config.simplePojoSerde.create(config)
         for (sample in samples) {

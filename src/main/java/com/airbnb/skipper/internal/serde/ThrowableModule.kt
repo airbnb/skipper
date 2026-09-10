@@ -6,10 +6,15 @@ import com.fasterxml.jackson.core.JsonToken
 import com.fasterxml.jackson.databind.BeanDescription
 import com.fasterxml.jackson.databind.DeserializationConfig
 import com.fasterxml.jackson.databind.DeserializationContext
+import com.fasterxml.jackson.databind.JavaType
+import com.fasterxml.jackson.databind.JsonDeserializer
 import com.fasterxml.jackson.databind.SerializationConfig
 import com.fasterxml.jackson.databind.SerializerProvider
+import com.fasterxml.jackson.databind.deser.BeanDeserializerFactory
 import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier
+import com.fasterxml.jackson.databind.deser.ResolvableDeserializer
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer
+import com.fasterxml.jackson.databind.deser.std.ThrowableDeserializer
 import com.fasterxml.jackson.databind.introspect.AnnotatedField
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition
@@ -121,6 +126,24 @@ internal class ThrowableModule : SimpleModule("skipper-throwable") {
     }
 
     private class DropThrowableFieldsOnRead : BeanDeserializerModifier() {
+        /**
+         * Jackson's Throwable support replaces any `cause` property with a setter that calls
+         * `Throwable.initCause`, overwriting the `cause` argument of a `@JsonCreator` (all of Skipper's
+         * errors take one). Jackson 2.9 still resolved creator arguments by name and never noticed;
+         * 2.16+ asks the shadowing setter for its creator index and fails with "no creator index for
+         * property 'cause'". Errors built through a creator do not need any of the Throwable special
+         * cases, so give them Jackson's plain bean deserializer instead.
+         */
+        override fun modifyDeserializer(
+            config: DeserializationConfig,
+            beanDesc: BeanDescription,
+            deserializer: JsonDeserializer<*>
+        ): JsonDeserializer<*> {
+            if (!isThrowable(beanDesc) || deserializer !is ThrowableDeserializer) return deserializer
+            if (!deserializer.valueInstantiator.canCreateFromObjectWith()) return deserializer
+            return PlainBeanDeserializer(beanDesc.type)
+        }
+
         override fun updateProperties(
             config: DeserializationConfig,
             beanDesc: BeanDescription,
@@ -133,6 +156,29 @@ internal class ThrowableModule : SimpleModule("skipper-throwable") {
                 .filterNot { it.hasField() && !it.hasSetter() && !it.hasConstructorParameter() && isJdkField(it.field) }
                 .toMutableList()
         }
+    }
+
+    /**
+     * Deserializes a Throwable as an ordinary bean, bypassing [ThrowableDeserializer]. The delegate is
+     * built on first use because [BeanDeserializerFactory.buildBeanDeserializer] needs a context.
+     */
+    private class PlainBeanDeserializer(private val type: JavaType) : StdDeserializer<Any>(type) {
+        @Volatile private var delegate: JsonDeserializer<Any>? = null
+
+        private fun delegate(ctxt: DeserializationContext): JsonDeserializer<Any> {
+            delegate?.let { return it }
+            val factory = ctxt.factory as BeanDeserializerFactory
+            @Suppress("UNCHECKED_CAST")
+            val built = factory.buildBeanDeserializer(ctxt, type, ctxt.config.introspect(type)) as JsonDeserializer<Any>
+            (built as? ResolvableDeserializer)?.resolve(ctxt)
+            delegate = built
+            return built
+        }
+
+        override fun deserialize(
+            p: JsonParser,
+            ctxt: DeserializationContext
+        ): Any = delegate(ctxt).deserialize(p, ctxt)
     }
 
     private companion object {
