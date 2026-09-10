@@ -402,9 +402,12 @@ jobs:
 workflows:
   build:
     jobs:
-      - jvm-build
+      # The default build, on the Jackson Skipper compiles against. Named explicitly because the
+      # matrix below is the same job, and a bare `jvm-build` in a `requires` would be ambiguous.
+      - jvm-build:
+          name: jvm-build-jackson-2.9.10
       # Same job, once per Jackson line a host is likely to run. Add a version to the list to
-      # cover it; keep the newest 2.x at the end and bump it when Jackson releases.
+      # cover it (and to tag-release's requires); keep the newest 2.x last and bump it as Jackson releases.
       - jvm-build:
           name: jvm-build-jackson-<< matrix.jackson_version >>
           matrix:
@@ -422,7 +425,10 @@ workflows:
               only: main
       - tag-release:
           requires:
-            - jvm-build
+            - jvm-build-jackson-2.9.10
+            - jvm-build-jackson-2.13.5
+            - jvm-build-jackson-2.17.3
+            - jvm-build-jackson-2.22.2
             - format-check
           # main only: the tag is the release record, so it is only ever cut from a merged,
           # tested main. The tag push then starts the `release` workflow below.
