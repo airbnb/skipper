@@ -111,10 +111,6 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
-    // jackson reflectively introspects java.lang types (e.g. StackTraceElement) when (de)serializing
-    // the Throwable-based Skipper error types; under the JDK 17 module system that access must be
-    // opened to the unnamed module (same arg core's test task sets).
-    jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
 }
 
 // ---------------------------------------------------------------------------------------
