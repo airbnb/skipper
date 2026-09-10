@@ -1,6 +1,7 @@
 package com.airbnb.skipper.internal.scheduler
 
 import com.airbnb.skipper.Actions
+import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.Compensate
 import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
@@ -9,7 +10,6 @@ import com.airbnb.skipper.ExecutionTimeout
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.NonRetryableError
-import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.OptimisticLockingError
 import com.airbnb.skipper.RawActionInvocation
 import com.airbnb.skipper.RawRequestContextMiddleware
@@ -60,8 +60,8 @@ import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.eq
-import org.mockito.kotlin.never
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever

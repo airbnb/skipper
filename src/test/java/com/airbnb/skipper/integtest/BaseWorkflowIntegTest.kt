@@ -2,6 +2,7 @@ package com.airbnb.skipper.integtest
 
 import com.airbnb.skipper.Actions
 import com.airbnb.skipper.ApplicationError
+import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.CheckpointMode
 import com.airbnb.skipper.Compensate
 import com.airbnb.skipper.Execute
@@ -19,7 +20,6 @@ import com.airbnb.skipper.StateField
 import com.airbnb.skipper.Timer
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowCallbackHandler
-import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.WorkflowOptions

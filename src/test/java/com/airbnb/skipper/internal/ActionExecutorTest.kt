@@ -96,7 +96,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
-            null,
+                null,
             )
     }
 
@@ -332,7 +332,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
-            null,
+                null,
             )
 
         val executionContext = newExecContext()
@@ -379,7 +379,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
-            null,
+                null,
             )
         val executionContext = newExecContext()
         whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
@@ -422,7 +422,7 @@ class ActionExecutorTest {
                 mockExecutionMetricsCollector,
                 mockTracer,
                 ContextPropagator.NOOP,
-            null,
+                null,
             )
         val executionContext = newExecContext()
         whenever(mockWorkflowStore.storeActionCheckpoints(any(), any()))

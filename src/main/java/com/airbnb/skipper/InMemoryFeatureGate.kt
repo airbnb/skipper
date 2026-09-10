@@ -4,6 +4,5 @@ package com.airbnb.skipper
 class InMemoryFeatureGate(
     private val overrides: Map<FeatureGate.Keys, Boolean> = emptyMap(),
 ) : FeatureGate {
-    override fun isEnabled(featureKey: FeatureGate.Keys): Boolean =
-        overrides[featureKey] ?: featureKey.enabledByDefault
+    override fun isEnabled(featureKey: FeatureGate.Keys): Boolean = overrides[featureKey] ?: featureKey.enabledByDefault
 }

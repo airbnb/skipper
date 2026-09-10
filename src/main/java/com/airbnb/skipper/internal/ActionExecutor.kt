@@ -53,7 +53,6 @@ open class ActionExecutor
         private val contextPropagator: ContextPropagator,
         private val featureGate: FeatureGate?,
     ) {
-
         /**
          * Executes an action method.
          *

@@ -13,14 +13,13 @@ import com.airbnb.skipper.RetryStrategy
 import com.airbnb.skipper.RetryableError
 import com.airbnb.skipper.SkipperAnnotationNames.UNEXPECTED_ERROR_RETRY_DELAY
 import com.airbnb.skipper.SkipperAnnotationNames.UTC_CLOCK
+import com.airbnb.skipper.SkipperError
 import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Timer
 import com.airbnb.skipper.TransientError
 import com.airbnb.skipper.WorkflowCallbackHandler
 import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
-import java.util.concurrent.CancellationException
-import com.airbnb.skipper.SkipperError
 import com.airbnb.skipper.api.ActionCheckpointView
 import com.airbnb.skipper.api.WorkflowInstanceView
 import com.airbnb.skipper.internal.ExecutionContext
@@ -37,6 +36,7 @@ import io.vavr.control.Option
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutorService
