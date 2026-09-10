@@ -29,23 +29,26 @@ import com.fasterxml.jackson.databind.ser.std.StdSerializer
  * follow the configured strategy and compensation never runs. This module removes every such access:
  *
  * 1. [StackTraceElement] gets an explicit serializer and deserializer built on its public API.
- * 2. For any `Throwable` bean, properties whose only accessor is a **field declared by
- *    `java.lang.Throwable`** (`detailMessage`, `cause`, `stackTrace`, `suppressedExceptions`) are
+ * 2. For any `Throwable` bean, properties whose only accessor is a **field declared by a JDK class**
+ *    (`Throwable.detailMessage`, `cause`, `stackTrace`, `suppressedExceptions`, but also
+ *    `SQLException.SQLState`, `URISyntaxException.index`, ...) are
  *    dropped from bean introspection. Everything that has a public getter or setter (`message`,
  *    `cause`, `stackTrace`, `suppressed`, `localizedMessage`) is unaffected, as are Skipper's own
- *    explicitly annotated error fields.
+ *    explicitly annotated error fields and any field an application declares on its own exceptions.
  *
  * **Persisted wire format is unchanged.** Skipper's error types use `@JsonAutoDetect(NONE)` with
  * explicit `@JsonProperty` fields, so rule 2 never touches what they write; rule 2 only matters for
  * Jackson's eager construction of a deserializer for raw `Throwable` (the parameter type of
  * `initCause`, which Jackson wires in as the `cause` setter of every Throwable) and for raw
  * throwables in write-only admin views. The [StackTraceElement] serializer writes exactly the six
- * keys, in the same order, that the bean serializer produced on JDK 8, where Skipper has run in
- * production for years: rows written by this code are byte-identical to rows written by a JDK 8
- * deployment, and a rolled-back deployment reads them with Jackson's built-in deserializer. The
- * deserializer accepts `declaringClass` or `className` and ignores every other key, so rows written
- * on JDK 9+ under `--add-opens` (which carry `moduleName`, `moduleVersion`, `classLoaderName` and
- * `format`) read back as well.
+ * keys, in the same order, that the bean serializer produced on JDK 8: rows written by this code are
+ * byte-identical to rows written by a JDK 8 deployment, and a rolled-back deployment reads them with
+ * Jackson's built-in deserializer. A JDK 9+ deployment that ran under `--add-opens` wrote four more
+ * keys (`classLoaderName`, `moduleName`, `moduleVersion`, `format`); those rows still read back, since
+ * the deserializer accepts `declaringClass` or `className` and ignores every other key, but such a
+ * deployment now writes the six-key shape, so frames rebuilt from stored rows carry no module or
+ * class-loader name and print without the `app//` or `java.base/` prefix. That is a deliberate
+ * narrowing to the shape JDK 8 rows always had.
  */
 internal class ThrowableModule : SimpleModule("skipper-throwable") {
     init {
@@ -113,7 +116,7 @@ internal class ThrowableModule : SimpleModule("skipper-throwable") {
             beanProperties: MutableList<BeanPropertyWriter>
         ): MutableList<BeanPropertyWriter> {
             if (!isThrowable(beanDesc)) return beanProperties
-            return beanProperties.filterNot { isThrowableField(it.member) }.toMutableList()
+            return beanProperties.filterNot { isJdkField(it.member) }.toMutableList()
         }
     }
 
@@ -127,7 +130,7 @@ internal class ThrowableModule : SimpleModule("skipper-throwable") {
             // A property that also has a setter or a creator parameter is written through those, so
             // only the ones Jackson would have to assign through the private field are dropped.
             return propDefs
-                .filterNot { it.hasField() && !it.hasSetter() && !it.hasConstructorParameter() && isThrowableField(it.field) }
+                .filterNot { it.hasField() && !it.hasSetter() && !it.hasConstructorParameter() && isJdkField(it.field) }
                 .toMutableList()
         }
     }
@@ -135,6 +138,14 @@ internal class ThrowableModule : SimpleModule("skipper-throwable") {
     private companion object {
         fun isThrowable(beanDesc: BeanDescription): Boolean = Throwable::class.java.isAssignableFrom(beanDesc.beanClass)
 
-        fun isThrowableField(member: AnnotatedMember?): Boolean = member is AnnotatedField && member.declaringClass == Throwable::class.java
+        /**
+         * A field declared by a JDK class, whose private fields are what the module system keeps closed.
+         * `java.base` classes come from the bootstrap loader (null on every JDK since 8); other JDK
+         * modules such as `java.sql` load through the platform loader on JDK 9+, so the `java.` package
+         * prefix, which only the JDK may define, covers those.
+         */
+        fun isJdkField(member: AnnotatedMember?): Boolean =
+            member is AnnotatedField &&
+                (member.declaringClass.classLoader == null || member.declaringClass.name.startsWith("java."))
     }
 }

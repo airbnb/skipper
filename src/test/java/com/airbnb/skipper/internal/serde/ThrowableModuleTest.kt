@@ -88,6 +88,30 @@ class ThrowableModuleTest {
     }
 
     @Test
+    fun `JDK exceptions with their own private fields serialize and deserialize too`() {
+        // SQLException adds SQLState/vendorCode/next; URISyntaxException adds input/index. Both are
+        // bootstrap-loaded, so their private fields are as closed as Throwable's.
+        val sql = mapper.writeValueAsString(java.sql.SQLException("boom", "S1000", 42))
+        assertThat(sql).contains("\"message\":\"boom\"").contains("S1000").doesNotContain("vendorCode")
+
+        val uri = mapper.writeValueAsString(java.net.URISyntaxException("bad uri", "unexpected char", 3))
+        assertThat(uri).contains("\"index\":3").contains("\"reason\":\"unexpected char\"")
+
+        // A user exception keeps its own private fields: only JDK-declared fields are dropped.
+        val own = mapper.writeValueAsString(OwnException("mine", 7))
+        assertThat(own).contains("\"code\":7")
+
+        // The raw-Throwable deserializer Jackson builds for initCause must also build for these.
+        val back = mapper.readValue("{\"message\":\"boom\"}", java.sql.SQLException::class.java)
+        assertThat(back.message).isEqualTo("boom")
+    }
+
+    class OwnException(
+        message: String,
+        @Suppress("unused") private val code: Int
+    ) : RuntimeException(message)
+
+    @Test
     fun `a raw throwable in an admin view serializes through its getters only`() {
         // Write-only admin projections (ActionCheckpoint.result) carry arbitrary throwables.
         val json = mapper.writeValueAsString(RuntimeException("boom"))
