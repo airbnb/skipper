@@ -206,6 +206,9 @@ class SimplePojoSerde(
                 .registerModule(ParameterNamesModule())
                 .registerModule(JavaTimeModule())
                 .registerModule(kotlinModule)
+                // Persists errors without reflecting into java.base private fields, which JDK 16+
+                // denies without --add-opens. See ThrowableModule.
+                .registerModule(ThrowableModule())
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
                 .addHandler(
                     object : DeserializationProblemHandler() {

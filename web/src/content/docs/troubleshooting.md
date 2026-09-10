@@ -34,6 +34,20 @@ POJOs/data classes. Check that:
 As a last resort, if you're certain a type is serializable, you can annotate it to bypass
 the checks — but be ready for serialization errors at runtime if it isn't.
 
+## `InaccessibleObjectException: module java.base does not "opens java.lang"` when an action fails
+
+On JDK 16 and newer, Skipper **0.5.0 and earlier** could not persist a failed action: the scheduler
+logged `failed to serialize object: com.airbnb.skipper.RetryableError` with that cause, retried the
+task every 30 seconds through its unexpected-error path instead of your retry strategy, and never
+reached compensation. This is fixed from the next release, which persists errors without reflecting
+into `java.base`. If you are pinned to 0.5.0, start the JVM with
+
+```
+--add-opens java.base/java.lang=ALL-UNNAMED
+```
+
+for the service and for your test task.
+
 ## A workflow behaves unpredictably across resumes
 
 This is almost always a **determinism** violation. Make sure the workflow method does not

@@ -141,10 +141,6 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
-    // jackson 2.9.10 introspects java.lang.StackTraceElement when (de)serializing the Throwable-based
-    // Skipper error types; under the JDK 17 module system that reflective access requires java.lang
-    // to be opened to the unnamed module.
-    jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
 }
 
 // Apply the Kotlin AllOpen compiler plugin (bound to @SkipperOpen) to the TEST compilation only.
