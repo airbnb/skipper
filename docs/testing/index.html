@@ -67,7 +67,7 @@ the actions themselves.</p>
 
 
 
-<table><thead><tr><th>Member</th><th>Purpose</th></tr></thead><tbody><tr><td><code>workflowBuilder&#x3C;T>()</code> / <code>workflowBuilder(T.class)</code></td><td>An <code>InvocationBuilder</code> for this test’s workflow instance.</td></tr><tr><td><code>workflow&#x3C;T>()</code> / <code>workflow(T.class)</code></td><td>A handle on that same instance, for signals, queries, or reading the result.</td></tr><tr><td><code>workflowId</code></td><td>The instance id, unique per test.</td></tr><tr><td><code>helper</code></td><td>Wait helpers: <code>waitForWorkflowToComplete()</code>, <code>expectWorkflowToWait()</code>, <code>waitForWorkflowToReachStatus(...)</code>, <code>waitForCondition { }</code>, <code>currentView()</code>.</td></tr><tr><td><code>clock</code></td><td>A <code>MutableClock</code> fixed at the epoch. Timers and <code>waitUntil</code> deadlines fire only when you call <code>clock.fastForward(...)</code>.</td></tr><tr><td><code>@Bind</code></td><td>Annotate a field to hand its value to workflows and actions that <code>@Inject</code> that type.</td></tr><tr><td><code>configure(config)</code></td><td>Override to adjust the <code>SkipperConfig</code> (retry strategy, checkpoint mode, …) before the runtime starts.</td></tr><tr><td><code>printHistory()</code></td><td>Dumps the instance’s status, state and checkpoints; useful when a wait times out.</td></tr></tbody></table>
+<table><thead><tr><th>Member</th><th>Purpose</th></tr></thead><tbody><tr><td><code>workflowBuilder&#x3C;T>()</code> / <code>workflowBuilder(T.class)</code></td><td>An <code>InvocationBuilder</code> for this test’s workflow instance.</td></tr><tr><td><code>workflow&#x3C;T>()</code> / <code>workflow(T.class)</code></td><td>A handle on that same instance, for signals, queries, or reading the result.</td></tr><tr><td><code>workflowId</code></td><td>The instance id, unique per test.</td></tr><tr><td><code>helper</code></td><td>Wait helpers: <code>waitForWorkflowToComplete()</code>, <code>expectWorkflowToWait()</code>, <code>waitForWorkflowToReachStatus(...)</code>, <code>waitForCondition { }</code>, <code>currentView()</code>; and <code>fastForwardUntilWorkflowCompletes()</code> / <code>fastForwardUntilWorkflowReachesStatus(...)</code>, which also advance the clock so retries and timers fire.</td></tr><tr><td><code>clock</code></td><td>A <code>MutableClock</code> over real time that you can jump ahead with <code>clock.fastForward(...)</code>. <code>waitUntil</code> deadlines, <code>sleep</code>s <strong>and retry delays</strong> are all timers on it. Override <code>createClock()</code> to return <code>MutableClock()</code> for time fixed at the epoch that moves only when you say so.</td></tr><tr><td><code>@Bind</code></td><td>Annotate a field to hand its value to workflows and actions that <code>@Inject</code> that type.</td></tr><tr><td><code>configure(config)</code></td><td>Override to adjust the <code>SkipperConfig</code> (retry strategy, checkpoint mode, …) before the runtime starts.</td></tr><tr><td><code>printHistory()</code></td><td>Dumps the instance’s status, state and checkpoints; useful when a wait times out.</td></tr></tbody></table>
 <p>If you add your own <code>@BeforeEach</code>, there is nothing to call: the base class’s setup runs on its
 own and yours runs after it.</p>
 <h2 id="a-basic-test">A basic test</h2>
@@ -119,8 +119,8 @@ finish. Re-invoking the workflow method on a completed instance returns the reco
 <span class="line"><span style="color:#B392F0">  assertEquals</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"approved"</span><span style="color:#E1E4E8">, </span><span style="color:#B392F0">workflow</span><span style="color:#E1E4E8">(TransferWorkflow.class).</span><span style="color:#B392F0">transfer</span><span style="color:#E1E4E8">(</span><span style="color:#F97583">new</span><span style="color:#B392F0"> TransferRequest</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"Mary"</span><span style="color:#E1E4E8">, </span><span style="color:#9ECBFF">"Bob"</span><span style="color:#E1E4E8">, </span><span style="color:#79B8FF">1001</span><span style="color:#E1E4E8">)).</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">getStatus</span><span style="color:#E1E4E8">());</span></span>
 <span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
 <h2 id="testing-timeouts">Testing timeouts</h2>
-<p>Time does not pass on its own inside a <code>WorkflowTest</code>, so a <code>waitUntil</code> deadline is tested by
-moving the clock past it:</p>
+<p>The test clock ticks with real time, but no test should sit through a one-day approval window:
+jump the clock past the deadline instead.</p>
 <pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">@Test</span></span>
 <span class="line"><span style="color:#F97583">fun</span><span style="color:#B392F0"> approvalTimesOut</span><span style="color:#E1E4E8">() {</span></span>
 <span class="line"><span style="color:#B392F0">  workflowBuilder</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">TransferWorkflow</span><span style="color:#E1E4E8">>().</span><span style="color:#B392F0">build</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">transfer</span><span style="color:#E1E4E8">(</span><span style="color:#B392F0">TransferRequest</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"Mary"</span><span style="color:#E1E4E8">, </span><span style="color:#9ECBFF">"Bob"</span><span style="color:#E1E4E8">, </span><span style="color:#79B8FF">1001</span><span style="color:#E1E4E8">))</span></span>
@@ -139,6 +139,48 @@ moving the clock past it:</p>
 <span class="line"></span>
 <span class="line"><span style="color:#B392F0">  assertEquals</span><span style="color:#E1E4E8">(WorkflowInstanceStatusView.COMPLETED, helper.</span><span style="color:#B392F0">waitForWorkflowToComplete</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">getStatus</span><span style="color:#E1E4E8">());</span></span>
 <span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<h2 id="testing-retries">Testing retries</h2>
+<p>A retryable failure schedules the next attempt as a <strong>timer</strong> on the test clock. Because that clock
+ticks with real time, a retry strategy measured in milliseconds (the engine’s default is 100 ms,
+five times) needs nothing special: await the result as in the basic test and the retries happen.</p>
+<p>Delays a test should not sit through are different: a strategy that retries minutes apart, a
+<code>sleep(...)</code>, or the compensation backoff, which starts at 30 seconds. One <code>fastForward</code> is not
+enough for those either, because each retry schedules a fresh timer relative to the already-advanced
+clock. <code>helper.fastForwardUntilWorkflowCompletes(step)</code> steps the clock forward between polls (one
+second per poll by default) until the workflow is terminal:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">@Test</span></span>
+<span class="line"><span style="color:#F97583">fun</span><span style="color:#B392F0"> carrierOutageIsRetried</span><span style="color:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#E1E4E8">  carrier.failuresRemaining </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 2</span><span style="color:#6A737D"> // the action's strategy allows three retries, ten minutes apart</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#B392F0">  workflowBuilder</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">ShippingWorkflow</span><span style="color:#E1E4E8">>().</span><span style="color:#B392F0">build</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">ship</span><span style="color:#E1E4E8">(order)</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#B392F0">  assertEquals</span><span style="color:#E1E4E8">(</span></span>
+<span class="line"><span style="color:#E1E4E8">    WorkflowInstanceStatusView.COMPLETED,</span></span>
+<span class="line"><span style="color:#E1E4E8">    helper.</span><span style="color:#B392F0">fastForwardUntilWorkflowCompletes</span><span style="color:#E1E4E8">(Duration.</span><span style="color:#B392F0">ofMinutes</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">10</span><span style="color:#E1E4E8">)).status,</span></span>
+<span class="line"><span style="color:#E1E4E8">  )</span></span>
+<span class="line"><span style="color:#B392F0">  assertEquals</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">3</span><span style="color:#E1E4E8">, carrier.calls)</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#E1E4E8">@</span><span style="color:#F97583">Test</span></span>
+<span class="line"><span style="color:#F97583">public</span><span style="color:#F97583"> void</span><span style="color:#B392F0"> carrierOutageIsRetried</span><span style="color:#E1E4E8">() throws Exception {</span></span>
+<span class="line"><span style="color:#E1E4E8">  carrier.failuresRemaining </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 2</span><span style="color:#E1E4E8">; </span><span style="color:#6A737D">// the action's strategy allows three retries, ten minutes apart</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#B392F0">  workflowBuilder</span><span style="color:#E1E4E8">(ShippingWorkflow.class).</span><span style="color:#B392F0">build</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">ship</span><span style="color:#E1E4E8">(order);</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#B392F0">  assertEquals</span><span style="color:#E1E4E8">(</span></span>
+<span class="line"><span style="color:#E1E4E8">      WorkflowInstanceStatusView.COMPLETED,</span></span>
+<span class="line"><span style="color:#E1E4E8">      helper.</span><span style="color:#B392F0">fastForwardUntilWorkflowCompletes</span><span style="color:#E1E4E8">(Duration.</span><span style="color:#B392F0">ofMinutes</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">10</span><span style="color:#E1E4E8">)).</span><span style="color:#B392F0">getStatus</span><span style="color:#E1E4E8">());</span></span>
+<span class="line"><span style="color:#B392F0">  assertEquals</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">3</span><span style="color:#E1E4E8">, carrier.calls);</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>Do not await the workflow method’s future before the helper returns; that is the call that
+blocks. Read the result afterwards by invoking the method again on the completed instance.
+Exhausted retries end in <code>ERROR</code>. When earlier actions have compensations (next section) the
+workflow passes through <code>ERROR</code> on its way to <code>COMPENSATION_COMPLETED</code>, and both count as
+terminal, so wait for the one you mean with
+<code>fastForwardUntilWorkflowReachesStatus(COMPENSATION_COMPLETED)</code>. Pass a <code>step</code> at or above the
+delay you want to skip and below any <code>waitUntil</code> deadline you do not want to expire along the way.</p>
+<p>If you would rather time never moved unless the test says so, override <code>createClock()</code> to return
+<code>MutableClock()</code>, which is fixed at the epoch. Then every retry, however short, waits for a
+<code>fastForward</code>, and the helpers above are the only way a retried workflow finishes.</p>
 <h2 id="testing-compensation">Testing compensation</h2>
 <p>Make a later action fail and assert that earlier actions were compensated.</p>
 <pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">@Test</span></span>
