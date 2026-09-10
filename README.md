@@ -110,7 +110,7 @@ current version.
 ```kotlin
 // build.gradle.kts
 dependencies {
-  implementation("com.airbnb.skipper:skipper-core:0.3.0")
+  implementation("com.airbnb.skipper:skipper-core:0.5.0")
 }
 ```
 
@@ -119,7 +119,7 @@ dependencies {
 
 ```groovy
 // build.gradle
-implementation 'com.airbnb.skipper:skipper-core:0.3.0'
+implementation 'com.airbnb.skipper:skipper-core:0.5.0'
 ```
 
 ```xml
@@ -127,7 +127,7 @@ implementation 'com.airbnb.skipper:skipper-core:0.3.0'
 <dependency>
   <groupId>com.airbnb.skipper</groupId>
   <artifactId>skipper-core</artifactId>
-  <version>0.3.0</version>
+  <version>0.5.0</version>
 </dependency>
 ```
 
