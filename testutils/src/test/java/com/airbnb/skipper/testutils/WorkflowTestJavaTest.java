@@ -32,15 +32,14 @@ public class WorkflowTestJavaTest extends WorkflowTest {
   }
 
   @Test
-  public void retriesAreTimersOnTheTestClock() throws Exception {
+  public void retriesCanBeFastForwardedFromJava() throws Exception {
     failuresRemaining.set(2);
 
     workflowBuilder(FlakyWorkflow.class).build().run("x");
 
-    // helper.waitForWorkflowToComplete() would never return: advance the clock instead.
     assertEquals(
         WorkflowInstanceStatusView.COMPLETED,
-        helper.fastForwardUntilWorkflowCompletes().getStatus());
+        helper.fastForwardUntilWorkflowCompletes(Duration.ofMinutes(1)).getStatus());
     assertEquals("ok", workflow(FlakyWorkflow.class).run("x").get());
   }
 
@@ -49,7 +48,7 @@ public class WorkflowTestJavaTest extends WorkflowTest {
   public static class FlakyActions extends Actions {
     @Inject AtomicInteger failuresRemaining;
 
-    RetryStrategy retries = new FixedRetryStrategy(Duration.ofMillis(200), 3);
+    RetryStrategy retries = new FixedRetryStrategy(Duration.ofMinutes(1), 3);
 
     @Execute(retryStrategy = "retries")
     public String attempt(String input) {

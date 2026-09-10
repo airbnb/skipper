@@ -17,9 +17,11 @@ import java.util.concurrent.ExecutionException
  * time ([maxAttempts] times [sleepTimeMs]), independent of the test's [MutableClock].
  *
  * Skipper's timers (`waitUntil` deadlines, `sleep`, and the delay before each **retry**) fire on
- * the runtime's clock, which a test keeps frozen. A `waitFor...` method therefore hangs on a
- * workflow that is waiting for a retry delay to elapse; use [fastForwardUntilWorkflowCompletes] or
- * [fastForwardUntilWorkflowReachesStatus] for those, which step [clock] forward between polls.
+ * the runtime's clock. A [WorkflowTest] clock ticks with real time, so millisecond retry delays pass
+ * on their own; a delay the test should not sit through (a long `sleep`, a deadline in days, the
+ * 30-second compensation backoff) is reached with [fastForwardUntilWorkflowCompletes] or
+ * [fastForwardUntilWorkflowReachesStatus], which step [clock] forward between polls. With a clock
+ * fixed at the epoch those are the only way such a workflow ever finishes.
  */
 class WorkflowTestHelper
     @JvmOverloads
@@ -197,7 +199,7 @@ class WorkflowTestHelper
             const val DEFAULT_MAX_ATTEMPTS = 200
             const val DEFAULT_SLEEP_MS = 50L
 
-            /** One second per poll: past any sub-second retry delay, far from any real deadline. */
+            /** One second per poll: past any short retry delay, far from any real deadline. */
             @JvmField
             val DEFAULT_FAST_FORWARD_STEP: Duration = Duration.ofSeconds(1)
 

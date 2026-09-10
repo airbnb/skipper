@@ -58,12 +58,12 @@ class WorkflowTestTest : WorkflowTest() {
     }
 
     @Test
-    fun theClockOnlyMovesWhenTheTestSaysSo() {
+    fun aDeadlineIsReachedByJumpingTheClock() {
         val workflow = workflowBuilder<ApprovalWorkflow>().build()
         helper.expectWaitSignal { workflow.approveOrDecline().get() }
         helper.expectWorkflowToWait()
 
-        // Nothing has happened to the clock, so the one-hour deadline is nowhere near.
+        // Real time has barely moved, so the one-hour deadline is nowhere near.
         Thread.sleep(300)
         assertEquals(WorkflowInstanceStatusView.WAITING, helper.currentView().status)
 
@@ -74,24 +74,34 @@ class WorkflowTestTest : WorkflowTest() {
     }
 
     @Test
-    fun aRetriedActionCompletesOnceTheClockIsAdvanced() {
-        carrier.failuresRemaining = 2 // the action allows three retries
+    fun shortRetryDelaysElapseOnTheirOwn() {
+        carrier.failuresRemaining = 2 // the action allows three retries, 200 ms apart
 
-        workflowBuilder<ShippingWorkflow>().build().ship("pkg-1")
+        // The clock ticks with real time, so awaiting the result is enough for millisecond retries.
+        assertEquals("TRK-pkg-1", workflowBuilder<ShippingWorkflow>().build().ship("pkg-1").get())
 
-        // waitForWorkflowToComplete() would hang here: each retry is a timer on the frozen clock.
-        assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.fastForwardUntilWorkflowCompletes().status)
         assertEquals(3, carrier.calls)
-        assertEquals("TRK-pkg-1", workflow<ShippingWorkflow>().ship("pkg-1").get())
+        assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().status)
     }
 
     @Test
-    fun exhaustedRetriesEndInErrorOnceTheClockIsAdvanced() {
+    fun longRetryDelaysAreSkippedByFastForwarding() {
+        carrier.failuresRemaining = 2
+
+        workflowBuilder<SlowShippingWorkflow>().build().ship("pkg-1") // retries are 10 minutes apart
+
+        assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.fastForwardUntilWorkflowCompletes(Duration.ofMinutes(10)).status)
+        assertEquals(3, carrier.calls)
+        assertEquals("TRK-pkg-1", workflow<SlowShippingWorkflow>().ship("pkg-1").get())
+    }
+
+    @Test
+    fun exhaustedRetriesEndInError() {
         carrier.failuresRemaining = Int.MAX_VALUE
 
-        workflowBuilder<ShippingWorkflow>().build().ship("pkg-2")
+        workflowBuilder<SlowShippingWorkflow>().build().ship("pkg-2")
 
-        val view = helper.fastForwardUntilWorkflowCompletes()
+        val view = helper.fastForwardUntilWorkflowCompletes(Duration.ofMinutes(10))
         assertEquals(WorkflowInstanceStatusView.ERROR, view.status)
         assertEquals(4, carrier.calls, "one attempt plus three retries")
     }
@@ -177,6 +187,28 @@ class WorkflowTestTest : WorkflowTest() {
 
     class ShippingWorkflow : Workflow() {
         private val shipping = actions<ShippingActions>()
+
+        @WorkflowMethod(returnType = String::class)
+        fun ship(pkg: String): CompletableFuture<String> = CompletableFuture.completedFuture(shipping.ship(pkg))
+    }
+
+    /** Same carrier, but retries ten minutes apart: no test should sit through that. */
+    class SlowShippingActions : Actions() {
+        @Inject lateinit var carrier: FlakyCarrier
+
+        val carrierRetries: RetryStrategy = FixedRetryStrategy(Duration.ofMinutes(10), 3)
+
+        @Execute(retryStrategy = "carrierRetries")
+        fun ship(pkg: String): String =
+            try {
+                carrier.createShipment(pkg)
+            } catch (e: IllegalStateException) {
+                throw RetryableError("carrier unavailable", e)
+            }
+    }
+
+    class SlowShippingWorkflow : Workflow() {
+        private val shipping = actions<SlowShippingActions>()
 
         @WorkflowMethod(returnType = String::class)
         fun ship(pkg: String): CompletableFuture<String> = CompletableFuture.completedFuture(shipping.ship(pkg))
