@@ -8,6 +8,7 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.factory.SkipperRuntime
 import java.lang.reflect.Modifier
+import java.time.Clock
 import java.time.Duration
 import java.util.UUID
 import org.junit.jupiter.api.AfterEach
@@ -31,10 +32,12 @@ import org.junit.jupiter.api.BeforeEach
  * ```
  *
  * Each test gets its own [SkipperRuntime] on the embedded **in-memory SQLite** store, so there is
- * no database to provision and no state shared between tests. Time is a [MutableClock] fixed at
- * the epoch: `waitUntil` deadlines and timers never fire on their own, only when the test calls
- * `clock.fastForward(...)`. Every workflow started through [workflowBuilder] or [workflow] uses
- * [workflowId], unique per test, and [helper] waits on that instance.
+ * no database to provision and no state shared between tests. Time is a [MutableClock] over real
+ * time that the test can jump ahead: short retry delays elapse on their own, while a long `sleep`,
+ * a `waitUntil` deadline or a compensation backoff is reached with `clock.fastForward(...)` or
+ * `helper.fastForwardUntilWorkflowCompletes()`. Override [createClock] for a clock fixed at the
+ * epoch, which only moves when the test says so. Every workflow started through [workflowBuilder]
+ * or [workflow] uses [workflowId], unique per test, and [helper] waits on that instance.
  *
  * Collaborators your actions `@Inject` are supplied through fields annotated with [Bind].
  * Override [configure] to change anything else on the [SkipperConfig] before the runtime starts.
@@ -43,9 +46,8 @@ import org.junit.jupiter.api.BeforeEach
  * `workflowBuilder(MyWorkflow.class)` and the `helper` field.
  */
 abstract class WorkflowTest {
-    /** The clock Skipper runs on; fixed at the epoch until the test moves it. */
-    @JvmField
-    protected val clock: MutableClock = MutableClock()
+    /** The clock Skipper runs on, from [createClock]; jump it ahead with `fastForward`. */
+    protected lateinit var clock: MutableClock
 
     // lateinit properties expose their backing field to Java with the property's visibility, so
     // these read as plain protected fields from both languages once setUpWorkflowTest has run.
@@ -65,9 +67,17 @@ abstract class WorkflowTest {
     /** Hook to adjust the config (retry strategy, checkpoint mode, ...) before the runtime is built. */
     protected open fun configure(config: SkipperConfig) {}
 
+    /**
+     * The clock the runtime runs on. Ticks with real time by default, so retry delays of
+     * milliseconds pass without help; return `MutableClock()` for time fixed at the epoch that moves
+     * only on `fastForward`.
+     */
+    protected open fun createClock(): MutableClock = MutableClock(Clock.systemUTC())
+
     @BeforeEach
     fun setUpWorkflowTest() {
         workflowId = "wf-" + UUID.randomUUID()
+        clock = createClock()
         val config = SkipperConfig.forService("workflow-test")
         config.utcClock = clock
         config.gracefulShutdownTimeout = Duration.ofSeconds(1)
@@ -76,7 +86,7 @@ abstract class WorkflowTest {
         this.config = config
         runtime = SkipperRuntime(config)
         workflowFactory = runtime.workflowFactory.get()
-        helper = WorkflowTestHelper(runtime, workflowId)
+        helper = WorkflowTestHelper(runtime, workflowId, clock = clock)
         runtime.skipperSchedulerManager.get().start()
     }
 
