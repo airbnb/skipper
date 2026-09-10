@@ -196,8 +196,8 @@ top of `skipper-core` and released with the same version. Add it next to core:
 ```kotlin
 // build.gradle.kts
 dependencies {
-  implementation("com.airbnb.skipper:skipper-core:0.5.0")
-  implementation("com.airbnb.skipper:skipper-state-machine:0.5.0")
+  implementation("com.airbnb.skipper:skipper-core:0.6.0")
+  implementation("com.airbnb.skipper:skipper-state-machine:0.6.0")
 }
 ```
 
@@ -206,7 +206,7 @@ dependencies {
 <dependency>
   <groupId>com.airbnb.skipper</groupId>
   <artifactId>skipper-state-machine</artifactId>
-  <version>0.5.0</version>
+  <version>0.6.0</version>
 </dependency>
 ```
 

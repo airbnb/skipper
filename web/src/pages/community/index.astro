@@ -1,9 +1,8 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import Icon from '../../components/Icon.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-const GITHUB = 'https://github.com/'; // TODO: public repo URL (pending OSS branding)
+const GITHUB = 'https://github.com/airbnb/skipper';
 ---
 <Layout title="Community — Skipper" description="Get involved with Skipper: contribute, ask questions, and follow the roadmap.">
   <header class="page-head">
@@ -22,11 +21,11 @@ const GITHUB = 'https://github.com/'; // TODO: public repo URL (pending OSS bran
           <h3>Contributing</h3>
           <ul>
             <li>
-              <a href={GITHUB}>Contribution guide</a><br />
+              <a href={`${GITHUB}#contributing`}>Contribution guide</a><br />
               <span>Fork the repository, build it, run the test suite, and open a pull request. Start with an issue for anything non-trivial so we can agree on the approach.</span>
             </li>
             <li>
-              <a href={GITHUB}>Good first issues</a><br />
+              <a href={`${GITHUB}/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22`}>Good first issues</a><br />
               <span>Issues labeled <code>good first issue</code> are scoped to be a friendly on-ramp for new contributors.</span>
             </li>
             <li id="coc">
@@ -40,12 +39,8 @@ const GITHUB = 'https://github.com/'; // TODO: public repo URL (pending OSS bran
           <h3>Get help</h3>
           <ul>
             <li>
-              <a href={GITHUB}>GitHub Discussions</a><br />
-              <span>Ask questions, share patterns, and see how others model their workflows.</span>
-            </li>
-            <li>
-              <a href={GITHUB}>Issues</a><br />
-              <span>Report a bug or request a feature. Include a minimal reproduction where you can.</span>
+              <a href={`${GITHUB}/issues`}>Issues</a><br />
+              <span>Ask a question, report a bug, or request a feature. Include a minimal reproduction where you can.</span>
             </li>
             <li>
               <a href={`${base}/docs/troubleshooting/`}>Troubleshooting</a><br />
@@ -70,17 +65,9 @@ const GITHUB = 'https://github.com/'; // TODO: public repo URL (pending OSS bran
           <ul>
             <li>Apache License 2.0<br /><span>Free to use, modify, and distribute, including commercially.</span></li>
             <li><a href={GITHUB}>GitHub repository</a><br /><span>Browse the source, file issues, and open pull requests.</span></li>
+            <li><a href={`${GITHUB}/releases`}>Releases</a><br /><span>Every tagged version, with what changed. Artifacts ship to Maven Central under <code>com.airbnb.skipper</code>.</span></li>
           </ul>
         </div>
-      </div>
-
-      <div class="notice" style="margin-top:40px">
-        <Icon name="users" size={20} />
-        <span>
-          <strong>Heads up:</strong> Skipper is being prepared for its public launch. The
-          repository and community links above will point to the public GitHub project once
-          it is live.
-        </span>
       </div>
     </div>
   </section>
