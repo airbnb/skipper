@@ -52,8 +52,8 @@ the actions themselves.
 | `workflowBuilder<T>()` / `workflowBuilder(T.class)` | An `InvocationBuilder` for this test's workflow instance. |
 | `workflow<T>()` / `workflow(T.class)` | A handle on that same instance, for signals, queries, or reading the result. |
 | `workflowId` | The instance id, unique per test. |
-| `helper` | Wait helpers: `waitForWorkflowToComplete()`, `expectWorkflowToWait()`, `waitForWorkflowToReachStatus(...)`, `waitForCondition { }`, `currentView()`. |
-| `clock` | A `MutableClock` fixed at the epoch. Timers and `waitUntil` deadlines fire only when you call `clock.fastForward(...)`. |
+| `helper` | Wait helpers: `waitForWorkflowToComplete()`, `expectWorkflowToWait()`, `waitForWorkflowToReachStatus(...)`, `waitForCondition { }`, `currentView()`; and `fastForwardUntilWorkflowCompletes()` / `fastForwardUntilWorkflowReachesStatus(...)`, which also advance the clock so retries and timers fire. |
+| `clock` | A `MutableClock` over real time that you can jump ahead with `clock.fastForward(...)`. `waitUntil` deadlines, `sleep`s **and retry delays** are all timers on it. Override `createClock()` to return `MutableClock()` for time fixed at the epoch that moves only when you say so. |
 | `@Bind` | Annotate a field to hand its value to workflows and actions that `@Inject` that type. |
 | `configure(config)` | Override to adjust the `SkipperConfig` (retry strategy, checkpoint mode, ...) before the runtime starts. |
 | `printHistory()` | Dumps the instance's status, state and checkpoints; useful when a wait times out. |
@@ -128,8 +128,8 @@ public void requiresApproval() throws Exception {
 
 ## Testing timeouts
 
-Time does not pass on its own inside a `WorkflowTest`, so a `waitUntil` deadline is tested by
-moving the clock past it:
+The test clock ticks with real time, but no test should sit through a one-day approval window:
+jump the clock past the deadline instead.
 
 ```kotlin
 @Test
@@ -154,6 +154,59 @@ public void approvalTimesOut() {
   assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().getStatus());
 }
 ```
+
+## Testing retries
+
+A retryable failure schedules the next attempt as a **timer** on the test clock. Because that clock
+ticks with real time, a retry strategy measured in milliseconds (the engine's default is 100 ms,
+five times) needs nothing special: await the result as in the basic test and the retries happen.
+
+Delays a test should not sit through are different: a strategy that retries minutes apart, a
+`sleep(...)`, or the compensation backoff, which starts at 30 seconds. One `fastForward` is not
+enough for those either, because each retry schedules a fresh timer relative to the already-advanced
+clock. `helper.fastForwardUntilWorkflowCompletes(step)` steps the clock forward between polls (one
+second per poll by default) until the workflow is terminal:
+
+```kotlin
+@Test
+fun carrierOutageIsRetried() {
+  carrier.failuresRemaining = 2 // the action's strategy allows three retries, ten minutes apart
+
+  workflowBuilder<ShippingWorkflow>().build().ship(order)
+
+  assertEquals(
+    WorkflowInstanceStatusView.COMPLETED,
+    helper.fastForwardUntilWorkflowCompletes(Duration.ofMinutes(10)).status,
+  )
+  assertEquals(3, carrier.calls)
+}
+```
+
+```java
+@Test
+public void carrierOutageIsRetried() throws Exception {
+  carrier.failuresRemaining = 2; // the action's strategy allows three retries, ten minutes apart
+
+  workflowBuilder(ShippingWorkflow.class).build().ship(order);
+
+  assertEquals(
+      WorkflowInstanceStatusView.COMPLETED,
+      helper.fastForwardUntilWorkflowCompletes(Duration.ofMinutes(10)).getStatus());
+  assertEquals(3, carrier.calls);
+}
+```
+
+Do not await the workflow method's future before the helper returns; that is the call that
+blocks. Read the result afterwards by invoking the method again on the completed instance.
+Exhausted retries end in `ERROR`. When earlier actions have compensations (next section) the
+workflow passes through `ERROR` on its way to `COMPENSATION_COMPLETED`, and both count as
+terminal, so wait for the one you mean with
+`fastForwardUntilWorkflowReachesStatus(COMPENSATION_COMPLETED)`. Pass a `step` at or above the
+delay you want to skip and below any `waitUntil` deadline you do not want to expire along the way.
+
+If you would rather time never moved unless the test says so, override `createClock()` to return
+`MutableClock()`, which is fixed at the epoch. Then every retry, however short, waits for a
+`fastForward`, and the helpers above are the only way a retried workflow finishes.
 
 ## Testing compensation
 

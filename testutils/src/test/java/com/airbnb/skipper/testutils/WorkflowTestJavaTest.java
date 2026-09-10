@@ -4,10 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.airbnb.skipper.Actions;
 import com.airbnb.skipper.Execute;
+import com.airbnb.skipper.FixedRetryStrategy;
+import com.airbnb.skipper.RetryStrategy;
+import com.airbnb.skipper.RetryableError;
 import com.airbnb.skipper.Workflow;
 import com.airbnb.skipper.WorkflowMethod;
 import com.airbnb.skipper.api.WorkflowInstanceStatusView;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.UnaryOperator;
 import javax.inject.Inject;
 import org.junit.jupiter.api.Test;
@@ -24,6 +29,43 @@ public class WorkflowTestJavaTest extends WorkflowTest {
     assertEquals(
         WorkflowInstanceStatusView.COMPLETED, helper.waitForWorkflowToComplete().getStatus());
     assertEquals(workflowId, helper.currentView().getId());
+  }
+
+  @Test
+  public void retriesCanBeFastForwardedFromJava() throws Exception {
+    failuresRemaining.set(2);
+
+    workflowBuilder(FlakyWorkflow.class).build().run("x");
+
+    assertEquals(
+        WorkflowInstanceStatusView.COMPLETED,
+        helper.fastForwardUntilWorkflowCompletes(Duration.ofMinutes(1)).getStatus());
+    assertEquals("ok", workflow(FlakyWorkflow.class).run("x").get());
+  }
+
+  @Bind AtomicInteger failuresRemaining = new AtomicInteger();
+
+  public static class FlakyActions extends Actions {
+    @Inject AtomicInteger failuresRemaining;
+
+    RetryStrategy retries = new FixedRetryStrategy(Duration.ofMinutes(1), 3);
+
+    @Execute(retryStrategy = "retries")
+    public String attempt(String input) {
+      if (failuresRemaining.getAndDecrement() > 0) {
+        throw new RetryableError("flaky", new IllegalStateException("503"));
+      }
+      return "ok";
+    }
+  }
+
+  public static class FlakyWorkflow extends Workflow {
+    private final FlakyActions actions = actions(FlakyActions.class);
+
+    @WorkflowMethod(returnType = String.class)
+    public CompletableFuture<String> run(String input) {
+      return CompletableFuture.completedFuture(actions.attempt(input));
+    }
   }
 
   public static class ShoutActions extends Actions {
