@@ -2,6 +2,9 @@ package com.airbnb.skipper.testutils
 
 import com.airbnb.skipper.Actions
 import com.airbnb.skipper.Execute
+import com.airbnb.skipper.FixedRetryStrategy
+import com.airbnb.skipper.RetryStrategy
+import com.airbnb.skipper.RetryableError
 import com.airbnb.skipper.SignalMethod
 import com.airbnb.skipper.SkipperConfig
 import com.airbnb.skipper.StateField
@@ -12,6 +15,7 @@ import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import javax.inject.Inject
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -20,6 +24,8 @@ class WorkflowTestTest : WorkflowTest() {
     /** A hand-rolled fake standing in for a mocking library; bound to the interface the action injects. */
     @Bind(to = Greeter::class)
     val greeter: RecordingGreeter = RecordingGreeter()
+
+    @Bind val carrier: FlakyCarrier = FlakyCarrier()
 
     var configured = false
 
@@ -68,6 +74,48 @@ class WorkflowTestTest : WorkflowTest() {
     }
 
     @Test
+    fun aRetriedActionCompletesOnceTheClockIsAdvanced() {
+        carrier.failuresRemaining = 2 // the action allows three retries
+
+        workflowBuilder<ShippingWorkflow>().build().ship("pkg-1")
+
+        // waitForWorkflowToComplete() would hang here: each retry is a timer on the frozen clock.
+        assertEquals(WorkflowInstanceStatusView.COMPLETED, helper.fastForwardUntilWorkflowCompletes().status)
+        assertEquals(3, carrier.calls)
+        assertEquals("TRK-pkg-1", workflow<ShippingWorkflow>().ship("pkg-1").get())
+    }
+
+    @Test
+    fun exhaustedRetriesEndInErrorOnceTheClockIsAdvanced() {
+        carrier.failuresRemaining = Int.MAX_VALUE
+
+        workflowBuilder<ShippingWorkflow>().build().ship("pkg-2")
+
+        val view = helper.fastForwardUntilWorkflowCompletes()
+        assertEquals(WorkflowInstanceStatusView.ERROR, view.status)
+        assertEquals(4, carrier.calls, "one attempt plus three retries")
+    }
+
+    @Test
+    fun fastForwardStopsAtTheRequestedStatus() {
+        val workflow = workflowBuilder<ApprovalWorkflow>().build()
+        helper.expectWaitSignal { workflow.approveOrDecline().get() }
+
+        // Reaches WAITING without stepping past the one-hour deadline.
+        assertEquals(WorkflowInstanceStatusView.WAITING, helper.fastForwardUntilWorkflowReachesStatus(WorkflowInstanceStatusView.WAITING).status)
+        workflow<ApprovalWorkflow>().decide(false)
+        helper.waitForWorkflowToComplete()
+        assertEquals("declined", workflow<ApprovalWorkflow>().approveOrDecline().get())
+    }
+
+    @Test
+    fun fastForwardNeedsTheClock() {
+        val bare = WorkflowTestHelper(runtime, workflowId)
+        val error = assertThrows(IllegalStateException::class.java) { bare.fastForwardUntilWorkflowCompletes() }
+        assertTrue(error.message!!.contains("MutableClock"))
+    }
+
+    @Test
     fun eachTestGetsItsOwnInstanceId() {
         assertTrue(workflowId.startsWith("wf-"))
         assertTrue(helper.currentViewOrNull() == null, "no workflow has been started yet")
@@ -98,6 +146,40 @@ class WorkflowTestTest : WorkflowTest() {
 
         @WorkflowMethod(returnType = String::class)
         fun greet(name: String): CompletableFuture<String> = CompletableFuture.completedFuture(actions.render(name))
+    }
+
+    /** Fails the next [failuresRemaining] calls with a transient error. */
+    class FlakyCarrier {
+        var failuresRemaining = 0
+        var calls = 0
+
+        fun createShipment(pkg: String): String {
+            calls++
+            if (failuresRemaining-- > 0) throw IllegalStateException("carrier returned 503")
+            return "TRK-$pkg"
+        }
+    }
+
+    class ShippingActions : Actions() {
+        @Inject lateinit var carrier: FlakyCarrier
+
+        // Referenced by name from @Execute: three retries, 200 ms apart, on the runtime's clock.
+        val carrierRetries: RetryStrategy = FixedRetryStrategy(Duration.ofMillis(200), 3)
+
+        @Execute(retryStrategy = "carrierRetries")
+        fun ship(pkg: String): String =
+            try {
+                carrier.createShipment(pkg)
+            } catch (e: IllegalStateException) {
+                throw RetryableError("carrier unavailable", e)
+            }
+    }
+
+    class ShippingWorkflow : Workflow() {
+        private val shipping = actions<ShippingActions>()
+
+        @WorkflowMethod(returnType = String::class)
+        fun ship(pkg: String): CompletableFuture<String> = CompletableFuture.completedFuture(shipping.ship(pkg))
     }
 
     class ApprovalWorkflow : Workflow() {

@@ -32,9 +32,10 @@ import org.junit.jupiter.api.BeforeEach
  *
  * Each test gets its own [SkipperRuntime] on the embedded **in-memory SQLite** store, so there is
  * no database to provision and no state shared between tests. Time is a [MutableClock] fixed at
- * the epoch: `waitUntil` deadlines and timers never fire on their own, only when the test calls
- * `clock.fastForward(...)`. Every workflow started through [workflowBuilder] or [workflow] uses
- * [workflowId], unique per test, and [helper] waits on that instance.
+ * the epoch: `waitUntil` deadlines, `sleep`s and retry delays never fire on their own, only when the
+ * test calls `clock.fastForward(...)` or uses `helper.fastForwardUntilWorkflowCompletes()`. Every
+ * workflow started through [workflowBuilder] or [workflow] uses [workflowId], unique per test, and
+ * [helper] waits on that instance.
  *
  * Collaborators your actions `@Inject` are supplied through fields annotated with [Bind].
  * Override [configure] to change anything else on the [SkipperConfig] before the runtime starts.
@@ -76,7 +77,7 @@ abstract class WorkflowTest {
         this.config = config
         runtime = SkipperRuntime(config)
         workflowFactory = runtime.workflowFactory.get()
-        helper = WorkflowTestHelper(runtime, workflowId)
+        helper = WorkflowTestHelper(runtime, workflowId, clock = clock)
         runtime.skipperSchedulerManager.get().start()
     }
 
