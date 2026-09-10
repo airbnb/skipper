@@ -5,7 +5,7 @@ import LangTabs from '../components/LangTabs.astro';
 import Logo from '../components/Logo.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-const GITHUB = 'https://github.com/'; // TODO: public repo URL (pending OSS branding)
+const GITHUB = 'https://github.com/airbnb/skipper';
 
 const heroKotlin = `class CheckoutWorkflow : Workflow() {
   private val payments = actions<PaymentActions>()
@@ -136,7 +136,7 @@ const flow = [
 
 const ctaCards = [
   { icon: 'book', title: 'Read the docs', body: 'Concepts, step-by-step guides, and the full API reference.', href: `${base}/docs/`, cta: 'Browse docs' },
-  { icon: 'rocket', title: 'Try the quickstart', body: 'Add the dependency and ship your first workflow.', href: `${base}/docs/#quickstart`, cta: 'Get started' },
+  { icon: 'rocket', title: 'Try the quickstart', body: 'Add the dependency and ship your first workflow.', href: `${base}/docs/quickstart/`, cta: 'Get started' },
   { icon: 'star', title: 'Star on GitHub', body: 'Follow development, file issues, and contribute.', href: GITHUB, cta: 'View source' },
 ];
 ---
@@ -160,7 +160,7 @@ const ctaCards = [
         </div>
         <p class="hero__note">
           No cluster to operate. No new database. Just a dependency:
-          <code>dev.skipper:skipper</code> — coordinates are illustrative until the first public release.
+          <code>com.airbnb.skipper:skipper-core</code>, on Maven Central.
         </p>
       </div>
 

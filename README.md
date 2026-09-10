@@ -10,6 +10,9 @@
 Skipper is a lightweight workflow engine. Write business processes as ordinary
 Kotlin or Java code, and let Skipper guarantee they run to completion.
 
+[**Documentation**](https://skipper.airbnb.tech/) · [Quickstart](https://skipper.airbnb.tech/docs/quickstart/) · [Examples](https://skipper.airbnb.tech/examples/) · [Releases](https://github.com/airbnb/skipper/releases)
+
+<a href="https://skipper.airbnb.tech/"><img src="https://img.shields.io/badge/docs-skipper.airbnb.tech-2a3990" alt="Documentation"></a>
 <a href="https://central.sonatype.com/artifact/com.airbnb.skipper/skipper-core"><img src="https://img.shields.io/maven-central/v/com.airbnb.skipper/skipper-core?color=2a3990&label=Maven%20Central" alt="Maven Central"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-2a3990" alt="License: Apache 2.0"></a>
 <img src="https://img.shields.io/badge/JVM-8%2B-2a3990" alt="JVM 8+">
@@ -90,7 +93,7 @@ factory(CheckoutWorkflow::class.java, "order-${order.id}").clearReview(true)
   has already checkpointed, so the code has to take the same path twice — clocks, randomness,
   and I/O belong in actions, not in the workflow.
 
-→ [Core Concepts](web/src/content/docs/core-concepts.md)
+→ [Core Concepts](https://skipper.airbnb.tech/docs/core-concepts/)
 
 ## Why Skipper
 
@@ -105,12 +108,12 @@ factory(CheckoutWorkflow::class.java, "order-${order.id}").clearReview(true)
 ## Getting started
 
 Skipper is on Maven Central as `com.airbnb.skipper:skipper-core`. The badge above shows the
-current version.
+latest release; the snippets below pin the current one.
 
 ```kotlin
 // build.gradle.kts
 dependencies {
-  implementation("com.airbnb.skipper:skipper-core:0.5.0")
+  implementation("com.airbnb.skipper:skipper-core:0.6.0")
 }
 ```
 
@@ -119,7 +122,7 @@ dependencies {
 
 ```groovy
 // build.gradle
-implementation 'com.airbnb.skipper:skipper-core:0.5.0'
+implementation 'com.airbnb.skipper:skipper-core:0.6.0'
 ```
 
 ```xml
@@ -127,7 +130,7 @@ implementation 'com.airbnb.skipper:skipper-core:0.5.0'
 <dependency>
   <groupId>com.airbnb.skipper</groupId>
   <artifactId>skipper-core</artifactId>
-  <version>0.5.0</version>
+  <version>0.6.0</version>
 </dependency>
 ```
 
@@ -159,22 +162,22 @@ val config = SkipperConfig.forService("my-service").apply {
 MySQL needs Skipper's schema to exist: apply the bundled Flyway migrations to that database once
 before the first run, since Skipper does not run them for you there. The SQLite backend bootstraps
 its own schema. A durable single-node SQLite file, or your own store implementation, is likewise a
-config change: see [Storage Backends](web/src/content/docs/storage.md).
+config change: see [Storage Backends](https://skipper.airbnb.tech/docs/storage/).
 
-**Read next:** [Quickstart](web/src/content/docs/quickstart.md) ·
-[Core Concepts](web/src/content/docs/core-concepts.md) ·
-[Your First Workflow](web/src/content/docs/first-workflow.md)
+**Read next:** [Quickstart](https://skipper.airbnb.tech/docs/quickstart/) ·
+[Core Concepts](https://skipper.airbnb.tech/docs/core-concepts/) ·
+[Your First Workflow](https://skipper.airbnb.tech/docs/first-workflow/)
 
 ## What comes with it
 
 | Capability | What it gives you |
 | ---------- | ----------------- |
-| [Retries and failure classification](web/src/content/docs/error-handling.md) | You classify what is transient; Skipper retries it on your policy |
-| [Signals and queries](web/src/content/docs/signals-and-queries.md)   | Feed a running workflow from the outside, or ask it where it is      |
-| [Compensation](web/src/content/docs/compensation.md)                 | Undo completed steps in reverse on failure — the saga pattern        |
-| [Versioning](web/src/content/docs/versioning.md)                     | Evolve workflow code while old instances are still in flight         |
-| [Admin UI and tracing](web/src/content/docs/observability.md)        | Inspect, replay, and manage live instances                          |
-| [Testing](web/src/content/docs/testing.md)                           | `skipper-testutils`: extend `WorkflowTest` and drive workflows deterministically in unit tests |
+| [Retries and failure classification](https://skipper.airbnb.tech/docs/error-handling/) | You classify what is transient; Skipper retries it on your policy |
+| [Signals and queries](https://skipper.airbnb.tech/docs/signals-and-queries/)   | Feed a running workflow from the outside, or ask it where it is      |
+| [Compensation](https://skipper.airbnb.tech/docs/compensation/)                 | Undo completed steps in reverse on failure — the saga pattern        |
+| [Versioning](https://skipper.airbnb.tech/docs/versioning/)                     | Evolve workflow code while old instances are still in flight         |
+| [Admin UI and tracing](https://skipper.airbnb.tech/docs/observability/)        | Inspect, replay, and manage live instances                          |
+| [Testing](https://skipper.airbnb.tech/docs/testing/)                           | `skipper-testutils`: extend `WorkflowTest` and drive workflows deterministically in unit tests |
 
 ## Is Skipper for you?
 
@@ -182,6 +185,14 @@ config change: see [Storage Backends](web/src/content/docs/storage.md).
 steps or long waits, and you would rather not operate a separate workflow cluster to get that.
 
 **Probably not** if the work does not need durable execution, or your service is not on the JVM.
+
+## Documentation
+
+The full documentation lives at **[skipper.airbnb.tech](https://skipper.airbnb.tech/)**: guides,
+the [API reference](https://skipper.airbnb.tech/docs/reference/annotations/), runnable
+[examples](https://skipper.airbnb.tech/examples/), and a
+[troubleshooting guide](https://skipper.airbnb.tech/docs/troubleshooting/). The source for the
+site is in [`web/`](web/).
 
 ## Contributing
 
