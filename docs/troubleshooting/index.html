@@ -24,6 +24,14 @@ collection as a field.</li>
 </ol>
 <p>As a last resort, if you’re certain a type is serializable, you can annotate it to bypass
 the checks — but be ready for serialization errors at runtime if it isn’t.</p>
+<h2 id="inaccessibleobjectexception-module-javabase-does-not-opens-javalang-when-an-action-fails"><code>InaccessibleObjectException: module java.base does not "opens java.lang"</code> when an action fails</h2>
+<p>On JDK 16 and newer, Skipper <strong>0.5.0 and earlier</strong> could not persist a failed action: the scheduler
+logged <code>failed to serialize object: com.airbnb.skipper.RetryableError</code> with that cause, retried the
+task every 30 seconds through its unexpected-error path instead of your retry strategy, and never
+reached compensation. This is fixed in 0.5.1, which persists errors without reflecting into
+<code>java.base</code>. If you are pinned to 0.5.0, start the JVM with</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>--add-opens java.base/java.lang=ALL-UNNAMED</span></span></code></pre>
+<p>for the service and for your test task.</p>
 <h2 id="a-workflow-behaves-unpredictably-across-resumes">A workflow behaves unpredictably across resumes</h2>
 <p>This is almost always a <strong>determinism</strong> violation. Make sure the workflow method does not
 read the clock, generate randomness, or perform I/O directly — move all of that into
