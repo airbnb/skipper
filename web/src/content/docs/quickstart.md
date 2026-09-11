@@ -17,7 +17,7 @@ version is on the
 ```kotlin
 // build.gradle.kts
 dependencies {
-  implementation("com.airbnb.skipper:skipper-core:0.6.0")
+  implementation("com.airbnb.skipper:skipper-core:0.6.3")
 }
 ```
 
@@ -26,7 +26,7 @@ dependencies {
 <dependency>
   <groupId>com.airbnb.skipper</groupId>
   <artifactId>skipper-core</artifactId>
-  <version>0.6.0</version>
+  <version>0.6.3</version>
 </dependency>
 ```
 
@@ -53,8 +53,22 @@ SkipperConfig config = SkipperConfig.forService("my-service");
 ```
 
 > The in-memory store is ideal for getting started, local development, and tests — but it is
-> **not durable**: its state is lost when the process exits. For production, point Skipper at a
-> persistent backend such as MySQL. See **[Storage Backends](/docs/storage/)**.
+> **not durable**: its state is lost when the process exits. To keep state across restarts on a
+> single node, give the store and the scheduler the same file path instead:
+>
+> ```kotlin
+> config.workflowStore = SqliteWorkflowStore.Factory("skipper.db")
+> config.scheduler = SqliteScheduler.Factory("skipper.db")
+> ```
+>
+> ```java
+> config.setWorkflowStore(new SqliteWorkflowStore.Factory("skipper.db"));
+> config.setScheduler(new SqliteScheduler.Factory("skipper.db"));
+> ```
+>
+> Both factories are in `com.airbnb.skipper.internal.storage.sqlite` and
+> `com.airbnb.skipper.internal.scheduler.sqlite`; the schema is created on first start. For
+> several replicas sharing one store, use MySQL. See **[Storage Backends](/docs/storage/)**.
 
 ## 3. Create the runtime and start the scheduler
 

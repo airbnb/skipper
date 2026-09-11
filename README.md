@@ -114,7 +114,7 @@ latest release; the snippets below pin the current one.
 ```kotlin
 // build.gradle.kts
 dependencies {
-  implementation("com.airbnb.skipper:skipper-core:0.6.0")
+  implementation("com.airbnb.skipper:skipper-core:0.6.3")
 }
 ```
 
@@ -123,7 +123,7 @@ dependencies {
 
 ```groovy
 // build.gradle
-implementation 'com.airbnb.skipper:skipper-core:0.6.0'
+implementation 'com.airbnb.skipper:skipper-core:0.6.3'
 ```
 
 ```xml
@@ -131,7 +131,7 @@ implementation 'com.airbnb.skipper:skipper-core:0.6.0'
 <dependency>
   <groupId>com.airbnb.skipper</groupId>
   <artifactId>skipper-core</artifactId>
-  <version>0.6.0</version>
+  <version>0.6.3</version>
 </dependency>
 ```
 
@@ -164,9 +164,18 @@ val config = SkipperConfig.forService("my-service").apply {
 ```
 
 MySQL needs Skipper's schema to exist: apply the bundled Flyway migrations to that database once
-before the first run, since Skipper does not run them for you there. The SQLite backend bootstraps
-its own schema. A durable single-node SQLite file, or your own store implementation, is likewise a
-config change: see [Storage Backends](https://skipper.airbnb.tech/docs/storage/).
+before the first run, since Skipper does not run them for you there. For a single node that only
+needs to survive restarts, a SQLite file is enough, and it bootstraps its own schema:
+
+```kotlin
+val config = SkipperConfig.forService("my-service").apply {
+  workflowStore = SqliteWorkflowStore.Factory("skipper.db")
+  scheduler = SqliteScheduler.Factory("skipper.db")
+}
+```
+
+Your own store implementation is likewise a config change: see
+[Storage Backends](https://skipper.airbnb.tech/docs/storage/).
 
 **Read next:** [Quickstart](https://skipper.airbnb.tech/docs/quickstart/) ·
 [Core Concepts](https://skipper.airbnb.tech/docs/core-concepts/) ·
