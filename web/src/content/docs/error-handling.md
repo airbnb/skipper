@@ -84,7 +84,8 @@ public class CustomExceptionClassifier extends DefaultExceptionClassifier {
 
 ### Registering it
 
-Set it **globally** for all actions on the config, before creating the runtime:
+Set it **globally** for all actions on the config, before creating the runtime. Both classifier
+types are in `com.airbnb.skipper.internal`, which is part of the public API here despite the name:
 
 ```kotlin
 config.exceptionClassifier = ComponentFactory { CustomExceptionClassifier() }

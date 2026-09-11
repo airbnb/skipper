@@ -54,6 +54,9 @@ SkipperConfig config = SkipperConfig.forService("my-service");
 
 ## 3. Create the runtime and start the scheduler
 
+`SkipperRuntime` is in `com.airbnb.skipper.factory`; the snippets on this site omit imports, so
+see [Where things live](/docs/reference/core-types/#where-things-live) when one does not resolve.
+
 `SkipperRuntime` wires up the engine from your config. Start its scheduler so workflows are
 driven forward, and keep the runtime around to obtain the workflow factory.
 

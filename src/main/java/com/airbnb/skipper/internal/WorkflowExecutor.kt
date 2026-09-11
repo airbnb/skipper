@@ -469,11 +469,23 @@ open class WorkflowExecutor
                     .newState(inspector.get().getState())
                     .build()
             }
-            log.warn(
-                "workflow execution threw exception. workflowId={}",
-                executionContext.workflow.workflowId,
-                e,
-            )
+            if (cause is SkipperError) {
+                // A classified failure (RetryableError / NonRetryableError) coming out of an action was
+                // already logged with its cause by ActionErrorMapper; repeating the trace here is noise.
+                log.warn(
+                    "workflow execution failed with {}: {}. workflowId={}",
+                    cause.javaClass.simpleName,
+                    cause.message,
+                    executionContext.workflow.workflowId,
+                )
+                log.debug("stack trace of the failed workflow execution", e)
+            } else {
+                log.warn(
+                    "workflow execution threw exception. workflowId={}",
+                    executionContext.workflow.workflowId,
+                    e,
+                )
+            }
             if (cause is RetryableError) {
                 val retryableError = cause
                 metrics

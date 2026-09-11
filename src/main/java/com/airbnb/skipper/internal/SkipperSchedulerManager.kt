@@ -321,7 +321,7 @@ class SkipperSchedulerManager
                     "clusterMemberEndRange",
                 )
             } else {
-                log.warn("Cluster membership not registered; skipping partition range metrics")
+                log.debug("Cluster membership not registered; skipping partition range metrics")
             }
         }
 

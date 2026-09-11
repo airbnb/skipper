@@ -271,6 +271,11 @@ Use `to` when the field's type is the concrete fake but the action injects an in
 `qualifier` to match a `@Named` injection point. Types without a binding are created through
 their no-arg constructor, as in production.
 
+The bindings are captured when the base class sets up the runtime, before your test method runs.
+Configure a scenario by mutating the fake in place (`carrier.failuresRemaining = 2`), not by
+assigning a new object to the field: a reassignment inside the test body compiles, runs, and is
+never seen by the actions.
+
 ## Without the base class
 
 `WorkflowTest` is a convenience over public API. If it does not fit (a different test framework,

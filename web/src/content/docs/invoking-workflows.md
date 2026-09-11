@@ -241,7 +241,8 @@ Without `.detached()`, whether the call returns early depends on the return type
 you nothing, because the invocation itself is the join point. Dropping a future still works, but
 it attaches the result chain whether or not anyone holds it — so under `.runAsync()` every such
 call polls storage for up to `resultPollingTimeLimit` (30 seconds by default) on a Skipper thread
-before giving up with a `TimeoutException`. `.detached()` skips that entirely, including for Java
+before giving up with a `TimeoutException`; the poll ends early, with the same exception, if the
+scheduler is stopped in the meantime, so an ignored future does not hold up shutdown. `.detached()` skips that entirely, including for Java
 callers — whose future deliberately fails with `ResultUnavailable` if awaited, rather than
 completing immediately and falsely signalling that the workflow had finished.
 
