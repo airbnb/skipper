@@ -224,6 +224,27 @@ declared type, so a fake or a mock declared on the test reaches the action:</p>
 <p>Use <code>to</code> when the field’s type is the concrete fake but the action injects an interface, and
 <code>qualifier</code> to match a <code>@Named</code> injection point. Types without a binding are created through
 their no-arg constructor, as in production.</p>
+<p>The bindings are captured when the base class sets up the runtime, before your test method runs.
+Configure a scenario by mutating the fake in place, not by assigning a new object to the field: a
+reassignment inside the test body compiles, runs, and is never seen by the actions.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">@Bind</span><span style="color:#E1E4E8">(to </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> Carrier::</span><span style="color:#B392F0">class</span><span style="color:#E1E4E8">) </span><span style="color:#F97583">var</span><span style="color:#E1E4E8"> carrier </span><span style="color:#F97583">=</span><span style="color:#B392F0"> FakeCarrier</span><span style="color:#E1E4E8">()</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#B392F0">@Test</span></span>
+<span class="line"><span style="color:#F97583">fun</span><span style="color:#B392F0"> carrierOutageIsRetried</span><span style="color:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#E1E4E8">  carrier.failuresRemaining </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 2</span><span style="color:#6A737D">                  // seen by the action: same object the runtime holds</span></span>
+<span class="line"><span style="color:#6A737D">  // carrier = FakeCarrier(failuresRemaining = 2) // not seen: the runtime keeps the original fake</span></span>
+<span class="line"><span style="color:#B392F0">  workflowBuilder</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">ShippingWorkflow</span><span style="color:#E1E4E8">>().</span><span style="color:#B392F0">build</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">ship</span><span style="color:#E1E4E8">(order)</span></span>
+<span class="line"><span style="color:#6A737D">  // ...</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#E1E4E8">@</span><span style="color:#F97583">Bind</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">to</span><span style="color:#F97583"> =</span><span style="color:#E1E4E8"> Carrier.class) FakeCarrier carrier </span><span style="color:#F97583">=</span><span style="color:#F97583"> new</span><span style="color:#B392F0"> FakeCarrier</span><span style="color:#E1E4E8">();</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#E1E4E8">@</span><span style="color:#F97583">Test</span></span>
+<span class="line"><span style="color:#F97583">public</span><span style="color:#F97583"> void</span><span style="color:#B392F0"> carrierOutageIsRetried</span><span style="color:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#E1E4E8">  carrier.failuresRemaining </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 2</span><span style="color:#E1E4E8">;                 </span><span style="color:#6A737D">// seen by the action: same object the runtime holds</span></span>
+<span class="line"><span style="color:#6A737D">  // carrier = new FakeCarrier(2);                // not seen: the runtime keeps the original fake</span></span>
+<span class="line"><span style="color:#B392F0">  workflowBuilder</span><span style="color:#E1E4E8">(ShippingWorkflow.class).</span><span style="color:#B392F0">build</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">ship</span><span style="color:#E1E4E8">(order);</span></span>
+<span class="line"><span style="color:#6A737D">  // ...</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
 <h2 id="without-the-base-class">Without the base class</h2>
 <p><code>WorkflowTest</code> is a convenience over public API. If it does not fit (a different test framework,
 one shared runtime for a whole suite), build a <code>SkipperRuntime</code> yourself: <code>SkipperConfig.forService(name)</code>

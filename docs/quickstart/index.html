@@ -22,8 +22,12 @@ subclass your workflow and action classes (see <strong><a href="/docs/kotlin-cor
 name. By default Skipper persists to an <strong>embedded, in-memory SQLite</strong> store — so there is
 nothing else to set up to start experimenting: no database to provision and no schema to
 create.</p>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> config </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> SkipperConfig.</span><span style="color:#B392F0">forService</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"my-service"</span><span style="color:#E1E4E8">)</span></span></code></pre>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#E1E4E8">SkipperConfig config </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> SkipperConfig.</span><span style="color:#B392F0">forService</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"my-service"</span><span style="color:#E1E4E8">);</span></span></code></pre>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#B392F0"> com.airbnb.skipper.SkipperConfig</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> config </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> SkipperConfig.</span><span style="color:#B392F0">forService</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"my-service"</span><span style="color:#E1E4E8">)</span></span></code></pre>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> com.airbnb.skipper.SkipperConfig;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#E1E4E8">SkipperConfig config </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> SkipperConfig.</span><span style="color:#B392F0">forService</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"my-service"</span><span style="color:#E1E4E8">);</span></span></code></pre>
 <blockquote>
 <p>The in-memory store is ideal for getting started, local development, and tests — but it is
 <strong>not durable</strong>: its state is lost when the process exits. For production, point Skipper at a
@@ -32,7 +36,10 @@ persistent backend such as MySQL. See <strong><a href="/docs/storage/">Storage B
 <h2 id="3-create-the-runtime-and-start-the-scheduler">3. Create the runtime and start the scheduler</h2>
 <p><code>SkipperRuntime</code> wires up the engine from your config. Start its scheduler so workflows are
 driven forward, and keep the runtime around to obtain the workflow factory.</p>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> runtime </span><span style="color:#F97583">=</span><span style="color:#B392F0"> SkipperRuntime</span><span style="color:#E1E4E8">(config)</span></span>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#B392F0"> com.airbnb.skipper.admin.AdminResource</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#B392F0"> com.airbnb.skipper.factory.SkipperRuntime</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> runtime </span><span style="color:#F97583">=</span><span style="color:#B392F0"> SkipperRuntime</span><span style="color:#E1E4E8">(config)</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#6A737D">// Start the scheduler (stop it on shutdown).</span></span>
 <span class="line"><span style="color:#E1E4E8">runtime.skipperSchedulerManager.</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">start</span><span style="color:#E1E4E8">()</span></span>
@@ -40,7 +47,10 @@ driven forward, and keep the runtime around to obtain the workflow factory.</p>
 <span class="line"><span style="color:#6A737D">// Optional: expose the admin UI by registering this JAX-RS resource with your HTTP layer.</span></span>
 <span class="line"><span style="color:#6A737D">// See Observability &#x26; Admin UI for details.</span></span>
 <span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> admin </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> runtime.adminResource.</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">()</span></span></code></pre>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#E1E4E8">SkipperRuntime runtime </span><span style="color:#F97583">=</span><span style="color:#F97583"> new</span><span style="color:#B392F0"> SkipperRuntime</span><span style="color:#E1E4E8">(config);</span></span>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> com.airbnb.skipper.admin.AdminResource;</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> com.airbnb.skipper.factory.SkipperRuntime;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#E1E4E8">SkipperRuntime runtime </span><span style="color:#F97583">=</span><span style="color:#F97583"> new</span><span style="color:#B392F0"> SkipperRuntime</span><span style="color:#E1E4E8">(config);</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#6A737D">// Start the scheduler (stop it on shutdown).</span></span>
 <span class="line"><span style="color:#E1E4E8">runtime.</span><span style="color:#B392F0">getSkipperSchedulerManager</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">start</span><span style="color:#E1E4E8">();</span></span>
@@ -51,7 +61,12 @@ driven forward, and keep the runtime around to obtain the workflow factory.</p>
 <h2 id="4-write-a-workflow">4. Write a workflow</h2>
 <p>A workflow is a class with at least one <code>@WorkflowMethod</code>. An action is a method on an
 <code>Actions</code> class, annotated with <code>@Execute</code>, where you perform I/O and side effects.</p>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">class</span><span style="color:#B392F0"> GreetingWorkflow</span><span style="color:#E1E4E8"> : </span><span style="color:#B392F0">Workflow</span><span style="color:#E1E4E8">() {</span></span>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#B392F0"> com.airbnb.skipper.Actions</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#B392F0"> com.airbnb.skipper.Execute</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#B392F0"> com.airbnb.skipper.Workflow</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#B392F0"> com.airbnb.skipper.WorkflowMethod</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">class</span><span style="color:#B392F0"> GreetingWorkflow</span><span style="color:#E1E4E8"> : </span><span style="color:#B392F0">Workflow</span><span style="color:#E1E4E8">() {</span></span>
 <span class="line"><span style="color:#F97583">  private</span><span style="color:#F97583"> val</span><span style="color:#E1E4E8"> actions </span><span style="color:#F97583">=</span><span style="color:#B392F0"> actions</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">GreetingActions</span><span style="color:#E1E4E8">>()</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#B392F0">  @WorkflowMethod</span></span>
@@ -62,7 +77,13 @@ driven forward, and keep the runtime around to obtain the workflow factory.</p>
 <span class="line"><span style="color:#B392F0">  @Execute</span></span>
 <span class="line"><span style="color:#F97583">  suspend</span><span style="color:#F97583"> fun</span><span style="color:#B392F0"> render</span><span style="color:#E1E4E8">(name: </span><span style="color:#B392F0">String</span><span style="color:#E1E4E8">): </span><span style="color:#B392F0">String</span><span style="color:#F97583"> =</span><span style="color:#9ECBFF"> "Hello, </span><span style="color:#79B8FF">$name</span><span style="color:#9ECBFF">!"</span></span>
 <span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#F97583">public</span><span style="color:#F97583"> class</span><span style="color:#B392F0"> GreetingWorkflow</span><span style="color:#F97583"> extends</span><span style="color:#B392F0"> Workflow</span><span style="color:#E1E4E8"> {</span></span>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> com.airbnb.skipper.Actions;</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> com.airbnb.skipper.Execute;</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> com.airbnb.skipper.Workflow;</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> com.airbnb.skipper.WorkflowMethod;</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> java.util.concurrent.CompletableFuture;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">public</span><span style="color:#F97583"> class</span><span style="color:#B392F0"> GreetingWorkflow</span><span style="color:#F97583"> extends</span><span style="color:#B392F0"> Workflow</span><span style="color:#E1E4E8"> {</span></span>
 <span class="line"><span style="color:#F97583">  private</span><span style="color:#F97583"> final</span><span style="color:#E1E4E8"> GreetingActions actions </span><span style="color:#F97583">=</span><span style="color:#B392F0"> actions</span><span style="color:#E1E4E8">(GreetingActions.class);</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#E1E4E8">  @</span><span style="color:#F97583">WorkflowMethod</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">returnType</span><span style="color:#F97583"> =</span><span style="color:#E1E4E8"> String.class)</span></span>
@@ -79,11 +100,15 @@ driven forward, and keep the runtime around to obtain the workflow factory.</p>
 <span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
 <h2 id="5-invoke-it">5. Invoke it</h2>
 <p>Get the workflow factory from the runtime and start an instance with a unique id.</p>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> factory: </span><span style="color:#B392F0">IWorkflowFactory</span><span style="color:#F97583"> =</span><span style="color:#E1E4E8"> runtime.workflowFactory.</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">()</span></span>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#B392F0"> com.airbnb.skipper.IWorkflowFactory</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> factory: </span><span style="color:#B392F0">IWorkflowFactory</span><span style="color:#F97583"> =</span><span style="color:#E1E4E8"> runtime.workflowFactory.</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">()</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> workflow </span><span style="color:#F97583">=</span><span style="color:#B392F0"> factory</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">GreetingWorkflow</span><span style="color:#E1E4E8">>(</span><span style="color:#9ECBFF">"greeting-42"</span><span style="color:#E1E4E8">)</span></span>
 <span class="line"><span style="color:#F97583">val</span><span style="color:#E1E4E8"> result </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> workflow.</span><span style="color:#B392F0">greet</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"world"</span><span style="color:#E1E4E8">) </span><span style="color:#6A737D">// suspends until the workflow completes</span></span></code></pre>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#E1E4E8">IWorkflowFactory factory </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> runtime.</span><span style="color:#B392F0">getWorkflowFactory</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">();</span></span>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> com.airbnb.skipper.IWorkflowFactory;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#E1E4E8">IWorkflowFactory factory </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> runtime.</span><span style="color:#B392F0">getWorkflowFactory</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">();</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#E1E4E8">GreetingWorkflow workflow </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> factory.</span><span style="color:#B392F0">invoke</span><span style="color:#E1E4E8">(GreetingWorkflow.class, </span><span style="color:#9ECBFF">"greeting-42"</span><span style="color:#E1E4E8">);</span></span>
 <span class="line"><span style="color:#E1E4E8">String result </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> workflow.</span><span style="color:#B392F0">greet</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"world"</span><span style="color:#E1E4E8">).</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">(); </span><span style="color:#6A737D">// blocks until the workflow completes</span></span></code></pre>
