@@ -16,7 +16,7 @@ See [Quickstart](/docs/quickstart/) and [Storage Backends](/docs/storage/).
 | `sqliteDataSource` | Optional JDBC `DataSource` for the SQLite backend; `null` means an ephemeral in-memory database. |
 | `mySqlDataSource` | JDBC `DataSource` for the MySQL adapter. |
 | `gracefulShutdownTimeout` | How long `stop()` waits for in-flight tasks before forcing shutdown (default 30 s). |
-| `featureGate` | `FeatureGate` factory. The default enables every key; see the `FeatureGate.Keys` KDoc for what each gates. |
+| `featureGate` | `FeatureGate` factory. The default enables every key except the `DISABLE_*` kill switches; see the `FeatureGate.Keys` KDoc for what each gates. |
 | `injector` | `SkipperInjector` used to instantiate your workflow, action, and callback classes; `SimpleInjector.builder()` lets you bind the collaborators actions need. |
 | `defaultRetryStrategy` | Default retry strategy for actions that don't specify one. |
 | `defaultCheckpointMode` | When action checkpoints are flushed (eventual vs immediate). |

@@ -53,6 +53,9 @@ mysqlConnectorJava = "5.1.48"
 # switched to jakarta.ws.rs). Test deps: mockk (admin resource test), logback (admin log capture).
 zstdJni = "1.4.9-5"
 dropwizard = "2.1.12"
+# Jersey 2.x is the javax.ws.rs line; only jersey-common is used, as the JAX-RS RuntimeDelegate the
+# admin resource tests need to build a Response outside a host server.
+jersey = "2.35"
 mockk = "1.13.3"
 logback = "1.3.7"
 
@@ -100,6 +103,7 @@ mysql-connector-java = { module = "mysql:mysql-connector-java", version.ref = "m
 jackson-dataformat-smile = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-smile", version.ref = "jackson" }
 kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref = "kotlin" }
 zstd-jni = { module = "com.github.luben:zstd-jni", version.ref = "zstdJni" }
+jersey-common = { module = "org.glassfish.jersey.core:jersey-common", version.ref = "jersey" }
 dropwizard-views = { module = "io.dropwizard:dropwizard-views", version.ref = "dropwizard" }
 dropwizard-views-freemarker = { module = "io.dropwizard:dropwizard-views-freemarker", version.ref = "dropwizard" }
 mockk-jvm = { module = "io.mockk:mockk-jvm", version.ref = "mockk" }
