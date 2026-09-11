@@ -104,7 +104,7 @@ executors:
     working_directory: ~/skipper
 
 jobs:
-  jvm-build:
+  jvm-build-jackson:
     executor: jvm
     parameters:
       jackson_version:
@@ -213,10 +213,12 @@ jobs:
           destination: libs-state-machine
 
   # Fan-in for the build workflow. The main branch ruleset requires the status context
-  # `ci/circleci: jvm-build`, which is the name this job had before the suite was run once per
+  # `ci/circleci: jvm-build`, which is the name the suite job had before it was run once per
   # Jackson version. Reporting that name from a job that requires every matrix entry keeps the
-  # whole matrix (and formatting) merge-gating without touching the repository rules.
-  jvm-build-gate:
+  # whole matrix (and formatting) merge-gating without touching the repository rules. It owns
+  # the `jvm-build` key outright: a workflow-level `name:` that collides with another job's key
+  # gets suffixed by CircleCI (`jvm-build-1`), which the ruleset would not match.
+  jvm-build:
     docker:
       - image: cimg/base:stable
     resource_class: small
@@ -416,19 +418,18 @@ workflows:
   build:
     jobs:
       # The default build, on the Jackson Skipper compiles against. Named explicitly because the
-      # matrix below is the same job, and a bare `jvm-build` in a `requires` would be ambiguous.
-      - jvm-build:
+      # matrix below is the same job, and a bare job key in a `requires` would be ambiguous.
+      - jvm-build-jackson:
           name: jvm-build-jackson-2.9.10
       # Same job, once per Jackson line a host is likely to run. Add a version to the list to
-      # cover it (and to the jvm-build gate's and tag-release's requires); keep the newest 2.x last and bump it as Jackson releases.
-      - jvm-build:
+      # cover it (and to the jvm-build gate's requires); keep the newest 2.x last and bump it as Jackson releases.
+      - jvm-build-jackson:
           name: jvm-build-jackson-<< matrix.jackson_version >>
           matrix:
             parameters:
               jackson_version: ["2.13.5", "2.17.3", "2.22.2"]
       - format-check
-      - jvm-build-gate:
-          name: jvm-build
+      - jvm-build:
           requires:
             - jvm-build-jackson-2.9.10
             - jvm-build-jackson-2.13.5
@@ -445,14 +446,8 @@ workflows:
             branches:
               only: main
       - tag-release:
-          # Listed explicitly rather than via the jvm-build gate: `jvm-build` is also the key of the
-          # matrix entries above, and CircleCI rejects a `requires` that names both.
           requires:
-            - jvm-build-jackson-2.9.10
-            - jvm-build-jackson-2.13.5
-            - jvm-build-jackson-2.17.3
-            - jvm-build-jackson-2.22.2
-            - format-check
+            - jvm-build
           # main only: the tag is the release record, so it is only ever cut from a merged,
           # tested main. The tag push then starts the `release` workflow below.
           filters:
@@ -466,7 +461,9 @@ workflows:
   # unaffected by tag pushes.
   release:
     jobs:
-      - jvm-build:
+      # The suite on the Jackson Skipper compiles against; the release does not repeat the matrix.
+      - jvm-build-jackson:
+          name: jvm-build-jackson-2.9.10
           filters: &release-tags
             tags:
               only: /^v\d+\.\d+\.\d+$/
@@ -474,7 +471,7 @@ workflows:
               ignore: /.*/
       - publish-release:
           requires:
-            - jvm-build
+            - jvm-build-jackson-2.9.10
           context:
             - skipper-publish
           filters: *release-tags
