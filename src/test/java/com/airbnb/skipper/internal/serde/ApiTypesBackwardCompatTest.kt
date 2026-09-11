@@ -9,6 +9,7 @@ import java.time.Duration
 import java.time.Instant
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIf
 
 /**
  * Backward-compatibility guard for the Java&rarr;Kotlin source rename of the skipper API value
@@ -71,6 +72,10 @@ class ApiTypesBackwardCompatTest {
      */
     @Test
     @Throws(Exception::class)
+    // Jackson 2.9's Kotlin module also emitted the redundant `transient` and `resultIsAsync` keys for the
+    // `isTransient` / `isResultIsAsync` properties; newer releases do not. ActionCheckpoint is never
+    // persisted whole (stores write its fields), so only the 2.9 bytes are pinned.
+    @EnabledIf("com.airbnb.skipper.internal.serde.JacksonVersions#isCompiledAgainstVersion")
     fun actionCheckpoint_backwardCompat_serializesSuccessResult() {
         val tag =
             CheckpointTag.builder()

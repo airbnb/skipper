@@ -248,7 +248,16 @@ class SimplePojoSerde(
          * mapper built via [buildObjectMapper] through `SkipperConfig.simplePojoSerde`.
          */
         @JvmStatic
-        fun buildDefaultObjectMapper(): ObjectMapper = buildObjectMapper(KotlinModule())
+        fun buildDefaultObjectMapper(): ObjectMapper = buildObjectMapper(defaultKotlinModule())
+
+        /**
+         * `jackson-module-kotlin`'s module with default settings, constructed through its public no-arg
+         * constructor. Kotlin compiles a plain `KotlinModule()` call against the synthetic
+         * default-arguments constructor, whose signature changes between Jackson releases; the no-arg
+         * constructor is stable from 2.9 onward, so this links on whatever Jackson the host runs.
+         */
+        @JvmStatic
+        fun defaultKotlinModule(): Module = KotlinModule::class.java.getConstructor().newInstance()
 
         // Falls back from com.airbnb.tempo.* to com.airbnb.skipper.* on ClassNotFoundException,
         // enabling deserialization of data serialized before the tempo→skipper rename.

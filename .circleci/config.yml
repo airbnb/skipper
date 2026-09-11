@@ -4,7 +4,10 @@
 #
 #   jvm-build     Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
 #                 skipper-state-machine plugin module, and runs both test subsets. A bare
-#                 `gradlew build` from the root covers every project in the build.
+#                 `gradlew build` from the root covers every project in the build. Also runs
+#                 as a matrix, jvm-build-jackson-<version>, with each listed Jackson forced
+#                 onto the runtime classpath (-PjacksonVersion): Skipper compiles against
+#                 Jackson 2.9.10 and must still run on whatever a host service ships.
 #
 #   format-check  Fails when any Kotlin or Java source is not formatted: `gradlew spotlessCheck`
 #                 (ktlint for Kotlin, google-java-format for Java; see build.gradle.kts).
@@ -103,6 +106,14 @@ executors:
 jobs:
   jvm-build:
     executor: jvm
+    parameters:
+      jackson_version:
+        # Empty runs the suite on the Jackson Skipper compiles against (2.9.10, the version
+        # catalog). Anything else is forced onto the runtime classpaths only, via
+        # -PjacksonVersion in build.gradle.kts, so the same bytecode is tested on the Jackson a
+        # host service may already ship. The workflow below runs one job per listed version.
+        type: string
+        default: ""
     steps:
       - checkout
 
@@ -138,7 +149,12 @@ jobs:
       - run:
           name: Build and test
           # spotlessCheck is excluded here because format-check runs it as its own job.
-          command: ./gradlew --stacktrace build -x spotlessCheck
+          command: |
+            ARGS=""
+            if [ -n "<< parameters.jackson_version >>" ]; then
+              ARGS="-PjacksonVersion=<< parameters.jackson_version >>"
+            fi
+            ./gradlew --stacktrace build -x spotlessCheck $ARGS
 
       - run:
           name: Validate the publication metadata
@@ -386,7 +402,17 @@ jobs:
 workflows:
   build:
     jobs:
-      - jvm-build
+      # The default build, on the Jackson Skipper compiles against. Named explicitly because the
+      # matrix below is the same job, and a bare `jvm-build` in a `requires` would be ambiguous.
+      - jvm-build:
+          name: jvm-build-jackson-2.9.10
+      # Same job, once per Jackson line a host is likely to run. Add a version to the list to
+      # cover it (and to tag-release's requires); keep the newest 2.x last and bump it as Jackson releases.
+      - jvm-build:
+          name: jvm-build-jackson-<< matrix.jackson_version >>
+          matrix:
+            parameters:
+              jackson_version: ["2.13.5", "2.17.3", "2.22.2"]
       - format-check
       - web-build
       - web-publish:
@@ -399,7 +425,10 @@ workflows:
               only: main
       - tag-release:
           requires:
-            - jvm-build
+            - jvm-build-jackson-2.9.10
+            - jvm-build-jackson-2.13.5
+            - jvm-build-jackson-2.17.3
+            - jvm-build-jackson-2.22.2
             - format-check
           # main only: the tag is the release record, so it is only ever cut from a merged,
           # tested main. The tag push then starts the `release` workflow below.

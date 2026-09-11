@@ -86,6 +86,24 @@ sourceSets.named("test").configure {
 
 // Third-party dependencies for the main source subset. Versions come from the
 // version catalog (gradle/libs.versions.toml).
+// Skipper compiles against the Jackson in the version catalog (2.9.10, shared with Airbnb's internal
+// build) but must run on whatever Jackson a host service already has. `-PjacksonVersion=2.22.2` forces
+// that version onto the runtime classpaths only, so the suite proves compile-low/run-high compatibility;
+// CI runs it at the newest 2.x. Compile classpaths are untouched so the bytecode never changes.
+providers.gradleProperty("jacksonVersion").orNull?.let { jackson ->
+  configurations.matching { it.name.endsWith("RuntimeClasspath") }.configureEach {
+    resolutionStrategy.eachDependency {
+      if (requested.group.startsWith("com.fasterxml.jackson")) {
+        // jackson-annotations dropped the patch digit from 2.20 on (2.20, 2.21, 2.22).
+        val minor = jackson.split(".").getOrNull(1)?.toIntOrNull() ?: 0
+        val v = if (requested.name == "jackson-annotations" && minor >= 20) jackson.substringBeforeLast(".") else jackson
+        useVersion(v)
+        because("running the suite on a newer Jackson than Skipper compiles against")
+      }
+    }
+  }
+}
+
 dependencies {
     api(libs.vavr)
     api(libs.vavr.match)
