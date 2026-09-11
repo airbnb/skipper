@@ -212,6 +212,19 @@ jobs:
           path: testutils/build/libs
           destination: libs-state-machine
 
+  # Fan-in for the build workflow. The main branch ruleset requires the status context
+  # `ci/circleci: jvm-build`, which is the name this job had before the suite was run once per
+  # Jackson version. Reporting that name from a job that requires every matrix entry keeps the
+  # whole matrix (and formatting) merge-gating without touching the repository rules.
+  jvm-build-gate:
+    docker:
+      - image: cimg/base:stable
+    resource_class: small
+    steps:
+      - run:
+          name: All gating jobs passed
+          command: echo "jvm-build matrix and format-check passed"
+
   format-check:
     # Reuses the JDK 17 image: Spotless and both formatters are JVM tools, and
     # google-java-format 1.26 needs a JDK 17 or newer. Nothing here compiles anything.
@@ -407,13 +420,21 @@ workflows:
       - jvm-build:
           name: jvm-build-jackson-2.9.10
       # Same job, once per Jackson line a host is likely to run. Add a version to the list to
-      # cover it (and to tag-release's requires); keep the newest 2.x last and bump it as Jackson releases.
+      # cover it (and to the jvm-build gate's requires); keep the newest 2.x last and bump it as Jackson releases.
       - jvm-build:
           name: jvm-build-jackson-<< matrix.jackson_version >>
           matrix:
             parameters:
               jackson_version: ["2.13.5", "2.17.3", "2.22.2"]
       - format-check
+      - jvm-build-gate:
+          name: jvm-build
+          requires:
+            - jvm-build-jackson-2.9.10
+            - jvm-build-jackson-2.13.5
+            - jvm-build-jackson-2.17.3
+            - jvm-build-jackson-2.22.2
+            - format-check
       - web-build
       - web-publish:
           requires:
@@ -425,11 +446,7 @@ workflows:
               only: main
       - tag-release:
           requires:
-            - jvm-build-jackson-2.9.10
-            - jvm-build-jackson-2.13.5
-            - jvm-build-jackson-2.17.3
-            - jvm-build-jackson-2.22.2
-            - format-check
+            - jvm-build
           # main only: the tag is the release record, so it is only ever cut from a merged,
           # tested main. The tag push then starts the `release` workflow below.
           filters:
