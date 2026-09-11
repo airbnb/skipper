@@ -16,7 +16,7 @@ workflow is stuck waiting.
   automatically. Otherwise call `runtime.skipperSchedulerManager.get().start()` on your
   `SkipperRuntime` before invoking workflows.
 - Scroll up in the test logs for exceptions thrown during execution.
-- Call `printEvents()` (provided by the test base) to print the workflow's event history —
+- Call `printHistory()` (provided by the test base) to print the workflow's status, state and checkpoints —
   far easier to read than raw logs for understanding where it got stuck.
 
 ## "Unable to find a suitable serializer for X"

@@ -364,7 +364,7 @@ class WorkflowExecutionTaskHandler
                     log.warn(
                         "workflow instance with id={} has failed with error={}",
                         workflowInstance.workflowId,
-                        result.result!!.left,
+                        result.result!!.left.message,
                     )
                     notifyNonRetryableError(wf, result.result!!.left, view)
                 }
