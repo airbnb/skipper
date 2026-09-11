@@ -5,12 +5,18 @@ plugins {
   id("org.springframework.boot") version "4.1.1"
 }
 
+// Pinned to a Skipper release by default. Pass -PskipperVersion=<v> (or set ORG_GRADLE_PROJECT_skipperVersion)
+// to build against a version you published to ~/.m2 with `./gradlew publishToMavenLocal -PVERSION_NAME=<v>` from a
+// Skipper checkout; Skipper's own CI does exactly that so the examples exercise the code under review.
+val skipperVersion = (findProperty("skipperVersion") as String?) ?: "0.6.3"
+
 repositories {
+  if (findProperty("skipperVersion") != null) {
+    mavenLocal()
+  }
   mavenCentral()
 }
 
-// One place to bump when a new Skipper release lands. Every example pins the same version.
-val skipperVersion = "0.6.3"
 
 dependencies {
   // Spring Boot's BOM manages every Spring, Flyway, MySQL driver and Testcontainers version below. It also
@@ -39,6 +45,14 @@ java {
   toolchain {
     languageVersion.set(JavaLanguageVersion.of(17))
   }
+}
+
+// One predictable artifact for the Dockerfile to copy: build/libs/app.jar, and no -plain.jar next to it.
+tasks.jar {
+  enabled = false
+}
+tasks.bootJar {
+  archiveFileName.set("app.jar")
 }
 
 tasks.withType<Test> {

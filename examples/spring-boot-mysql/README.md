@@ -5,10 +5,13 @@ injector, Flyway (Spring-managed) applies Skipper's schema, the scheduler follow
 lifecycle, and Testcontainers runs the whole stack in the test suite. Docker is required.
 
 ```bash
-./gradlew build                 # boots MySQL in Docker and drives three orders over HTTP
-docker compose up --build       # the service on :8080 and its MySQL, production-shaped
-docker compose up mysql         # MySQL only; then ./gradlew bootRun on the host
+./gradlew build                            # boots MySQL in Docker and drives three orders over HTTP
+./gradlew bootJar && docker compose up --build   # the service on :8080 and its MySQL, production-shaped
+docker compose up mysql                    # MySQL only; then ./gradlew bootRun on the host
 ```
+
+The Dockerfile copies the jar the host built rather than building inside the image, so the
+container runs exactly what `./gradlew build` tested, including any `-PskipperVersion` override.
 
 ```bash
 curl -X POST localhost:8080/orders -H 'Content-Type: application/json' \

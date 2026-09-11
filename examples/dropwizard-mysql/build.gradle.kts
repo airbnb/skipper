@@ -3,12 +3,18 @@ plugins {
   application
 }
 
+// Pinned to a Skipper release by default. Pass -PskipperVersion=<v> (or set ORG_GRADLE_PROJECT_skipperVersion)
+// to build against a version you published to ~/.m2 with `./gradlew publishToMavenLocal -PVERSION_NAME=<v>` from a
+// Skipper checkout; Skipper's own CI does exactly that so the examples exercise the code under review.
+val skipperVersion = (findProperty("skipperVersion") as String?) ?: "0.6.3"
+
 repositories {
+  if (findProperty("skipperVersion") != null) {
+    mavenLocal()
+  }
   mavenCentral()
 }
 
-// One place to bump when a new Skipper release lands. Every example pins the same version.
-val skipperVersion = "0.6.3"
 // Dropwizard 3.x is the last line on the javax.ws.rs namespace, which is what Skipper's AdminResource is written
 // against. Dropwizard 4 and 5 moved to jakarta.ws.rs and would not see the resource's annotations.
 val dropwizardVersion = "3.0.17"
@@ -32,7 +38,9 @@ dependencies {
 
   testImplementation("com.airbnb.skipper:skipper-testutils:$skipperVersion")
   testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
-  testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+  // Versioned explicitly: with mavenLocal() in play Gradle may skip the module metadata that would otherwise
+  // align this with junit-jupiter.
+  testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
 }
 
 java {

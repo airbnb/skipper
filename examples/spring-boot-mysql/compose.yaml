@@ -1,7 +1,7 @@
 # Production-shaped local run: the service and its MySQL, on one network, one command.
 #
-#   docker compose up --build        # both; the app is on http://localhost:8080
-#   docker compose up mysql          # MySQL only, then `./gradlew bootRun` on the host
+#   ./gradlew bootJar && docker compose up --build   # both; the app is on http://localhost:8080
+#   docker compose up mysql                          # MySQL only, then `./gradlew bootRun` on the host
 #
 # The app applies Skipper's schema to the empty database on first start (Flyway, see application.yaml).
 services:

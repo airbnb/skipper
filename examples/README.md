@@ -1,9 +1,21 @@
 # Examples
 
 Complete, standalone projects that run Skipper on the JVM stacks people actually ship. Each directory
-is its own build against the **published** Skipper artifacts on Maven Central, the way a service
-would consume them, so what you see is what an adopter gets. CircleCI builds, tests and runs every
-one of them on each push (the `examples` job), so they cannot quietly rot.
+is its own build against the Skipper artifacts on Maven Central, the way a service would consume
+them, so what you see is what an adopter gets.
+
+They are also Skipper's integration suite. On every push, CircleCI's `examples` job publishes the
+artifacts from that commit to a local Maven repository and builds, tests and runs all five against
+them, so a change that breaks a Spring, Dropwizard, Guice, Kotlin or plain-Java adopter turns the
+pull request red. To do the same locally:
+
+```bash
+./gradlew publishToMavenLocal -PVERSION_NAME=0.0.0-LOCAL        # from the Skipper checkout
+cd examples/java-gradle-sqlite && ./gradlew build -PskipperVersion=0.0.0-LOCAL
+cd examples/java-maven-sqlite  && ./mvnw verify -Dskipper.version=0.0.0-LOCAL
+```
+
+Without the override each build uses the pinned release.
 
 All five build the same small application, an order-fulfilment workflow, so you can diff two
 directories and see only what the stack changes:
@@ -60,5 +72,7 @@ pick a stack. Each example's README has the details and the exact error text.
 ## Keeping them current
 
 Each build pins `skipperVersion` (or `skipper.version` in the POM) in one place; bump all five when
-a release lands. The CI job runs on the machine executor because of Docker, so it is the slowest
-job in the workflow; that is the price of examples that provably work.
+a release lands so a copied example starts from the current release. CI does not depend on the pin:
+it always builds against the commit under test. The job runs on the machine executor because of
+Docker and waits for the core build, so it is the slowest job in the workflow; that is the price
+of examples that provably work against the code being merged.

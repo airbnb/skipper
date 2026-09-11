@@ -20,12 +20,16 @@
 #                 build compiles the site, so without this a broken doc would only surface at
 #                 publish time.
 #
-#   examples      Builds, tests and runs every project under examples/. Each one is a standalone
-#                 build against the *published* Skipper artifacts (not this checkout), so this job
-#                 catches an example that has rotted, not a regression in the engine. It runs on a
-#                 machine executor because two examples need Docker: Spring Boot's integration test
-#                 boots MySQL through Testcontainers and its compose file is smoke-tested, and the
-#                 Dropwizard service is smoke-tested against a MySQL container.
+#   examples      Builds, tests and runs every project under examples/ against the artifacts this
+#                 very build produced: jvm-build-jackson-2.9.10 publishes them to ~/.m2 as
+#                 0.0.0-CI and hands that tree over through the workspace, and each example is
+#                 pointed at it with -PskipperVersion / -Dskipper.version. So a red examples job
+#                 means the change broke something an adopter on Spring, Dropwizard, Guice, Kotlin
+#                 or plain Java would hit. (Adopters copying an example get the pinned Maven Central
+#                 release; the override is CI-only.) It runs on a machine executor because two
+#                 examples need Docker: Spring Boot's integration test boots MySQL through
+#                 Testcontainers and its compose file is smoke-tested, and the Dropwizard service
+#                 is smoke-tested against a MySQL container.
 #
 # Two more run on main only:
 #
@@ -167,8 +171,20 @@ jobs:
           name: Validate the publication metadata
           # Publishes to the local Maven cache, which needs no credentials and no network.
           # Catches a malformed POM or a broken publication config in review rather than at
-          # release time, when the fix is far more expensive.
+          # release time, when the fix is far more expensive. The examples job consumes this
+          # exact tree, so what it tests is what this build produced.
           command: ./gradlew publishToMavenLocal -PVERSION_NAME=0.0.0-CI
+
+      - when:
+          # Only the default-Jackson run hands its artifacts to the examples job; persisting the
+          # same path from every matrix entry would be a workspace conflict.
+          condition:
+            equal: ["", << parameters.jackson_version >>]
+          steps:
+            - persist_to_workspace:
+                root: ~/
+                paths:
+                  - .m2/repository/com/airbnb/skipper
 
       - run:
           name: Drop Gradle lock files
@@ -242,8 +258,15 @@ jobs:
     working_directory: ~/skipper
     environment:
       GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2
+      # Every Gradle invocation in this job, including the ones inside the smoke scripts, builds
+      # against the artifacts jvm-build-jackson-2.9.10 published to ~/.m2 (see attach_workspace).
+      ORG_GRADLE_PROJECT_skipperVersion: 0.0.0-CI
     steps:
       - checkout
+
+      - attach_workspace:
+          # ~/.m2/repository/com/airbnb/skipper/*/0.0.0-CI from jvm-build-jackson-2.9.10.
+          at: ~/
 
       - restore_cache:
           name: Restore the examples' Gradle and Maven caches
@@ -275,8 +298,8 @@ jobs:
       - run:
           name: java-maven-sqlite
           command: |
-            ./mvnw -B verify
-            ./mvnw -B -q compile exec:java
+            ./mvnw -B -Dskipper.version=0.0.0-CI verify
+            ./mvnw -B -q -Dskipper.version=0.0.0-CI compile exec:java
           working_directory: ~/skipper/examples/java-maven-sqlite
 
       - run:
@@ -293,6 +316,7 @@ jobs:
           name: spring-boot-mysql (docker compose smoke)
           # --wait blocks on both services' healthchecks, so the first request lands on a ready app.
           command: |
+            ./gradlew --stacktrace bootJar
             docker compose up -d --build --wait
             curl -fsS -X POST localhost:8080/orders -H 'Content-Type: application/json' \
               -d '{"orderId":"ci-1","customerId":"alice","sku":"BOOK-1","quantity":2,"amountCents":3900}'
@@ -560,7 +584,9 @@ workflows:
             parameters:
               jackson_version: ["2.13.5", "2.17.3", "2.22.2"]
       - format-check
-      - examples
+      - examples:
+          requires:
+            - jvm-build-jackson-2.9.10
       - jvm-build:
           requires:
             - jvm-build-jackson-2.9.10
