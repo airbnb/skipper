@@ -15,6 +15,14 @@ import com.airbnb.skipper.internal.storage.WorkflowSortDirection
 import com.airbnb.skipper.internal.storage.WorkflowSortField
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.PropertyNamingStrategy
+import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.databind.cfg.MapperConfig
+import com.fasterxml.jackson.databind.introspect.AnnotatedField
+import com.fasterxml.jackson.databind.introspect.AnnotatedMethod
+import com.fasterxml.jackson.databind.introspect.AnnotatedParameter
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.google.common.collect.ImmutableList
 import io.vavr.control.Option
 import java.io.InputStream
@@ -50,7 +58,19 @@ class AdminResource
         // Note: the constructor parameter `engine` is assigned to the `store` field, preserving the
         // original Java signature where the first injected parameter was named `engine`.
         private val store: WorkflowStore = engine
-        private val objectMapper = ObjectMapper()
+
+        // Every JSON endpoint below serializes its own response and returns it as a String entity, so
+        // the wire format is fixed by this resource rather than by whatever JSON provider (and
+        // ObjectMapper configuration) the host's JAX-RS stack happens to have. The bundled index.html
+        // depends on this format: snake_case keys and ISO-8601 timestamps. A host needs no JSON
+        // MessageBodyWriter to serve the admin UI.
+        private val objectMapper: ObjectMapper =
+            ObjectMapper()
+                .registerModule(JavaTimeModule())
+                .registerModule(Jdk8Module())
+                .setPropertyNamingStrategy(SkipperSnakeCase())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
         private val scheduler: Scheduler = scheduler
         private val skipperEngine: SkipperEngine = skipperEngine
         private val workflowsService: WorkflowsService = workflowsService
@@ -79,16 +99,18 @@ class AdminResource
         @Path("/workflows/{id}")
         fun getWorkflowInstance(
             @PathParam("id") workflowInstanceId: String
-        ): WorkflowInstanceView {
+        ): Response {
             val task: Option<Task<Any>> = scheduler.getTask(workflowInstanceId)
             val timers: List<Timer> = store.getTimers(workflowInstanceId).toJavaList()
-            return WorkflowInstanceView(
-                store
-                    .getWorkflow(workflowInstanceId)
-                    .getOrElseThrow { IllegalArgumentException("Workflow not found") },
-                store.getActionCheckpoints(workflowInstanceId).asJava(),
-                if (task.isDefined) ImmutableList.of(task.get()) else ArrayList(),
-                timers,
+            return json(
+                WorkflowInstanceView(
+                    store
+                        .getWorkflow(workflowInstanceId)
+                        .getOrElseThrow { IllegalArgumentException("Workflow not found") },
+                    store.getActionCheckpoints(workflowInstanceId).asJava(),
+                    if (task.isDefined) ImmutableList.of(task.get()) else ArrayList(),
+                    timers,
+                )
             )
         }
 
@@ -97,11 +119,11 @@ class AdminResource
         @Path("/workflows/{id}/cancel")
         fun cancelWorkflowInstance(
             @PathParam("id") workflowInstanceId: String
-        ): WorkflowInstanceView {
+        ): Response {
             try {
                 val updatedInstance: WorkflowInstance =
                     skipperEngine.cancelWorkflow(workflowInstanceId, "Cancelled by admin")
-                return WorkflowInstanceView(updatedInstance, ArrayList(), ArrayList(), ArrayList())
+                return json(WorkflowInstanceView(updatedInstance, ArrayList(), ArrayList(), ArrayList()))
             } catch (
                 @Suppress("TooGenericExceptionCaught") e: Throwable
             ) {
@@ -112,8 +134,8 @@ class AdminResource
         @GET
         @Produces(MediaType.APPLICATION_JSON)
         @Path("/scheduler/dlq")
-        fun getDeadLetterQueue(): TasksView {
-            return TasksView(scheduler.getFailedTasks<Any>().toJavaList())
+        fun getDeadLetterQueue(): Response {
+            return json(TasksView(scheduler.getFailedTasks<Any>().toJavaList()))
         }
 
         /**
@@ -129,15 +151,17 @@ class AdminResource
         fun getWorkflowsWithExhaustedRetries(
             @QueryParam("sortBy") sortBy: String?,
             @QueryParam("sortDirection") @DefaultValue("ASC") sortDirection: String?,
-        ): WorkflowsView {
-            return WorkflowsView(
-                store
-                    .findWorkflowsWithExhaustedRetries(
-                        DEFAULT_EXHAUSTED_RETRIES_LIMIT,
-                        parseSortField(sortBy),
-                        parseSortDirection(sortDirection),
-                    )
-                    .toJavaList(),
+        ): Response {
+            return json(
+                WorkflowsView(
+                    store
+                        .findWorkflowsWithExhaustedRetries(
+                            DEFAULT_EXHAUSTED_RETRIES_LIMIT,
+                            parseSortField(sortBy),
+                            parseSortDirection(sortDirection),
+                        )
+                        .toJavaList(),
+                )
             )
         }
 
@@ -171,7 +195,7 @@ class AdminResource
         @GET
         @Produces(MediaType.APPLICATION_JSON)
         @Path("/dashboard/stats")
-        fun getDashboardStats(): DashboardStats {
+        fun getDashboardStats(): Response {
             // Sort order is irrelevant to a count, so never pay for the sort here.
             val exhaustedRetriesCount: Int =
                 store
@@ -183,17 +207,19 @@ class AdminResource
                     .size()
             val dlqTasksCount: Int = scheduler.getFailedTasks<Any>().size()
             val schedulerBacklogCount: Long = scheduler.countBacklog()
-            return DashboardStats(exhaustedRetriesCount, dlqTasksCount, schedulerBacklogCount)
+            return json(DashboardStats(exhaustedRetriesCount, dlqTasksCount, schedulerBacklogCount))
         }
 
         @GET
         @Produces(MediaType.APPLICATION_JSON)
         @Path("/workflow-types")
-        fun listWorkflowTypes(): List<WorkflowType> {
-            return store
-                .listDistinctWorkflowTypes()
-                .map { t -> WorkflowType(t._1(), t._2()) }
-                .toJavaList()
+        fun listWorkflowTypes(): Response {
+            return json(
+                store
+                    .listDistinctWorkflowTypes()
+                    .map { t -> WorkflowType(t._1(), t._2()) }
+                    .toJavaList()
+            )
         }
 
         @GET
@@ -207,7 +233,7 @@ class AdminResource
             @QueryParam("parentWorkflowId") parentWorkflowId: String?,
             @QueryParam("limit") @DefaultValue("50") limit: Int,
             @QueryParam("cursor") cursor: String?,
-        ): WorkflowSearchResult {
+        ): Response {
             val filter: WorkflowSearchFilter =
                 parseSearchFilter(entryPoints, statuses, createdAfter, createdBefore, parentWorkflowId, cursor)
             val clampedLimit: Int = Math.min(Math.max(limit, MIN_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
@@ -224,7 +250,7 @@ class AdminResource
                     nextCursor = encodeCursor(lastCreatedAt, last.workflowId)
                 }
             }
-            return WorkflowSearchResult(workflows, nextCursor)
+            return json(WorkflowSearchResult(workflows, nextCursor))
         }
 
         private fun parseSearchFilter(
@@ -318,19 +344,19 @@ class AdminResource
         @Produces(MediaType.APPLICATION_JSON)
         @Consumes(MediaType.APPLICATION_JSON)
         @Path("/workflows/bulk-cancel")
-        fun bulkCancelWorkflows(workflowIds: List<String>): BulkOperationResult {
+        fun bulkCancelWorkflows(workflowIds: List<String>): Response {
             val successful: List<String> =
                 workflowsService.cancelWorkflows(workflowIds, "Cancelled by bulk admin operation")
             val failed: MutableList<String> = ArrayList(workflowIds)
             failed.removeAll(successful)
-            return BulkOperationResult(successful, failed)
+            return json(BulkOperationResult(successful, failed))
         }
 
         @POST
         @Produces(MediaType.APPLICATION_JSON)
         @Consumes(MediaType.APPLICATION_JSON)
         @Path("/workflows/bulk-retry")
-        fun bulkRetryWorkflows(workflowIds: List<String>): BulkOperationResult {
+        fun bulkRetryWorkflows(workflowIds: List<String>): Response {
             val reExecuteResults: Map<String, Optional<Throwable>> =
                 workflowsService.reExecuteWorkflows(workflowIds)
             val successful: List<String> =
@@ -343,14 +369,14 @@ class AdminResource
                     .filter { entry -> entry.value.isPresent }
                     .map { entry -> entry.key }
                     .collect(Collectors.toList())
-            return BulkOperationResult(successful, failed)
+            return json(BulkOperationResult(successful, failed))
         }
 
         @POST
         @Produces(MediaType.APPLICATION_JSON)
         @Consumes(MediaType.APPLICATION_JSON)
         @Path("/scheduler/bulk-redrive")
-        fun bulkRedriveTasks(taskIds: List<String>): BulkOperationResult {
+        fun bulkRedriveTasks(taskIds: List<String>): Response {
             // Get the tasks from the scheduler
             val tasksToRedrive: MutableList<Task<Any>> = ArrayList()
             val failed: MutableList<String> = ArrayList()
@@ -369,14 +395,14 @@ class AdminResource
             failed.addAll(
                 allRequestedIds.stream().filter { id -> !failed.contains(id) }.collect(Collectors.toList()),
             )
-            return BulkOperationResult(successful, failed)
+            return json(BulkOperationResult(successful, failed))
         }
 
         @POST
         @Produces(MediaType.APPLICATION_JSON)
         @Consumes(MediaType.APPLICATION_JSON)
         @Path("/scheduler/bulk-remove")
-        fun bulkRemoveTasks(taskIds: List<String>): BulkOperationResult {
+        fun bulkRemoveTasks(taskIds: List<String>): Response {
             // Get the tasks from the scheduler
             val tasksToRemove: MutableList<Task<Any>> = ArrayList()
             val failed: MutableList<String> = ArrayList()
@@ -395,14 +421,14 @@ class AdminResource
             failed.addAll(
                 allRequestedIds.stream().filter { id -> !failed.contains(id) }.collect(Collectors.toList()),
             )
-            return BulkOperationResult(successful, failed)
+            return json(BulkOperationResult(successful, failed))
         }
 
         @POST
         @Produces(MediaType.APPLICATION_JSON)
         @Consumes(MediaType.APPLICATION_JSON)
         @Path("/scheduler/bulk-cancel-workflows")
-        fun bulkCancelWorkflowsFromDLQ(taskIds: List<String>): BulkOperationResult {
+        fun bulkCancelWorkflowsFromDLQ(taskIds: List<String>): Response {
             // Filter to only WORKFLOW type tasks
             val workflowIds: MutableList<String> = ArrayList()
             val ignoredTasks: MutableList<String> = ArrayList()
@@ -420,7 +446,7 @@ class AdminResource
             failed.removeAll(successful)
             // Add ignored tasks to failed list for reporting
             failed.addAll(ignoredTasks)
-            return BulkOperationResult(successful, failed)
+            return json(BulkOperationResult(successful, failed))
         }
 
         @POST
@@ -462,7 +488,7 @@ class AdminResource
         @Path("/workflows/{id}/reset-error")
         fun resetWorkflowFromError(
             @PathParam("id") workflowInstanceId: String
-        ): WorkflowInstanceView {
+        ): Response {
             val workflowIds: List<String> =
                 workflowsService.resetWorkflowsFromError(
                     io.vavr.collection.List.of(workflowInstanceId).toJavaList(),
@@ -476,7 +502,7 @@ class AdminResource
                     .getWorkflow(workflowInstanceId)
                     .getOrElseThrow { IllegalArgumentException("Workflow not found after reset") }
             // Return updated workflow view
-            return WorkflowInstanceView(resetWorkflow, ArrayList(), ArrayList(), ArrayList())
+            return json(WorkflowInstanceView(resetWorkflow, ArrayList(), ArrayList(), ArrayList()))
         }
 
         @GET
@@ -484,10 +510,10 @@ class AdminResource
         @Path("/workflows/{id}/signals")
         fun getPersistedSignals(
             @PathParam("id") workflowInstanceId: String
-        ): PersistedSignalsView {
+        ): Response {
             val signals: List<PersistedSignalView> =
                 store.getPersistedSignals(workflowInstanceId).map { PersistedSignalView.from(it) }.toJavaList()
-            return PersistedSignalsView(signals)
+            return json(PersistedSignalsView(signals))
         }
 
         @POST
@@ -496,7 +522,7 @@ class AdminResource
         fun replayPersistedSignal(
             @PathParam("id") workflowInstanceId: String,
             @PathParam("signalId") signalId: Long,
-        ): PersistedSignalView {
+        ): Response {
             try {
                 skipperEngine.replaySignal(workflowInstanceId, signalId)
             } catch (
@@ -508,7 +534,7 @@ class AdminResource
                 store
                     .getPersistedSignal(workflowInstanceId, signalId)
                     .getOrElseThrow { IllegalArgumentException("Persisted signal not found after replay") }
-            return PersistedSignalView.from(signal)
+            return json(PersistedSignalView.from(signal))
         }
 
         /**
@@ -532,12 +558,12 @@ class AdminResource
             @QueryParam("actionMethod") actionMethod: String?,
             @QueryParam("iteration") iteration: Long?,
             @QueryParam("checkpointName") checkpointName: String?,
-        ): WorkflowInstanceView {
+        ): Response {
             val pivot: CheckpointTag =
                 resolvePivot(workflowInstanceId, actionClass, actionMethod, iteration, checkpointName)
             try {
                 val updated: WorkflowInstance = workflowsService.rewindWorkflow(workflowInstanceId, pivot)
-                return WorkflowInstanceView(updated, ArrayList(), ArrayList(), ArrayList())
+                return json(WorkflowInstanceView(updated, ArrayList(), ArrayList(), ArrayList()))
             } catch (
                 @Suppress("TooGenericExceptionCaught") e: Throwable
             ) {
@@ -574,6 +600,70 @@ class AdminResource
                 }
             return match
                 ?: throw mapBadRequest("No matching checkpoint to rewind to for workflow $workflowId")
+        }
+
+        private fun json(value: Any?): Response {
+            return Response.ok(objectMapper.writeValueAsString(value), MediaType.APPLICATION_JSON).build()
+        }
+
+        /**
+         * snake_case for Skipper's own types only. The admin payload embeds user data (workflow input,
+         * state, results) whose property names belong to the adopting service's classes; those are
+         * left exactly as declared, so the UI shows the fields a developer would recognise.
+         */
+        private class SkipperSnakeCase : PropertyNamingStrategy() {
+            private val snakeCase: PropertyNamingStrategy = SNAKE_CASE
+
+            override fun nameForField(
+                config: MapperConfig<*>?,
+                field: AnnotatedField,
+                defaultName: String,
+            ): String =
+                if (isSkipperType(field.declaringClass)) {
+                    snakeCase.nameForField(config, field, defaultName)
+                } else {
+                    defaultName
+                }
+
+            override fun nameForGetterMethod(
+                config: MapperConfig<*>?,
+                method: AnnotatedMethod,
+                defaultName: String,
+            ): String =
+                if (isSkipperType(method.declaringClass)) {
+                    snakeCase.nameForGetterMethod(config, method, defaultName)
+                } else {
+                    defaultName
+                }
+
+            override fun nameForSetterMethod(
+                config: MapperConfig<*>?,
+                method: AnnotatedMethod,
+                defaultName: String,
+            ): String =
+                if (isSkipperType(method.declaringClass)) {
+                    snakeCase.nameForSetterMethod(config, method, defaultName)
+                } else {
+                    defaultName
+                }
+
+            override fun nameForConstructorParameter(
+                config: MapperConfig<*>?,
+                ctorParam: AnnotatedParameter,
+                defaultName: String,
+            ): String =
+                if (isSkipperType(ctorParam.declaringClass)) {
+                    snakeCase.nameForConstructorParameter(config, ctorParam, defaultName)
+                } else {
+                    defaultName
+                }
+
+            private fun isSkipperType(declaringClass: Class<*>?): Boolean =
+                declaringClass != null && declaringClass.name.startsWith("com.airbnb.skipper.")
+
+            companion object {
+                private const val serialVersionUID: Long = 1L
+            }
         }
 
         private fun mapBadRequest(message: String): WebApplicationException {
