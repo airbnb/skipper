@@ -1,6 +1,6 @@
 ---
 title: Observability & Admin UI
-description: Enable the built-in admin UI to inspect and recover workflows, and wire up metrics to monitor the engine.
+description: Enable the built-in admin UI to inspect and recover workflows, and wire up metrics to Datadog, Prometheus or your own backend to monitor the engine.
 section: Guides
 order: 19
 ---
@@ -69,7 +69,54 @@ These endpoints back the same operations available programmatically through
 
 Skipper reports engine metrics through a pluggable `Metrics` interface. It is a **no-op by
 default**, so to collect metrics, supply an implementation on the config before creating the
-runtime:
+runtime. Two backends ship as separate artifacts, so `skipper-core` never drags a metrics client
+onto your classpath; or implement `Metrics` yourself against any other registry.
+
+Every metric is named as a dotted path of a component and an operation
+(`mysqlWorkflowStore.persistSignal`, `schedulerManager.handledTasks`) and may carry tags such as
+`result` and `error`. Each backend maps those names onto its own conventions.
+
+### Datadog
+
+`skipper-metrics-datadog` reports through a DogStatsD client. Names become
+`skipper.<component>.<operation>`, tags become `key:value`, counters are sent as `count`, timers
+(in milliseconds) and histograms as `distribution`, and gauges are sampled every 10 seconds on a
+daemon thread. You construct and own the `StatsDClient`; call `close()` on the `DatadogMetrics`
+at shutdown to stop the gauge sampler.
+
+```kotlin
+// build.gradle.kts: implementation("com.airbnb.skipper:skipper-metrics-datadog:<version>")
+val statsd = NonBlockingStatsDClientBuilder().hostname("localhost").port(8125).build()
+config.metrics = ComponentFactory { DatadogMetrics(statsd) }
+```
+
+```java
+config.setMetrics(cfg -> new DatadogMetrics(statsd));
+```
+
+### Prometheus
+
+`skipper-metrics-prometheus` registers collectors with a `PrometheusRegistry` from the 1.x
+`prometheus-metrics-core` client. Names become `skipper_<component>_<operation>`, tags become
+labels, counters get the usual `_total` suffix, timers are histograms in seconds
+(`..._seconds`), and gauges read their value on every scrape. Expose the registry through the
+scrape endpoint you already have, for example `prometheus-metrics-exporter-httpserver`.
+
+```kotlin
+// build.gradle.kts: implementation("com.airbnb.skipper:skipper-metrics-prometheus:<version>")
+config.metrics = ComponentFactory { PrometheusMetrics(PrometheusRegistry.defaultRegistry) }
+```
+
+```java
+config.setMetrics(cfg -> new PrometheusMetrics(PrometheusRegistry.defaultRegistry));
+```
+
+Histogram bucket boundaries for timers and for value histograms are constructor parameters if the
+defaults (1 ms to 60 s, and powers of four from 1 to about 4 million) do not fit your workload.
+
+### Your own backend
+
+Implement `Metrics` and install it the same way:
 
 ```kotlin
 config.metrics = ComponentFactory { MyMetrics() }

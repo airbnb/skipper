@@ -194,6 +194,7 @@ with Guice and the admin UI.
 | [Compensation](https://skipper.airbnb.tech/docs/compensation/)                 | Undo completed steps in reverse on failure — the saga pattern        |
 | [Versioning](https://skipper.airbnb.tech/docs/versioning/)                     | Evolve workflow code while old instances are still in flight         |
 | [Admin UI and tracing](https://skipper.airbnb.tech/docs/observability/)        | Inspect, replay, and manage live instances                          |
+| [Metrics](https://skipper.airbnb.tech/docs/observability/#metrics)             | Engine counters, latencies and gauges; ready-made `skipper-metrics-datadog` and `skipper-metrics-prometheus` backends |
 | [Testing](https://skipper.airbnb.tech/docs/testing/)                           | `skipper-testutils`: extend `WorkflowTest` and drive workflows deterministically in unit tests |
 
 ## Is Skipper for you?

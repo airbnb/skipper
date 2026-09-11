@@ -32,3 +32,11 @@ include("skipper-state-machine")
 // The directory keeps its historical name so sources line up with the internal build.
 include("skipper-testutils")
 project(":skipper-testutils").projectDir = file("testutils")
+
+// plugins/ holds Metrics implementations for specific observability backends. Each is its own
+// artifact depending on the root `skipper` project (which only knows the `Metrics` interface), so
+// adopters pull exactly the backend client they already run and core stays dependency-free.
+include("skipper-metrics-datadog")
+project(":skipper-metrics-datadog").projectDir = file("plugins/datadog")
+include("skipper-metrics-prometheus")
+project(":skipper-metrics-prometheus").projectDir = file("plugins/prometheus")
