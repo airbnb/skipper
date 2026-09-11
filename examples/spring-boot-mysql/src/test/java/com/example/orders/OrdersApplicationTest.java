@@ -39,7 +39,9 @@ class OrdersApplicationTest {
     OrderStatus done = awaitInstanceStatus("sb-small", "COMPLETED");
     assertThat(done.result().getStatus()).isEqualTo("FULFILLED");
     assertThat(done.result().getTrackingId()).startsWith("trk-");
-    assertThat(inventory.entries()).contains("RESERVE res-1 2 x BOOK-1");
+    // The in-memory services are shared singletons across the tests in this JVM, so match on content,
+    // not on the sequence number of the reservation id.
+    assertThat(inventory.entries()).anyMatch(e -> e.startsWith("RESERVE") && e.endsWith("2 x BOOK-1"));
   }
 
   @Test
