@@ -91,7 +91,7 @@ config.exceptionClassifier = ComponentFactory { CustomExceptionClassifier() }
 ```
 
 ```java
-config.setExceptionClassifier(() -> new CustomExceptionClassifier());
+config.setExceptionClassifier(cfg -> new CustomExceptionClassifier());
 ```
 
 Or scope one to a **single action** by naming an `ExceptionClassifier` field through the

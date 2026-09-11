@@ -147,6 +147,8 @@ dependencies {
     testImplementation(libs.kotlin.test.junit5)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.opentracing.mock)
+    // AdminResource builds javax.ws.rs Responses; a JAX-RS RuntimeDelegate must exist to do so.
+    testRuntimeOnly(libs.jersey.common)
     // testutils/tests use Guice (com.google.inject.*); main only needs javax.inject. Guice 6.x
     // still supports javax.inject bindings (@Named(UTC_CLOCK), etc.).
     testImplementation(libs.guice)

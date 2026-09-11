@@ -34,7 +34,8 @@ jaxrs.register(admin);
 ```
 
 Because it is a plain JAX-RS resource, it drops into any JAX-RS-compatible stack — there is
-nothing Skipper-specific about how you mount it.
+nothing Skipper-specific about how you mount it. Its endpoints serialize their own JSON, so the
+host needs no JSON provider (and no particular `ObjectMapper` configuration) for the UI to work.
 
 Then open the UI in a browser:
 
@@ -75,7 +76,7 @@ config.metrics = ComponentFactory { MyMetrics() }
 ```
 
 ```java
-config.setMetrics(() -> new MyMetrics());
+config.setMetrics(cfg -> new MyMetrics());
 ```
 
 Your implementation receives metrics covering actions, the scheduler, storage, and overall

@@ -1270,8 +1270,22 @@ Workflows List view
     });
   }
 
+  // Navigation sets the hash and lets route() (the hashchange listener) load the view, so a view is
+  // fetched exactly once per navigation. When the hash is already the target no hashchange fires,
+  // so the view is (re)loaded directly - which is also what the post-action refreshes rely on.
+  function navigateTo(hash, load) {
+    if (window.location.hash.substring(1) === hash) {
+      load();
+    } else {
+      window.location.hash = hash;
+    }
+  }
+
   function showHome() {
-    window.location.hash = '';
+    navigateTo('', loadHome);
+  }
+
+  function loadHome() {
     safeGet("/skipper/admin/dashboard/stats", function(stats) {
       $("#main_content").html(home_view({stats: stats}));
     }, function (response) {
@@ -1292,8 +1306,7 @@ Workflows List view
   }
 
   function showExhaustedRetries() {
-    window.location.hash = 'exhausted-retries';
-    loadExhaustedRetries();
+    navigateTo('exhausted-retries', loadExhaustedRetries);
   }
 
   function loadExhaustedRetries() {
@@ -1310,7 +1323,10 @@ Workflows List view
   }
 
   function showDLQ() {
-    window.location.hash = 'dlq';
+    navigateTo('dlq', loadDLQ);
+  }
+
+  function loadDLQ() {
     safeGet("/skipper/admin/scheduler/dlq", function(response) {
       console.log(response);
       $("#main_content").html(dlq_view(response));
@@ -1327,7 +1343,10 @@ Workflows List view
   var _workflowSavedFilters = null;
 
   function showWorkflows() {
-    window.location.hash = 'workflows';
+    navigateTo('workflows', loadWorkflows);
+  }
+
+  function loadWorkflows() {
     // Render the form immediately (empty results) while we fetch types + data
     _workflowResults = [];
     _workflowNextCursor = null;
@@ -1695,19 +1714,11 @@ Workflows List view
     } else if (hash === 'exhausted-retries') {
       loadExhaustedRetries();
     } else if (hash === 'dlq') {
-      safeGet("/skipper/admin/scheduler/dlq", function(response) {
-        $("#main_content").html(dlq_view(response));
-      }, function (response) {
-        alert("Failed to load DLQ: " + response.responseText);
-      });
+      loadDLQ();
     } else if (hash === 'workflows') {
-      showWorkflows();
+      loadWorkflows();
     } else {
-      safeGet("/skipper/admin/dashboard/stats", function(stats) {
-        $("#main_content").html(home_view({stats: stats}));
-      }, function (response) {
-        $("#main_content").html(home_view({stats: {exhausted_retries_count: 0, dlq_tasks_count: 0, scheduler_backlog_count: 0}}));
-      });
+      loadHome();
     }
   }
 
