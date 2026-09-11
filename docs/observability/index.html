@@ -19,7 +19,8 @@ server alongside your other resources:</p>
 <span class="line"><span style="color:#E1E4E8">AdminResource admin </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> runtime.</span><span style="color:#B392F0">getAdminResource</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">get</span><span style="color:#E1E4E8">();</span></span>
 <span class="line"><span style="color:#E1E4E8">jaxrs.</span><span style="color:#B392F0">register</span><span style="color:#E1E4E8">(admin);</span></span></code></pre>
 <p>Because it is a plain JAX-RS resource, it drops into any JAX-RS-compatible stack — there is
-nothing Skipper-specific about how you mount it.</p>
+nothing Skipper-specific about how you mount it. Its endpoints serialize their own JSON, so the
+host needs no JSON provider (and no particular <code>ObjectMapper</code> configuration) for the UI to work.</p>
 <p>Then open the UI in a browser:</p>
 <pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>http://&#x3C;your-service-host>/skipper/admin/</span></span></code></pre>
 <p>For a service running remotely, forward its port to your machine first, then open the path
@@ -43,7 +44,7 @@ requeue stuck tasks.</li>
 default</strong>, so to collect metrics, supply an implementation on the config before creating the
 runtime:</p>
 <pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#E1E4E8">config.metrics </span><span style="color:#F97583">=</span><span style="color:#B392F0"> ComponentFactory</span><span style="color:#E1E4E8"> { </span><span style="color:#B392F0">MyMetrics</span><span style="color:#E1E4E8">() }</span></span></code></pre>
-<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#E1E4E8">config.</span><span style="color:#B392F0">setMetrics</span><span style="color:#E1E4E8">(() </span><span style="color:#F97583">-></span><span style="color:#F97583"> new</span><span style="color:#B392F0"> MyMetrics</span><span style="color:#E1E4E8">());</span></span></code></pre>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#E1E4E8">config.</span><span style="color:#B392F0">setMetrics</span><span style="color:#E1E4E8">(cfg </span><span style="color:#F97583">-></span><span style="color:#F97583"> new</span><span style="color:#B392F0"> MyMetrics</span><span style="color:#E1E4E8">());</span></span></code></pre>
 <p>Your implementation receives metrics covering actions, the scheduler, storage, and overall
 workflow throughput — forward them to your existing pipeline and dashboards to track:</p>
 <ul>
