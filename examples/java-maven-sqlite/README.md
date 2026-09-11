@@ -4,9 +4,12 @@ The same application as [`../java-gradle-sqlite`](../java-gradle-sqlite/), byte 
 under a Maven build. Diff the two directories and only the build files differ.
 
 ```bash
-mvn verify                    # compiles and runs the WorkflowTest suite
-mvn compile exec:java         # runs three orders against ./orders.db
+./mvnw verify                 # compiles and runs the WorkflowTest suite
+./mvnw compile exec:java      # runs three orders against ./orders.db
 ```
+
+`mvnw` is the script-only Maven Wrapper: it downloads Maven 3.9 on first use, so only a JDK 17+ is
+needed. A locally installed `mvn` works the same.
 
 The POM pins `skipper.version` in one property. Points specific to Maven:
 

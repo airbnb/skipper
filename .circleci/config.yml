@@ -252,14 +252,20 @@ jobs:
             - examples-v1-
 
       - run:
-          name: Install JDK 17 and Maven
-          # Every example declares a Java 17 toolchain. Installing the JDK here saves the Gradle builds
-          # provisioning one over the network (settings.gradle.kts allows it) and gives Maven a JDK.
+          name: Install JDK 17
+          # Every example declares a Java 17 toolchain, and Gradle 9 itself needs JVM 17+ to start. The
+          # machine image ships an older default JDK, so install 17 and make it the JVM for every later
+          # step through BASH_ENV rather than trusting `java` on PATH. Maven comes from the example's own
+          # wrapper (mvnw), so nothing else is installed.
           command: |
             sudo apt-get update
-            sudo apt-get install -y --no-install-recommends openjdk-17-jdk-headless maven
-            java -version
-            mvn -version
+            sudo apt-get install -y --no-install-recommends openjdk-17-jdk-headless
+            JAVA_HOME=$(dirname "$(dirname "$(readlink -f /usr/lib/jvm/java-17-openjdk-*/bin/java)")")
+            echo "export JAVA_HOME=$JAVA_HOME" >> "$BASH_ENV"
+            echo "export PATH=$JAVA_HOME/bin:\$PATH" >> "$BASH_ENV"
+            "$JAVA_HOME/bin/java" -version
+            docker version --format '{{.Server.Version}}'
+            docker compose version
 
       - run:
           name: java-gradle-sqlite
@@ -269,8 +275,8 @@ jobs:
       - run:
           name: java-maven-sqlite
           command: |
-            mvn -B verify
-            mvn -B -q compile exec:java
+            ./mvnw -B verify
+            ./mvnw -B -q compile exec:java
           working_directory: ~/skipper/examples/java-maven-sqlite
 
       - run:
