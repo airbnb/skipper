@@ -1,0 +1,3 @@
+# Only build/libs/app.jar is needed by the Dockerfile.
+*
+!build/libs/app.jar

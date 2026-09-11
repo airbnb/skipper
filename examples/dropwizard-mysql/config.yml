@@ -1,0 +1,23 @@
+# Production shape: Skipper's tables live in the service's own MySQL database.
+skipper:
+  store: mysql
+
+database:
+  driverClass: com.mysql.cj.jdbc.Driver
+  url: ${MYSQL_URL:-jdbc:mysql://localhost:3306/orders}
+  user: ${MYSQL_USER:-orders}
+  password: ${MYSQL_PASSWORD:-orders}
+  validationQuery: SELECT 1
+
+server:
+  applicationConnectors:
+    - type: http
+      port: 8080
+  adminConnectors:
+    - type: http
+      port: 8081
+
+logging:
+  level: WARN
+  loggers:
+    com.example: INFO

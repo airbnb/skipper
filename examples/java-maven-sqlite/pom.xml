@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Standalone Maven build for the same order-fulfilment application as ../java-gradle-sqlite. The sources are
+  identical; only the build differs. Consumes skipper-core and skipper-testutils from Maven Central.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.example</groupId>
+  <artifactId>skipper-example-java-maven-sqlite</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <!-- Pinned to a Skipper release by default. Override with -Dskipper.version=<v> to build against a version
+         you published to ~/.m2 with `./gradlew publishToMavenLocal -PVERSION_NAME=<v>` from a Skipper checkout
+         (Maven consults the local repository by itself); Skipper's own CI does exactly that. -->
+    <skipper.version>0.6.3</skipper.version>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <junit.version>5.11.4</junit.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.airbnb.skipper</groupId>
+      <artifactId>skipper-core</artifactId>
+      <version>${skipper.version}</version>
+    </dependency>
+    <!-- Skipper logs through slf4j-api and ships no binding; pick any. -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>2.0.17</version>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- WorkflowTest, the JUnit 5 base class that runs each test on its own in-memory runtime. It declares
+         JUnit as an optional dependency, so the project brings its own. -->
+    <dependency>
+      <groupId>com.airbnb.skipper</groupId>
+      <artifactId>skipper-testutils</artifactId>
+      <version>${skipper.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <!-- 3.x runs JUnit 5 out of the box. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+      </plugin>
+      <plugin>
+        <!-- `mvn compile exec:java` runs the demo against orders.db in the working directory. -->
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>com.example.orders.Main</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

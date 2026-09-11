@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: orders-spring
+  datasource:
+    # compose.yaml sets these for the containerised run; the defaults match the MySQL it starts, so
+    # `docker compose up mysql` plus `./gradlew bootRun` on the host works with no configuration.
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/orders}
+    username: ${MYSQL_USER:orders}
+    password: ${MYSQL_PASSWORD:orders}
+  flyway:
+    # Skipper's MySQL schema ships inside skipper-core as versioned Flyway migrations under db/migration,
+    # which is also Flyway's default location, so Spring Boot applies them on startup with no extra code.
+    # The DDL is templated on a table-prefix placeholder; skipper_ matches SkipperConfig's default.
+    locations: classpath:db/migration
+    placeholders:
+      tablePrefix: skipper_
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.airbnb.skipper: warn
+    com.example: info

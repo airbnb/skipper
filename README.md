@@ -181,6 +181,10 @@ Your own store implementation is likewise a config change: see
 [Core Concepts](https://skipper.airbnb.tech/docs/core-concepts/) ·
 [Your First Workflow](https://skipper.airbnb.tech/docs/first-workflow/)
 
+Prefer a working project to a guide? [`examples/`](examples/) holds complete, CI-tested builds on
+the common JVM stacks: plain Java with Gradle or Maven, Kotlin, Spring Boot on MySQL, and Dropwizard
+with Guice and the admin UI.
+
 ## What comes with it
 
 | Capability | What it gives you |

@@ -1,3 +1,11 @@
 # Gradle build output.
 build/
 .gradle/
+
+# Example projects: build output, local SQLite files, IDE state.
+examples/*/build/
+examples/*/.gradle/
+examples/*/target/
+examples/*/*.db
+examples/*/.idea/
+examples/*/smoke-server.log
