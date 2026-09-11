@@ -610,59 +610,73 @@ class AdminResource
          * snake_case for Skipper's own types only. The admin payload embeds user data (workflow input,
          * state, results) whose property names belong to the adopting service's classes; those are
          * left exactly as declared, so the UI shows the fields a developer would recognise.
+         *
+         * Only the four `nameFor*` hooks of [PropertyNamingStrategy] exist across every Jackson 2.x
+         * this library runs on (the `SNAKE_CASE` constant and the nested strategy classes were
+         * removed in 2.22), so the translation is implemented here, following Jackson's own rules.
          */
         private class SkipperSnakeCase : PropertyNamingStrategy() {
-            private val snakeCase: PropertyNamingStrategy = SNAKE_CASE
-
             override fun nameForField(
                 config: MapperConfig<*>?,
                 field: AnnotatedField,
                 defaultName: String,
-            ): String =
-                if (isSkipperType(field.declaringClass)) {
-                    snakeCase.nameForField(config, field, defaultName)
-                } else {
-                    defaultName
-                }
+            ): String = translate(field.declaringClass, defaultName)
 
             override fun nameForGetterMethod(
                 config: MapperConfig<*>?,
                 method: AnnotatedMethod,
                 defaultName: String,
-            ): String =
-                if (isSkipperType(method.declaringClass)) {
-                    snakeCase.nameForGetterMethod(config, method, defaultName)
-                } else {
-                    defaultName
-                }
+            ): String = translate(method.declaringClass, defaultName)
 
             override fun nameForSetterMethod(
                 config: MapperConfig<*>?,
                 method: AnnotatedMethod,
                 defaultName: String,
-            ): String =
-                if (isSkipperType(method.declaringClass)) {
-                    snakeCase.nameForSetterMethod(config, method, defaultName)
-                } else {
-                    defaultName
-                }
+            ): String = translate(method.declaringClass, defaultName)
 
             override fun nameForConstructorParameter(
                 config: MapperConfig<*>?,
                 ctorParam: AnnotatedParameter,
                 defaultName: String,
-            ): String =
-                if (isSkipperType(ctorParam.declaringClass)) {
-                    snakeCase.nameForConstructorParameter(config, ctorParam, defaultName)
-                } else {
-                    defaultName
-                }
+            ): String = translate(ctorParam.declaringClass, defaultName)
 
-            private fun isSkipperType(declaringClass: Class<*>?): Boolean =
-                declaringClass != null && declaringClass.name.startsWith("com.airbnb.skipper.")
+            private fun translate(
+                declaringClass: Class<*>?,
+                name: String,
+            ): String =
+                if (declaringClass != null && declaringClass.name.startsWith("com.airbnb.skipper.")) {
+                    snakeCase(name)
+                } else {
+                    name
+                }
 
             companion object {
                 private const val serialVersionUID: Long = 1L
+
+                /** Jackson's SnakeCaseStrategy rules: `userName` -> `user_name`, `URL` -> `url`, `_x` kept. */
+                fun snakeCase(input: String): String {
+                    val result = StringBuilder(input.length * 2)
+                    var resultLength = 0
+                    var wasPrevTranslated = false
+                    for (i in input.indices) {
+                        var c = input[i]
+                        if (i > 0 || c != '_') {
+                            if (c.isUpperCase()) {
+                                if (!wasPrevTranslated && resultLength > 0 && result[resultLength - 1] != '_') {
+                                    result.append('_')
+                                    resultLength++
+                                }
+                                c = c.lowercaseChar()
+                                wasPrevTranslated = true
+                            } else {
+                                wasPrevTranslated = false
+                            }
+                            result.append(c)
+                            resultLength++
+                        }
+                    }
+                    return if (resultLength > 0) result.toString() else input
+                }
             }
         }
 
