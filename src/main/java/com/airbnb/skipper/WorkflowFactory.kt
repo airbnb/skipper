@@ -383,6 +383,16 @@ open class WorkflowFactory
             if (cause is TransientError || cause is ResultUnavailable || (handleWaitSignal && cause is WaitSignal)) {
                 val timeLimit = clock.instant().plus(resultPollingTimeLimit)
                 while (clock.instant().isBefore(timeLimit)) {
+                    // This loop runs on the main pool, so an ignored future from a workflow that is
+                    // waiting or retrying would otherwise hold scheduler.stop() for the whole polling
+                    // window (30 s by default). Once shutdown has begun, give the future up: the
+                    // instance itself is persisted and finishes on the next scheduler run.
+                    if (executor.isShutdown) {
+                        throw TimeoutException(
+                            "skipper is shutting down; workflow instance $workflowId continues durably " +
+                                "and its result can be read from the instance later",
+                        )
+                    }
                     val instance: Option<WorkflowInstance> = skipperEngine.getWorkflow(workflowId)
                     check(!instance.isEmpty) { "workflow instance not found" }
                     if (!instance.get().result.isDone) {
@@ -394,7 +404,10 @@ open class WorkflowFactory
                         }
                         try {
                             Thread.sleep(resultPollingSleepDuration.toMillis())
-                        } catch (ignored: InterruptedException) {
+                        } catch (e: InterruptedException) {
+                            // shutdownNow() interrupts pool threads; stop polling instead of spinning.
+                            Thread.currentThread().interrupt()
+                            throw TimeoutException("interrupted while waiting for the result of workflow instance $workflowId")
                         }
                         continue
                     }

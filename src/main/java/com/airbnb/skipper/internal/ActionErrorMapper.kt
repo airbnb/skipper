@@ -148,6 +148,9 @@ class ActionErrorMapper
             // Faithful to the Java baseline: unwrapError may return null and the next line dereferences
             // it unguarded (NPE iff null) — never null in practice for an invocation-thrown cause.
             val cause = unwrapError(error)!!
+            // One line at WARN: an action failing is expected traffic (it is what retries and
+            // compensation are for) and the stack trace is persisted with the error and visible in
+            // the admin UI. The trace goes to DEBUG for anyone who wants it in the log too.
             log.warn(
                 "action method {}.{} threw an exception. workflowId={}, exceptionClass={}," +
                     " errorMessage={}",
@@ -156,8 +159,8 @@ class ActionErrorMapper
                 request.executionContext.workflow.workflowId,
                 cause.javaClass.simpleName,
                 cause.message,
-                cause,
             )
+            log.debug("stack trace of the failed action method {}", request.actionMethodName, cause)
             var mappedError =
                 wrapInvocationException(
                     cause,
