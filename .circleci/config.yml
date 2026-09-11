@@ -420,7 +420,7 @@ workflows:
       - jvm-build:
           name: jvm-build-jackson-2.9.10
       # Same job, once per Jackson line a host is likely to run. Add a version to the list to
-      # cover it (and to the jvm-build gate's requires); keep the newest 2.x last and bump it as Jackson releases.
+      # cover it (and to the jvm-build gate's and tag-release's requires); keep the newest 2.x last and bump it as Jackson releases.
       - jvm-build:
           name: jvm-build-jackson-<< matrix.jackson_version >>
           matrix:
@@ -445,8 +445,14 @@ workflows:
             branches:
               only: main
       - tag-release:
+          # Listed explicitly rather than via the jvm-build gate: `jvm-build` is also the key of the
+          # matrix entries above, and CircleCI rejects a `requires` that names both.
           requires:
-            - jvm-build
+            - jvm-build-jackson-2.9.10
+            - jvm-build-jackson-2.13.5
+            - jvm-build-jackson-2.17.3
+            - jvm-build-jackson-2.22.2
+            - format-check
           # main only: the tag is the release record, so it is only ever cut from a merged,
           # tested main. The tag push then starts the `release` workflow below.
           filters:
