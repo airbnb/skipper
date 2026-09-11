@@ -1,0 +1,38 @@
+# Production-shaped local run: the service and its MySQL, on one network, one command.
+#
+#   docker compose up --build        # both; the app is on http://localhost:8080
+#   docker compose up mysql          # MySQL only, then `./gradlew bootRun` on the host
+#
+# The app applies Skipper's schema to the empty database on first start (Flyway, see application.yaml).
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: orders
+      MYSQL_USER: orders
+      MYSQL_PASSWORD: orders
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uorders", "-porders"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      MYSQL_URL: jdbc:mysql://mysql:3306/orders
+      MYSQL_USER: orders
+      MYSQL_PASSWORD: orders
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 3s
+      timeout: 5s
+      retries: 40

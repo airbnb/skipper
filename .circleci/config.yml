@@ -1,6 +1,6 @@
 # CircleCI configuration for airbnb/skipper.
 #
-# Three jobs run on every push:
+# Four jobs run on every push:
 #
 #   jvm-build     Gradle: compiles the engine (Kotlin + Java, joint compilation) plus the
 #                 skipper-state-machine plugin module, and runs both test subsets. A bare
@@ -19,6 +19,13 @@
 #                 so every branch and pull request gets a browsable copy. Nothing else in the
 #                 build compiles the site, so without this a broken doc would only surface at
 #                 publish time.
+#
+#   examples      Builds, tests and runs every project under examples/. Each one is a standalone
+#                 build against the *published* Skipper artifacts (not this checkout), so this job
+#                 catches an example that has rotted, not a regression in the engine. It runs on a
+#                 machine executor because two examples need Docker: Spring Boot's integration test
+#                 boots MySQL through Testcontainers and its compose file is smoke-tested, and the
+#                 Dropwizard service is smoke-tested against a MySQL container.
 #
 # Two more run on main only:
 #
@@ -215,7 +222,7 @@ jobs:
   # Fan-in for the build workflow. The main branch ruleset requires the status context
   # `ci/circleci: jvm-build`, which is the name the suite job had before it was run once per
   # Jackson version. Reporting that name from a job that requires every matrix entry keeps the
-  # whole matrix (and formatting) merge-gating without touching the repository rules. It owns
+  # whole matrix (formatting and the examples too) merge-gating without touching the repository rules. It owns
   # the `jvm-build` key outright: a workflow-level `name:` that collides with another job's key
   # gets suffixed by CircleCI (`jvm-build-1`), which the ruleset would not match.
   jvm-build:
@@ -226,6 +233,124 @@ jobs:
       - run:
           name: All gating jobs passed
           command: echo "jvm-build matrix and format-check passed"
+
+  examples:
+    machine:
+      # Docker and docker compose v2 are preinstalled; the JDK and Maven are not.
+      image: ubuntu-2204:current
+    resource_class: medium
+    working_directory: ~/skipper
+    environment:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2
+    steps:
+      - checkout
+
+      - restore_cache:
+          name: Restore the examples' Gradle and Maven caches
+          keys:
+            - examples-v1-{{ checksum "examples/java-gradle-sqlite/build.gradle.kts" }}-{{ checksum "examples/java-maven-sqlite/pom.xml" }}-{{ checksum "examples/kotlin-gradle-sqlite/build.gradle.kts" }}-{{ checksum "examples/spring-boot-mysql/build.gradle.kts" }}-{{ checksum "examples/dropwizard-mysql/build.gradle.kts" }}
+            - examples-v1-
+
+      - run:
+          name: Install JDK 17 and Maven
+          # Every example declares a Java 17 toolchain. Installing the JDK here saves the Gradle builds
+          # provisioning one over the network (settings.gradle.kts allows it) and gives Maven a JDK.
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends openjdk-17-jdk-headless maven
+            java -version
+            mvn -version
+
+      - run:
+          name: java-gradle-sqlite
+          command: ./gradlew --stacktrace build run
+          working_directory: ~/skipper/examples/java-gradle-sqlite
+
+      - run:
+          name: java-maven-sqlite
+          command: |
+            mvn -B verify
+            mvn -B -q compile exec:java
+          working_directory: ~/skipper/examples/java-maven-sqlite
+
+      - run:
+          name: kotlin-gradle-sqlite
+          command: ./gradlew --stacktrace build run
+          working_directory: ~/skipper/examples/kotlin-gradle-sqlite
+
+      - run:
+          name: spring-boot-mysql (Testcontainers integration test)
+          command: ./gradlew --stacktrace build
+          working_directory: ~/skipper/examples/spring-boot-mysql
+
+      - run:
+          name: spring-boot-mysql (docker compose smoke)
+          # --wait blocks on both services' healthchecks, so the first request lands on a ready app.
+          command: |
+            docker compose up -d --build --wait
+            curl -fsS -X POST localhost:8080/orders -H 'Content-Type: application/json' \
+              -d '{"orderId":"ci-1","customerId":"alice","sku":"BOOK-1","quantity":2,"amountCents":3900}'
+            for _ in $(seq 1 60); do
+              body=$(curl -fsS localhost:8080/orders/ci-1)
+              case "$body" in *'"instanceStatus":"COMPLETED"'*) echo "$body"; break;; esac
+              sleep 1
+            done
+            case "$body" in *'"status":"FULFILLED"'*) echo "compose smoke passed";; *) echo "order never fulfilled: $body"; docker compose logs app; exit 1;; esac
+          working_directory: ~/skipper/examples/spring-boot-mysql
+      - run:
+          name: spring-boot-mysql (compose down)
+          command: docker compose down -v
+          working_directory: ~/skipper/examples/spring-boot-mysql
+          when: always
+
+      - run:
+          name: dropwizard-mysql (build and WorkflowTest)
+          command: ./gradlew --stacktrace build
+          working_directory: ~/skipper/examples/dropwizard-mysql
+
+      - run:
+          name: dropwizard-mysql (smoke against a MySQL container)
+          command: |
+            docker run -d --name orders-mysql -p 3306:3306 \
+              -e MYSQL_DATABASE=orders -e MYSQL_USER=orders -e MYSQL_PASSWORD=orders -e MYSQL_ROOT_PASSWORD=root \
+              mysql:8.4
+            for _ in $(seq 1 60); do
+              docker exec orders-mysql mysqladmin ping -h127.0.0.1 -uorders -porders >/dev/null 2>&1 && break
+              sleep 2
+            done
+            scripts/smoke.sh config.yml
+          working_directory: ~/skipper/examples/dropwizard-mysql
+      - run:
+          name: dropwizard-mysql (stop MySQL)
+          command: docker rm -f orders-mysql || true
+          when: always
+
+      - run:
+          name: Drop Gradle lock files
+          command: find ~/.gradle -name '*.lock' -type f -delete || true
+          when: always
+      - save_cache:
+          name: Save the examples' Gradle and Maven caches
+          key: examples-v1-{{ checksum "examples/java-gradle-sqlite/build.gradle.kts" }}-{{ checksum "examples/java-maven-sqlite/pom.xml" }}-{{ checksum "examples/kotlin-gradle-sqlite/build.gradle.kts" }}-{{ checksum "examples/spring-boot-mysql/build.gradle.kts" }}-{{ checksum "examples/dropwizard-mysql/build.gradle.kts" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+            - ~/.m2/repository
+          when: always
+
+      - store_test_results:
+          path: examples/java-gradle-sqlite/build/test-results/test
+      - store_test_results:
+          path: examples/java-maven-sqlite/target/surefire-reports
+      - store_test_results:
+          path: examples/kotlin-gradle-sqlite/build/test-results/test
+      - store_test_results:
+          path: examples/spring-boot-mysql/build/test-results/test
+      - store_test_results:
+          path: examples/dropwizard-mysql/build/test-results/test
+      - store_artifacts:
+          path: examples/dropwizard-mysql/smoke-server.log
+          destination: dropwizard-smoke-server.log
 
   format-check:
     # Reuses the JDK 17 image: Spotless and both formatters are JVM tools, and
@@ -429,6 +554,7 @@ workflows:
             parameters:
               jackson_version: ["2.13.5", "2.17.3", "2.22.2"]
       - format-check
+      - examples
       - jvm-build:
           requires:
             - jvm-build-jackson-2.9.10
@@ -436,6 +562,7 @@ workflows:
             - jvm-build-jackson-2.17.3
             - jvm-build-jackson-2.22.2
             - format-check
+            - examples
       - web-build
       - web-publish:
           requires:

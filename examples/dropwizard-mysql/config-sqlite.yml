@@ -1,0 +1,17 @@
+# Same service, no database to run: a file-backed SQLite store. Single node only.
+skipper:
+  store: sqlite
+  sqlitePath: orders.db
+
+server:
+  applicationConnectors:
+    - type: http
+      port: 8080
+  adminConnectors:
+    - type: http
+      port: 8081
+
+logging:
+  level: WARN
+  loggers:
+    com.example: INFO
