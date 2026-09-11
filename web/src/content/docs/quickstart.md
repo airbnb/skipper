@@ -41,10 +41,14 @@ nothing else to set up to start experimenting: no database to provision and no s
 create.
 
 ```kotlin
+import com.airbnb.skipper.SkipperConfig
+
 val config = SkipperConfig.forService("my-service")
 ```
 
 ```java
+import com.airbnb.skipper.SkipperConfig;
+
 SkipperConfig config = SkipperConfig.forService("my-service");
 ```
 
@@ -54,13 +58,13 @@ SkipperConfig config = SkipperConfig.forService("my-service");
 
 ## 3. Create the runtime and start the scheduler
 
-`SkipperRuntime` is in `com.airbnb.skipper.factory`; the snippets on this site omit imports, so
-see [Where things live](/docs/reference/core-types/#where-things-live) when one does not resolve.
-
 `SkipperRuntime` wires up the engine from your config. Start its scheduler so workflows are
 driven forward, and keep the runtime around to obtain the workflow factory.
 
 ```kotlin
+import com.airbnb.skipper.admin.AdminResource
+import com.airbnb.skipper.factory.SkipperRuntime
+
 val runtime = SkipperRuntime(config)
 
 // Start the scheduler (stop it on shutdown).
@@ -72,6 +76,9 @@ val admin = runtime.adminResource.get()
 ```
 
 ```java
+import com.airbnb.skipper.admin.AdminResource;
+import com.airbnb.skipper.factory.SkipperRuntime;
+
 SkipperRuntime runtime = new SkipperRuntime(config);
 
 // Start the scheduler (stop it on shutdown).
@@ -88,6 +95,11 @@ A workflow is a class with at least one `@WorkflowMethod`. An action is a method
 `Actions` class, annotated with `@Execute`, where you perform I/O and side effects.
 
 ```kotlin
+import com.airbnb.skipper.Actions
+import com.airbnb.skipper.Execute
+import com.airbnb.skipper.Workflow
+import com.airbnb.skipper.WorkflowMethod
+
 class GreetingWorkflow : Workflow() {
   private val actions = actions<GreetingActions>()
 
@@ -102,6 +114,12 @@ class GreetingActions : Actions() {
 ```
 
 ```java
+import com.airbnb.skipper.Actions;
+import com.airbnb.skipper.Execute;
+import com.airbnb.skipper.Workflow;
+import com.airbnb.skipper.WorkflowMethod;
+import java.util.concurrent.CompletableFuture;
+
 public class GreetingWorkflow extends Workflow {
   private final GreetingActions actions = actions(GreetingActions.class);
 
@@ -124,6 +142,8 @@ public class GreetingActions extends Actions {
 Get the workflow factory from the runtime and start an instance with a unique id.
 
 ```kotlin
+import com.airbnb.skipper.IWorkflowFactory
+
 val factory: IWorkflowFactory = runtime.workflowFactory.get()
 
 val workflow = factory<GreetingWorkflow>("greeting-42")
@@ -131,6 +151,8 @@ val result = workflow.greet("world") // suspends until the workflow completes
 ```
 
 ```java
+import com.airbnb.skipper.IWorkflowFactory;
+
 IWorkflowFactory factory = runtime.getWorkflowFactory().get();
 
 GreetingWorkflow workflow = factory.invoke(GreetingWorkflow.class, "greeting-42");

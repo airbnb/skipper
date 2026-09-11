@@ -5,22 +5,6 @@ section: Reference
 order: 31
 ---
 
-## Where things live
-
-The snippets in the guides omit imports. Everything is under `com.airbnb.skipper`; these are the
-sub-packages you will need. `internal` is part of the public API where a guide names it.
-
-| Package | Types |
-|---|---|
-| `com.airbnb.skipper` | `Workflow`, `Actions`, the annotations, `IWorkflowFactory`, `WorkflowCallbackHandler`, `SkipperConfig`, `SimpleInjector`, `ComponentFactory`, `RetryStrategy`, `FixedRetryStrategy`, `ExponentialRetryStrategy`, `PersistentRetryStrategy`, `SkipperError`, `RetryableError`, `NonRetryableError`, `FeatureGate` |
-| `com.airbnb.skipper.api` | `WorkflowInstanceView`, `WorkflowInstanceStatusView` |
-| `com.airbnb.skipper.factory` | `SkipperRuntime` |
-| `com.airbnb.skipper.admin` | `AdminResource` |
-| `com.airbnb.skipper.internal` | `ExceptionClassifier`, `DefaultExceptionClassifier` |
-| `com.airbnb.skipper.internal.storage.sqlite` / `...internal.scheduler.sqlite` | `SqliteWorkflowStore.Factory`, `SqliteScheduler.Factory` |
-| `com.airbnb.skipper.internal.storage.mysql` / `...internal.scheduler.mysql` | `MySqlWorkflowStore.Factory`, `MySqlScheduler.Factory` |
-| `com.airbnb.skipper.testutils` | `WorkflowTest`, `Bind`, `WorkflowTestHelper` |
-
 ## In-workflow API — `Workflow`
 
 Methods available inside a `@WorkflowMethod`. See [Workflow API](/docs/workflow-api/) and

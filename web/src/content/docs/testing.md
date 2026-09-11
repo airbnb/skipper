@@ -272,9 +272,32 @@ Use `to` when the field's type is the concrete fake but the action injects an in
 their no-arg constructor, as in production.
 
 The bindings are captured when the base class sets up the runtime, before your test method runs.
-Configure a scenario by mutating the fake in place (`carrier.failuresRemaining = 2`), not by
-assigning a new object to the field: a reassignment inside the test body compiles, runs, and is
-never seen by the actions.
+Configure a scenario by mutating the fake in place, not by assigning a new object to the field: a
+reassignment inside the test body compiles, runs, and is never seen by the actions.
+
+```kotlin
+@Bind(to = Carrier::class) var carrier = FakeCarrier()
+
+@Test
+fun carrierOutageIsRetried() {
+  carrier.failuresRemaining = 2                  // seen by the action: same object the runtime holds
+  // carrier = FakeCarrier(failuresRemaining = 2) // not seen: the runtime keeps the original fake
+  workflowBuilder<ShippingWorkflow>().build().ship(order)
+  // ...
+}
+```
+
+```java
+@Bind(to = Carrier.class) FakeCarrier carrier = new FakeCarrier();
+
+@Test
+public void carrierOutageIsRetried() {
+  carrier.failuresRemaining = 2;                 // seen by the action: same object the runtime holds
+  // carrier = new FakeCarrier(2);                // not seen: the runtime keeps the original fake
+  workflowBuilder(ShippingWorkflow.class).build().ship(order);
+  // ...
+}
+```
 
 ## Without the base class
 
