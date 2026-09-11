@@ -16,6 +16,7 @@ Kotlin or Java code, and let Skipper guarantee they run to completion.
 <a href="https://central.sonatype.com/artifact/com.airbnb.skipper/skipper-core"><img src="https://img.shields.io/maven-central/v/com.airbnb.skipper/skipper-core?color=2a3990&label=Maven%20Central" alt="Maven Central"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-2a3990" alt="License: Apache 2.0"></a>
 <img src="https://img.shields.io/badge/JVM-8%2B-2a3990" alt="JVM 8+">
+<img src="https://img.shields.io/badge/Jackson-2.9_to_2.22-2a3990" alt="Jackson 2.9 to 2.22">
 <img src="https://img.shields.io/badge/API-Kotlin_%26_Java-f15b29" alt="Kotlin and Java">
 <img src="https://img.shields.io/badge/status-pre--release-f15b29" alt="Pre-release">
 
@@ -135,6 +136,9 @@ implementation 'com.airbnb.skipper:skipper-core:0.6.0'
 ```
 
 </details>
+
+Skipper is built against Jackson 2.9 and tested on every push against the newest Jackson 2.x as well, so
+it runs on whichever Jackson your service already has.
 
 Then wire it up once at startup:
 
