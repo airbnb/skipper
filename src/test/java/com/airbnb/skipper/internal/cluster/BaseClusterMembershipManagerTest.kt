@@ -80,6 +80,8 @@ abstract class BaseClusterMembershipManagerTest {
             sleep(100)
         }
         extraManagers.forEach { it.stop() }
+        // Wait for each heartbeat loop to exit so no in-flight beat lands after the next test's reset.
+        extraManagers.forEach { m -> awaitCondition { !m.isRegistered } }
         extraManagers.clear()
     }
 

@@ -103,6 +103,10 @@ class JdbcTransactionManager(private val ds: DataSource) {
      * versioned, optimistic writes Skipper issues: a repeat either finds the row already moved and
      * skips it, or moves it once). Backends whose errors never match (e.g. MySQL) run [action]
      * exactly once.
+     *
+     * Only retry work that has not yet produced a side effect the caller depends on seeing (e.g. a
+     * SELECT phase); a write phase should handle contention per statement instead, as the SQLite
+     * scheduler's lease loop does, so that nothing already written is dropped from the result.
      */
     fun <T> retryOnTransientLockContention(action: Supplier<T>): T {
         var attempt = 0
@@ -155,7 +159,7 @@ class JdbcTransactionManager(private val ds: DataSource) {
      * primary / extended result codes, and so other backends (whose messages do not contain these
      * tokens) are never retried.
      */
-    private fun isTransientLockContention(error: Throwable): Boolean {
+    fun isTransientLockContention(error: Throwable): Boolean {
         var cause: Throwable? = error
         while (cause != null) {
             val message = cause.message

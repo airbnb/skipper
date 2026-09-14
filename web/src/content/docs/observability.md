@@ -55,6 +55,9 @@ The UI — and the JSON API behind it — lets you:
 - Cancel a running instance — `POST /skipper/admin/workflows/{id}/cancel`.
 - Review workflows that exhausted their retries and the scheduler **dead-letter queue**, and
   requeue stuck tasks.
+- See the scheduler **cluster**: the live members and the range of task-ID buckets each one
+  fetches from, and whether [task partitioning](/docs/storage/#running-multiple-instances) is
+  active on this instance — `GET /skipper/admin/cluster`.
 - List and **replay durable [signals](/docs/signals-and-queries/)**:
 
 ```

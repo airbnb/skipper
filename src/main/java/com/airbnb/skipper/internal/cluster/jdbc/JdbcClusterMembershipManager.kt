@@ -48,8 +48,11 @@ import org.slf4j.LoggerFactory
  * window. Only the persistence layer differs: plain JDBC over [JdbcTransactionManager], with SQL
  * that is identical for both dialects.
  *
- * The heartbeat thread is a daemon and is interrupted by [stop], so a host that forgets to stop
- * Skipper can still exit and a stopped manager stops promptly rather than after one more sleep.
+ * Two deliberate departures from the UDS life-cycle, neither observable through the interface:
+ * the heartbeat thread is a daemon and is interrupted by [stop], so a host that forgets to stop
+ * Skipper can still exit and a stopped manager stops promptly rather than after one more sleep;
+ * and a stopped manager can be [start]ed again (UDS's cannot), each start owning a fresh loop.
+ * Routine heartbeat refreshes are logged at debug rather than info.
  *
  * INVARIANT: `owner` and `clusterName` are both bound to [TENANT], i.e. they hold the same string
  * at runtime. A Skipper tenant runs exactly one cluster, and the cluster's identity is its tenant.
@@ -280,8 +283,10 @@ class JdbcClusterMembershipManager
         /**
          * Builds a [JdbcClusterMembershipManager] over the SQLite database Skipper uses, resolved the
          * same way `SqliteScheduler.Factory` resolves it: the given file [path] when set, otherwise
-         * [SkipperConfig.sqliteDataSource], otherwise the ephemeral in-memory database. Pair it with the
-         * SQLite store and scheduler built from the same path / DataSource.
+         * [SkipperConfig.sqliteDataSource], otherwise an ephemeral in-memory database. Pair it with the
+         * SQLite store and scheduler built from the same path / DataSource. Note that each in-memory
+         * default is a distinct database, so with neither a path nor a DataSource the manager only ever
+         * sees itself — which is also all a single-process in-memory deployment could ever be.
          */
         class SqliteFactory
             @JvmOverloads

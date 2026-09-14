@@ -79,6 +79,9 @@
         <li class="nav-item">
           <a class="nav-link" href="#" onclick="showDLQ(); return false">DLQ</a>
         </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" onclick="showCluster(); return false">Cluster</a>
+        </li>
       </ul>
       <form class="form-inline my-2 my-lg-0" onsubmit="searchWorkflowInstance(); return false">
         <input class="form-control mr-sm-2" type="text" id="searchBox" placeholder="Workflow ID">
@@ -740,6 +743,110 @@ DLQ view
 <!----------------------------------------------------------------------------------------------------------------------
 Workflows List view
 ----------------------------------------------------------------------------------------------------------------------->
+<!----------------------------------------------------------------------------------------------------------------------
+Cluster view: the live scheduler cluster members and the task-ID bucket range each one fetches from
+----------------------------------------------------------------------------------------------------------------------->
+<script id="cluster_view" type="text/x-handlebars-template">
+  <div class="container">
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3">
+      <h1 class="h2">Cluster</h1>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadCluster()">
+        <i class="fas fa-sync-alt"></i> Refresh
+      </button>
+    </div>
+
+    <div class="row mb-4">
+      <div class="col-md-3 mb-3">
+        <div class="card h-100">
+          <div class="card-body">
+            <h6 class="card-subtitle text-muted mb-2">Cluster</h6>
+            <div class="h5 mb-0 text-break">{{#if cluster_name}}{{cluster_name}}{{else}}<span class="text-muted">&mdash;</span>{{/if}}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3 mb-3">
+        <div class="card h-100">
+          <div class="card-body">
+            <h6 class="card-subtitle text-muted mb-2">This instance</h6>
+            <div class="h5 mb-0 text-break">{{#if current_member_id}}{{current_member_id}}{{else}}<span class="text-muted">not registered</span>{{/if}}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3 mb-3">
+        <div class="card h-100">
+          <div class="card-body">
+            <h6 class="card-subtitle text-muted mb-2">Live members</h6>
+            <div class="h5 mb-0">{{members.length}}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3 mb-3">
+        <div class="card h-100">
+          <div class="card-body">
+            <h6 class="card-subtitle text-muted mb-2">Task partitioning</h6>
+            <div class="h5 mb-0">
+              {{#if partitioning_active}}
+              <span class="badge badge-success bg-success">active</span>
+              {{else}}
+              <span class="badge badge-secondary bg-secondary">inactive</span>
+              <small class="text-muted d-block mt-1">fetching from the whole queue</small>
+              {{/if}}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {{#if members.length}}
+    <h5 class="mb-2">Bucket assignment <small class="text-muted">({{total_buckets}} buckets, task ID hashed with CRC32)</small></h5>
+    <div class="progress mb-4" style="height: 32px;">
+      {{#each members}}
+      <div class="progress-bar {{color_class}} {{#if current}}font-weight-bold fw-bold{{/if}}" role="progressbar"
+           style="width: {{share}}%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 6px; font-size: 0.85rem; {{#if current}}box-shadow: inset 0 0 0 3px rgba(255,255,255,0.85);{{/if}}"
+           title="{{member_id}}: buckets [{{start_bucket_inclusive}}, {{end_bucket_exclusive}}) &mdash; {{share}}%"
+           aria-valuenow="{{bucket_count}}" aria-valuemin="0" aria-valuemax="{{../total_buckets}}">{{member_id}}</div>
+      {{/each}}
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Member</th>
+            <th>Bucket range</th>
+            <th class="text-right text-end">Buckets</th>
+            <th class="text-right text-end">Share</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{#each members}}
+          <tr>
+            <td><span class="d-inline-block rounded {{color_class}}" style="width: 14px; height: 14px;"></span></td>
+            <td class="text-monospace font-monospace">{{member_id}} {{#if current}}<span class="badge badge-primary bg-primary ml-1 ms-1">this instance</span>{{/if}}</td>
+            <td class="text-monospace font-monospace">[{{start_bucket_inclusive}}, {{end_bucket_exclusive}})</td>
+            <td class="text-right text-end">{{bucket_count}}</td>
+            <td class="text-right text-end">{{share}}%</td>
+          </tr>
+          {{/each}}
+        </tbody>
+      </table>
+    </div>
+    <p class="text-muted small">
+      Members are ordered by ID and split the {{total_buckets}} buckets evenly, the first members taking one
+      extra when it does not divide. A member whose heartbeat stops drops out of this list after the
+      liveness window and its buckets are redistributed among the rest.
+    </p>
+    {{else}}
+    <div class="alert alert-secondary">
+      No live cluster members. Either this instance has not registered yet (the first heartbeat has not
+      landed), or the configured <code>clusterMembershipManager</code> does not track membership, in which
+      case every instance fetches from the whole queue.
+    </div>
+    {{/if}}
+  </div>
+</script>
+
 <script id="workflows_list_view" type="text/x-handlebars-template">
   <div class="container">
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3">
@@ -1010,6 +1117,7 @@ Workflows List view
   const workflow_detail_view = Handlebars.compile($('#workflow_detail_view').html());
   const exhausted_retries_view = Handlebars.compile($('#exhausted_retries_view').html());
   const dlq_view = Handlebars.compile($('#dlq_view').html());
+  const cluster_view = Handlebars.compile($('#cluster_view').html());
   const workflows_list_view = Handlebars.compile($('#workflows_list_view').html());
   const workflow_row_partial = Handlebars.compile($('#workflow_row_partial').html());
 
@@ -1332,6 +1440,26 @@ Workflows List view
       $("#main_content").html(dlq_view(response));
     }, function (response) {
       alert("Failed to load DLQ: " + response.responseText);
+    });
+  }
+
+  function showCluster() {
+    navigateTo('cluster', loadCluster);
+  }
+
+  // Colors cycle per member so adjacent bucket ranges stay distinguishable in the assignment bar.
+  const CLUSTER_MEMBER_COLORS = ['bg-primary', 'bg-success', 'bg-info', 'bg-warning', 'bg-danger', 'bg-secondary'];
+
+  function loadCluster() {
+    safeGet("/skipper/admin/cluster", function(response) {
+      console.log(response);
+      (response.members || []).forEach(function (m, i) {
+        m.share = response.total_buckets > 0 ? (100 * m.bucket_count / response.total_buckets).toFixed(1) : '0.0';
+        m.color_class = CLUSTER_MEMBER_COLORS[i % CLUSTER_MEMBER_COLORS.length];
+      });
+      $("#main_content").html(cluster_view(response));
+    }, function (response) {
+      alert("Failed to load cluster: " + response.responseText);
     });
   }
 
@@ -1715,6 +1843,8 @@ Workflows List view
       loadExhaustedRetries();
     } else if (hash === 'dlq') {
       loadDLQ();
+    } else if (hash === 'cluster') {
+      loadCluster();
     } else if (hash === 'workflows') {
       loadWorkflows();
     } else {

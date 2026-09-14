@@ -225,9 +225,10 @@ class SqliteScheduler
         /**
          * One attempt at [fetch]. Several Skipper instances sharing one SQLite database contend for
          * table locks (`SQLITE_LOCKED` / `SQLITE_BUSY`), so the public method wraps this in
-         * [JdbcTransactionManager.retryOnTransientLockContention]; re-running is safe because every
-         * lease `UPDATE` is versioned — a task leased by an earlier attempt is simply not a candidate
-         * any more.
+         * [JdbcTransactionManager.retryOnTransientLockContention]. Only the SELECT phase can surface
+         * such an error to the retry: [leaseCandidates] absorbs contention on an individual lease
+         * `UPDATE` (treating it like a lost optimistic race, so the task is left for the next fetch)
+         * precisely so that a retry never discards leases already taken by this attempt.
          */
         private fun <T> fetchOnce(limit: Int): List<Task<T>> {
             try {
@@ -361,7 +362,25 @@ class SqliteScheduler
                     updatePs.setString(++j, owner)
                     updatePs.setString(++j, candidate.taskId)
                     updatePs.setInt(++j, candidate.version)
-                    val rowsUpdated = updatePs.executeUpdate()
+                    val rowsUpdated =
+                        try {
+                            updatePs.executeUpdate()
+                        } catch (e: SQLException) {
+                            if (!transactionManager.isTransientLockContention(e)) {
+                                throw e
+                            }
+                            // Another instance holds the table lock right now. Skip this candidate rather than
+                            // fail the whole fetch (which would drop the leases already taken above); the task
+                            // stays PENDING and is picked up by a later fetch.
+                            metrics
+                                .counter(
+                                    ImmutableMap.of("source", metricSource),
+                                    METRICS_COMPONENT,
+                                    "leaseLockContention"
+                                )
+                                .inc()
+                            0
+                        }
                     if (rowsUpdated != 1) {
                         // Another thread got the lease first, skip this task.
                         metrics
