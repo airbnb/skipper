@@ -1,10 +1,10 @@
 # Releasing Skipper
 
-Skipper publishes five artifacts to **Maven Central**, from CI, on every `v*` tag:
+Skipper publishes four artifacts to **Maven Central**, from CI, on every `v*` tag:
 `com.airbnb.skipper:skipper-core` (the engine), `com.airbnb.skipper:skipper-testutils` (the test
 harness, built from `testutils/`), `com.airbnb.skipper:skipper-state-machine` (the state-machine
-DSL) and the two metrics backends under `plugins/`, `com.airbnb.skipper:skipper-metrics-datadog` and
-`com.airbnb.skipper:skipper-metrics-prometheus`. They share one version. That is the only place any of them is published.
+DSL) and `com.airbnb.skipper:skipper-metrics-prometheus` (the Prometheus metrics backend, built from
+`plugins/prometheus/`). They share one version. That is the only place any of them is published.
 
 ## Versions
 

@@ -5,7 +5,6 @@ only the integration they need and core stays free of backend-specific dependenc
 
 | Directory | Artifact | What it is |
 |---|---|---|
-| [`datadog/`](datadog) | `com.airbnb.skipper:skipper-metrics-datadog` | `Metrics` implementation reporting through a DogStatsD client |
 | [`prometheus/`](prometheus) | `com.airbnb.skipper:skipper-metrics-prometheus` | `Metrics` implementation registering collectors with the Prometheus Java client |
 
 Every plugin builds and is published with the root Gradle build (`./gradlew build` covers them), on
