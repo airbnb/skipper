@@ -6,6 +6,7 @@ import com.airbnb.skipper.internal.common.SneakyThrow
 import java.sql.Connection
 import java.util.UUID
 import java.util.function.Function
+import java.util.function.Supplier
 import javax.inject.Singleton
 import javax.sql.DataSource
 import kotlin.random.Random
@@ -88,6 +89,34 @@ class JdbcTransactionManager(private val ds: DataSource) {
                 closeCurrentTransaction()
             }
             // Reached only when the attempt failed with retryable lock contention and was not rethrown.
+            backoffBeforeRetry(attempt)
+        }
+    }
+
+    /**
+     * Runs [action], retrying it a bounded number of times when it fails with transient lock
+     * contention (see [isTransientLockContention]), for work that manages its own connection via
+     * [getConnection] instead of running inside [execute] — e.g. the schedulers' auto-commit fetch
+     * paths and the cluster membership reads. The same SQLite `SQLITE_LOCKED` / `SQLITE_BUSY`
+     * conditions that [execute] retries can hit any statement when several Skipper instances share
+     * one database; [action] must therefore be safe to re-run from the top (which holds for the
+     * versioned, optimistic writes Skipper issues: a repeat either finds the row already moved and
+     * skips it, or moves it once). Backends whose errors never match (e.g. MySQL) run [action]
+     * exactly once.
+     */
+    fun <T> retryOnTransientLockContention(action: Supplier<T>): T {
+        var attempt = 0
+        while (true) {
+            try {
+                return action.get()
+            } catch (
+                @Suppress("TooGenericExceptionCaught") e: Throwable
+            ) {
+                if (attempt >= MAX_TRANSIENT_LOCK_RETRIES || !isTransientLockContention(e)) {
+                    throw SneakyThrow.sneakyThrow(e)
+                }
+                attempt++
+            }
             backoffBeforeRetry(attempt)
         }
     }

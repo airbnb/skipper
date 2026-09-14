@@ -210,7 +210,26 @@ class SqliteScheduler
             }
         }
 
-        override fun <T> fetch(limit: Int): List<Task<T>> {
+        override fun <T> fetch(limit: Int): List<Task<T>> = transactionManager.retryOnTransientLockContention { fetchOnce(limit) }
+
+        override fun <T> fetch(
+            limit: Int,
+            partition: BucketRange?
+        ): List<Task<T>> {
+            if (partition == null) {
+                return fetch(limit)
+            }
+            return transactionManager.retryOnTransientLockContention { fetchPartitionedOnce(limit, partition) }
+        }
+
+        /**
+         * One attempt at [fetch]. Several Skipper instances sharing one SQLite database contend for
+         * table locks (`SQLITE_LOCKED` / `SQLITE_BUSY`), so the public method wraps this in
+         * [JdbcTransactionManager.retryOnTransientLockContention]; re-running is safe because every
+         * lease `UPDATE` is versioned — a task leased by an earlier attempt is simply not a candidate
+         * any more.
+         */
+        private fun <T> fetchOnce(limit: Int): List<Task<T>> {
             try {
                 val querySql =
                     "SELECT * FROM $schedulerTasksTable " +
@@ -256,14 +275,12 @@ class SqliteScheduler
             }
         }
 
-        override fun <T> fetch(
+        /** One attempt at the partitioned [fetch]; see [fetchOnce] for why it is retried. */
+        private fun <T> fetchPartitionedOnce(
             limit: Int,
-            partition: BucketRange?
+            partition: BucketRange
         ): List<Task<T>> {
             try {
-                if (partition == null) {
-                    return fetch(limit)
-                }
                 // Java-side bucket filtering: run the base query WITHOUT the MySQL-only CRC32 predicate,
                 // materialize the candidate rows, then keep only rows whose BucketPartitioner.hashToBucket
                 // bucket falls in [startInclusive, endExclusive). hashToBucket computes the same CRC32%1000

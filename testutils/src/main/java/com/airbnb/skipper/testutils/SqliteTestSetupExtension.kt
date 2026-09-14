@@ -29,7 +29,7 @@ import org.sqlite.SQLiteDataSource
  * in [close]). The [DB_DATA_SOURCE] field is the single DataSource tests wire into
  * `config.setSqliteDataSource(...)`; sharing across owners comes from that common DataSource.
  *
- * SQLite has no `TRUNCATE`, so [beforeEach] resets each of the five Skipper tables with
+ * SQLite has no `TRUNCATE`, so [beforeEach] resets each of the six Skipper tables with
  * `DELETE FROM <table>`.
  *
  * The [tablePrefix] (default [SkipperConfig.DEFAULT_TABLE_PREFIX]) is the single source of truth for
@@ -42,7 +42,7 @@ class SqliteTestSetupExtension
     constructor(
         private val tablePrefix: String = SkipperConfig.DEFAULT_TABLE_PREFIX
     ) : OssSetupExtension(), BeforeEachCallback {
-        /** The five Skipper tables under the configured prefix, reset before each test. */
+        /** The six Skipper tables under the configured prefix, reset before each test. */
         private val tables: List<String> = TABLE_SUFFIXES.map { suffix -> tablePrefix + suffix }
 
         override fun beforeEach(context: ExtensionContext) {
@@ -85,14 +85,15 @@ class SqliteTestSetupExtension
         }
 
         companion object {
-            /** The five Skipper table-name suffixes (the prefix is prepended per instance). */
+            /** The six Skipper table-name suffixes (the prefix is prepended per instance). */
             private val TABLE_SUFFIXES: List<String> =
                 List.of(
                     "workflow_instances",
                     "action_checkpoints",
                     "timers",
                     "scheduler_tasks",
-                    "persisted_signals"
+                    "persisted_signals",
+                    "cluster_members"
                 )
 
             @JvmField

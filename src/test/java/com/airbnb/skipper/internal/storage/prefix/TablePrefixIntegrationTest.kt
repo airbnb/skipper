@@ -231,7 +231,8 @@ class TablePrefixIntegrationTest {
                 prefix + "action_checkpoints",
                 prefix + "timers",
                 prefix + "scheduler_tasks",
-                prefix + "persisted_signals"
+                prefix + "persisted_signals",
+                prefix + "cluster_members"
             )
         assertThat(tableNames)
             .doesNotContain(
@@ -239,7 +240,8 @@ class TablePrefixIntegrationTest {
                 otherPrefix + "action_checkpoints",
                 otherPrefix + "timers",
                 otherPrefix + "scheduler_tasks",
-                otherPrefix + "persisted_signals"
+                otherPrefix + "persisted_signals",
+                otherPrefix + "cluster_members"
             )
     }
 

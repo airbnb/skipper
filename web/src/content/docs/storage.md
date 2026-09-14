@@ -107,6 +107,41 @@ Flyway.configure()
 If you manage schema changes with your own tooling, apply the `V*__*.sql` files from
 `db/migration` in order instead.
 
+### Running multiple instances
+
+Several instances of your service can share one MySQL database. Each fetches ready tasks and takes
+a lease on them, so they never process a task twice, but they do compete for the same rows.
+Enable **task partitioning** to remove that contention: each instance registers itself in the
+`skipper_cluster_members` table and heartbeats it, every instance derives the same ordered member
+list, and each fetches only the tasks whose ID hashes into its own bucket range.
+
+```kotlin
+val config = SkipperConfig.forService("my-service").apply {
+  workflowStore = MySqlWorkflowStore.Factory()
+  scheduler = MySqlScheduler.Factory()
+  clusterMembershipManager = JdbcClusterMembershipManager.MySqlFactory()
+  mySqlDataSource = dataSource
+  clusterMemberName = System.getenv("HOSTNAME") // unique per instance; defaults to the hostname
+}
+```
+
+```java
+SkipperConfig config = SkipperConfig.forService("my-service");
+config.setWorkflowStore(new MySqlWorkflowStore.Factory());
+config.setScheduler(new MySqlScheduler.Factory());
+config.setClusterMembershipManager(new JdbcClusterMembershipManager.MySqlFactory());
+config.setMySqlDataSource(dataSource);
+config.setClusterMemberName(System.getenv("HOSTNAME")); // unique per instance; defaults to the hostname
+```
+
+An instance whose heartbeat is older than 60 seconds drops out of the member list and its buckets
+are redistributed among the rest; a new instance is included after its first heartbeat
+(`clusterHeartBeatInterval`, 10 seconds by default). Partitioning is gated by the
+`task_partitioning` feature key, which the default `FeatureGate` enables; an instance that cannot
+determine its partition falls back to fetching from the whole queue, so it degrades to today's
+behavior rather than stalling. The same manager is available for a file-backed SQLite database
+shared by processes on one host as `JdbcClusterMembershipManager.SqliteFactory(path)`.
+
 **Migrations are immutable.** Every schema change ships as a new migration file. Because the
 library runs against each adopting service's database, a code change that references a new
 column must wait until that migration has been applied everywhere it runs — otherwise the

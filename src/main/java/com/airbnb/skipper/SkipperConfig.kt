@@ -70,6 +70,15 @@ class SkipperConfig(
     var clusterMembershipManager: ComponentFactory<out ClusterMembershipManager> = SingleMemberClusterMembershipManager.Factory(),
     /** Some cluster membership manager implementations may need to be configured with a heartbeat interval. */
     var clusterHeartBeatInterval: Duration = Duration.ofSeconds(10),
+    /**
+     * The identifier this instance registers under in the cluster membership table. Must be unique
+     * among the instances sharing a store and [tenant]. Defaults (`null`) to the local hostname,
+     * which is fine for one instance per host; set it explicitly (e.g. to a pod/container name) when
+     * several instances run on one host, otherwise they collide on one member row and receive the
+     * same task partition. Only consulted by cluster-aware managers such as
+     * `JdbcClusterMembershipManager`.
+     */
+    var clusterMemberName: String? = null,
     /** This is the time each task has to finish processing before it is considered staled and is retried. */
     var schedulerTaskLeaseDuration: Duration = Duration.ofMinutes(8),
     /** The maximum number of times a task can be retried before it is considered failed. */
