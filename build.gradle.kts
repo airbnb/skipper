@@ -301,8 +301,8 @@ signing {
 // fails if any would change, and `check` (so `build`) depends on it. The format-check CI job
 // runs spotlessCheck on every push.
 //
-// Configured once here for the whole build rather than per project: skipper-state-machine's
-// sources are covered by the targets below, so there is a single spotlessApply and one place
+// Configured once here for the whole build rather than per project: skipper-state-machine's and
+// the plugins/ modules' sources are covered by the targets below, so there is a single spotlessApply and one place
 // that says what "formatted" means. Formatter versions come from the version catalog.
 //
 //   Kotlin  ktlint, configured by the .editorconfig at the repository root
@@ -312,11 +312,11 @@ signing {
 // between here and the internal monorepo keeps its formatting either way.
 spotless {
     kotlin {
-        target("src/**/*.kt", "testutils/src/**/*.kt", "skipper-state-machine/src/**/*.kt")
+        target("src/**/*.kt", "testutils/src/**/*.kt", "skipper-state-machine/src/**/*.kt", "plugins/*/src/**/*.kt")
         ktlint(libs.versions.ktlint.get())
     }
     java {
-        target("src/**/*.java", "testutils/src/**/*.java", "skipper-state-machine/src/**/*.java")
+        target("src/**/*.java", "testutils/src/**/*.java", "skipper-state-machine/src/**/*.java", "plugins/*/src/**/*.java")
         googleJavaFormat(libs.versions.googleJavaFormat.get())
     }
 }

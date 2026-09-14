@@ -173,7 +173,7 @@ open class CompensationExecutor
                                     metrics
                                         .counter(
                                             ImmutableMap.of(
-                                                "outcome",
+                                                "result",
                                                 "completed",
                                                 "workflowClass",
                                                 executionContext
