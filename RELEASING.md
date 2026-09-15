@@ -65,8 +65,8 @@ repository, so a local experiment cannot become a release by accident.
 3. **The `release` workflow runs on the tag** (`.github/workflows/release.yml`; a hand-pushed
    tag starts it too): `jvm-build-jackson-2.9.10` runs the full test suite on the tagged
    commit, then `publish-release` signs the artifacts and uploads them to the Central Portal,
-   where they sit as a validated deployment. The credentials live in the `skipper-publish`
-   GitHub environment; the workflow header lists them.
+   where they sit as a validated deployment. The credentials are repository secrets; the
+   workflow header lists them.
 
 4. **Manual release in the Portal.**
 

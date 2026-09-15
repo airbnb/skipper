@@ -18,10 +18,9 @@
 #                             Internal consumers get it from there: Artifactory's Central mirror
 #                             serves it without any direct upload.
 #
-# Required environment for publish-release (Settings > Environments), named `skipper-publish`,
-# holding these four secrets. Restrict the environment's deployment branches and tags to `v*`
-# tags, and add required reviewers if releases should wait for a person. Pull request runs
-# never see environment secrets, and forks never see any:
+# Required repository secrets for publish-release (Settings > Secrets and variables > Actions).
+# Runs started from a fork never see them; a run on any branch of this repository can, so
+# push access to the repository is the boundary that guards them:
 #
 #   ORG_GRADLE_PROJECT_mavenCentralUsername  Central Portal user token: username
 #   ORG_GRADLE_PROJECT_mavenCentralPassword  Central Portal user token: password
@@ -49,7 +48,6 @@ jobs:
   publish-release:
     needs: jvm-build-jackson-2-9-10
     runs-on: ubuntu-latest
-    environment: skipper-publish
     env:
       GRADLE_OPTS: -Dorg.gradle.daemon=false
       ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralUsername }}
@@ -67,7 +65,7 @@ jobs:
             exit 1
           fi
 
-      - name: Check the release environment is attached
+      - name: Check the release secrets are set
         # A missing secret surfaces here as one clear line rather than as a Gradle credentials
         # error several minutes into the upload.
         run: |
@@ -77,7 +75,7 @@ jobs:
           done
           if [ -n "$missing" ]; then
             echo "Not set:$missing"
-            echo "Add them to the skipper-publish environment (see the header of this file)."
+            echo "Add them as repository secrets (see the header of this file)."
             exit 1
           fi
 
