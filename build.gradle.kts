@@ -24,7 +24,7 @@ group = "com.airbnb.skipper"
 // version so it cannot be mistaken for one, and guarded against in the publish tasks below.
 val LOCAL_VERSION = "0.0.0-LOCAL"
 
-// The version is supplied by CI as -PVERSION_NAME (see .circleci/config.yml); a plain
+// The version is supplied by CI as -PVERSION_NAME (see .github/workflows/release.yml); a plain
 // local build stays on the sentinel below, which the publish guard refuses to upload.
 version = providers.gradleProperty("VERSION_NAME").getOrElse(LOCAL_VERSION)
 

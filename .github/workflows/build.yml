@@ -1,0 +1,379 @@
+# GitHub Actions configuration for airbnb/skipper: the build workflow. The release workflow
+# is release.yml; both share the JVM build in jvm-build.yml.
+#
+# Runs on every pull request and on every push to main. Four checks gate a merge:
+#
+#   jvm-build-jackson-<version>  The JVM build in jvm-build.yml, once per listed Jackson
+#                 version with that Jackson forced onto the runtime classpath
+#                 (-PjacksonVersion): Skipper compiles against Jackson 2.9.10 and must still
+#                 run on whatever a host service ships.
+#
+#   format-check  Fails when any Kotlin or Java source is not formatted: `gradlew spotlessCheck`
+#                 (ktlint for Kotlin, google-java-format for Java; see build.gradle.kts).
+#                 `./gradlew spotlessApply` repairs a failure. Its own job rather than part of
+#                 the JVM build so a formatting slip is a distinct, fast signal on the pull
+#                 request; the JVM build skips spotlessCheck so one slip does not turn two
+#                 checks red.
+#
+#   examples      Builds, tests and runs every project under examples/ against the artifacts this
+#                 very run produced: jvm-build-jackson-2.9.10 publishes them to ~/.m2 as
+#                 0.0.0-CI and hands that tree over as a run artifact, and each example is
+#                 pointed at it with -PskipperVersion / -Dskipper.version. So a red examples job
+#                 means the change broke something an adopter on Spring, Dropwizard, Guice, Kotlin
+#                 or plain Java would hit. (Adopters copying an example get the pinned Maven Central
+#                 release; the override is CI-only.) Two examples need Docker, which the hosted
+#                 runner ships: Spring Boot's integration test boots MySQL through Testcontainers
+#                 and its compose file is smoke-tested, and the Dropwizard service is smoke-tested
+#                 against a MySQL container.
+#
+#   jvm-build     Fan-in. The main branch ruleset requires the status check `jvm-build`, and this
+#                 job succeeds only when every matrix entry, format-check and examples have. One
+#                 required check keeps the whole matrix merge-gating without listing each entry
+#                 in the repository rules.
+#
+#   web-build     Builds the Astro documentation site in web/ and stores it as a run artifact.
+#                 Nothing else in the build compiles the site, so without this a broken doc
+#                 would only surface at publish time. Runs even for a Gradle-only change: the
+#                 build is under a minute, a path filter would leave the check missing rather
+#                 than green, and web-publish pushes nothing when the built site is unchanged.
+#
+# Two more run on main only:
+#
+#   web-publish  Pushes the built site to the gh-pages branch, which GitHub Pages serves
+#                (Settings > Pages > Branch). Pushes with the run's own GITHUB_TOKEN, so no
+#                deploy key is involved. See scripts/publish-web.sh.
+#
+#   tag-release  Tags main with the version its commits imply (scripts/next-version.sh) once
+#                jvm-build has passed, so landing a `fix:` or `feat:` pull request produces its
+#                release tag without a manual step, then starts the release workflow on that
+#                tag. Does nothing when no releasable commit has landed since the last tag, or
+#                when the tag already exists.
+#
+# Pull requests from forks run every check with a read-only token and no secrets, which is
+# all any of these jobs needs. The two main-only jobs are the only ones that write anything.
+#
+# Runs on a pull request branch are cancelled by a newer push to the same branch. Runs on main
+# never are: cancelling one mid-way could leave a tag pushed without its release started, or a
+# site half published.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Once per Jackson line a host is likely to run. The empty entry is the default build, on the
+  # Jackson Skipper compiles against (2.9.10, the version catalog). Add a version to the list to
+  # cover it; keep the newest 2.x last and bump it as Jackson releases. fail-fast is off so one
+  # Jackson failing still reports the others, as separate jobs would.
+  jvm-build-jackson:
+    name: jvm-build-jackson-${{ matrix.jackson_version || '2.9.10' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        jackson_version: ["", "2.13.5", "2.17.3", "2.22.2"]
+    uses: ./.github/workflows/jvm-build.yml
+    with:
+      jackson_version: ${{ matrix.jackson_version }}
+
+  format-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Spotless and both formatters are JVM tools, and google-java-format 1.26 needs a JDK 17
+      # or newer. Nothing here compiles anything.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Restore Gradle caches
+        # Same keys as jvm-build.yml, read-only: the formatter jars are ordinary Gradle
+        # dependencies, so a cache the JVM build saved already holds them.
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('gradle/libs.versions.toml', 'build.gradle.kts', 'skipper-state-machine/build.gradle.kts', 'testutils/build.gradle.kts', 'plugins/prometheus/build.gradle.kts') }}
+          restore-keys: |
+            gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-
+
+      - name: Check Kotlin and Java formatting
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false
+        run: ./gradlew --stacktrace spotlessCheck
+
+  examples:
+    # Only jvm-build-jackson-2.9.10 produces the artifact this consumes, but a job can only
+    # depend on a whole matrix, so this waits for every Jackson entry. They run in parallel and
+    # take about as long as each other, so the wait costs little.
+    needs: jvm-build-jackson
+    # Docker and docker compose v2 are preinstalled on the hosted image.
+    runs-on: ubuntu-22.04
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+      # Every Gradle invocation in this job, including the ones inside the smoke scripts, builds
+      # against the artifacts jvm-build-jackson-2.9.10 published to ~/.m2 (downloaded below).
+      ORG_GRADLE_PROJECT_skipperVersion: 0.0.0-CI
+    steps:
+      - uses: actions/checkout@v7
+
+      # Every example declares a Java 17 toolchain, and Gradle 9 itself needs JVM 17+ to start.
+      # Maven comes from the example's own wrapper (mvnw), so nothing else is installed.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Restore the examples' Gradle and Maven caches
+        id: examples-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.m2/repository
+          key: examples-v1-${{ hashFiles('examples/java-gradle-sqlite/build.gradle.kts', 'examples/java-maven-sqlite/pom.xml', 'examples/kotlin-gradle-sqlite/build.gradle.kts', 'examples/spring-boot-mysql/build.gradle.kts', 'examples/dropwizard-mysql/build.gradle.kts') }}
+          restore-keys: |
+            examples-v1-
+
+      - name: Make room for this run's Skipper artifacts
+        # The cache above must never supply the Skipper artifacts under test: a cached
+        # 0.0.0-CI tree from an earlier run would shadow the one this run built. Clear the
+        # path before the download, and drop it again before the cache is saved.
+        run: |
+          echo "SKIPPER_M2=$HOME/.m2/repository/com/airbnb/skipper" >> "$GITHUB_ENV"
+          rm -rf "$HOME/.m2/repository/com/airbnb/skipper"
+
+      - name: Fetch the 0.0.0-CI artifacts from jvm-build-jackson-2.9.10
+        uses: actions/download-artifact@v8
+        with:
+          name: skipper-0.0.0-CI
+          path: ${{ env.SKIPPER_M2 }}
+
+      - name: Show the toolchain
+        run: |
+          java -version
+          ls "$SKIPPER_M2"
+          docker version --format '{{.Server.Version}}'
+          docker compose version
+
+      - name: java-gradle-sqlite
+        working-directory: examples/java-gradle-sqlite
+        run: ./gradlew --stacktrace build run
+
+      - name: java-maven-sqlite
+        working-directory: examples/java-maven-sqlite
+        run: |
+          ./mvnw -B -Dskipper.version=0.0.0-CI verify
+          ./mvnw -B -q -Dskipper.version=0.0.0-CI compile exec:java
+
+      - name: kotlin-gradle-sqlite
+        working-directory: examples/kotlin-gradle-sqlite
+        run: ./gradlew --stacktrace build run
+
+      - name: spring-boot-mysql (Testcontainers integration test)
+        working-directory: examples/spring-boot-mysql
+        run: ./gradlew --stacktrace build
+
+      - name: spring-boot-mysql (docker compose smoke)
+        working-directory: examples/spring-boot-mysql
+        # --wait blocks on both services' healthchecks, so the first request lands on a ready app.
+        run: |
+          ./gradlew --stacktrace bootJar
+          docker compose up -d --build --wait
+          curl -fsS -X POST localhost:8080/orders -H 'Content-Type: application/json' \
+            -d '{"orderId":"ci-1","customerId":"alice","sku":"BOOK-1","quantity":2,"amountCents":3900}'
+          for _ in $(seq 1 60); do
+            body=$(curl -fsS localhost:8080/orders/ci-1)
+            case "$body" in *'"instanceStatus":"COMPLETED"'*) echo "$body"; break;; esac
+            sleep 1
+          done
+          case "$body" in *'"status":"FULFILLED"'*) echo "compose smoke passed";; *) echo "order never fulfilled: $body"; docker compose logs app; exit 1;; esac
+      - name: spring-boot-mysql (compose down)
+        if: always()
+        working-directory: examples/spring-boot-mysql
+        run: docker compose down -v
+
+      - name: dropwizard-mysql (build and WorkflowTest)
+        working-directory: examples/dropwizard-mysql
+        run: ./gradlew --stacktrace build
+
+      - name: dropwizard-mysql (smoke against a MySQL container)
+        working-directory: examples/dropwizard-mysql
+        run: |
+          docker run -d --name orders-mysql -p 3306:3306 \
+            -e MYSQL_DATABASE=orders -e MYSQL_USER=orders -e MYSQL_PASSWORD=orders -e MYSQL_ROOT_PASSWORD=root \
+            mysql:8.4
+          for _ in $(seq 1 60); do
+            docker exec orders-mysql mysqladmin ping -h127.0.0.1 -uorders -porders >/dev/null 2>&1 && break
+            sleep 2
+          done
+          scripts/smoke.sh config.yml
+      - name: dropwizard-mysql (stop MySQL)
+        if: always()
+        run: docker rm -f orders-mysql || true
+
+      - name: Drop Gradle lock files and this run's Skipper artifacts
+        if: always()
+        run: |
+          find ~/.gradle -name '*.lock' -type f -delete || true
+          rm -rf "$SKIPPER_M2"
+      - name: Save the examples' Gradle and Maven caches
+        if: always() && steps.examples-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.m2/repository
+          key: ${{ steps.examples-cache.outputs.cache-primary-key }}
+
+      - name: Store test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-examples
+          path: |
+            examples/java-gradle-sqlite/build/test-results/test
+            examples/java-maven-sqlite/target/surefire-reports
+            examples/kotlin-gradle-sqlite/build/test-results/test
+            examples/spring-boot-mysql/build/test-results/test
+            examples/dropwizard-mysql/build/test-results/test
+            examples/dropwizard-mysql/smoke-server.log
+          if-no-files-found: ignore
+
+  jvm-build:
+    needs: [jvm-build-jackson, format-check, examples]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All gating jobs passed
+        run: echo "jvm-build matrix, format-check and examples passed"
+
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 22 satisfies Astro 5's floor (18.20.8+, 20.3+, or 22+). Pinned to a full version
+      # like the JDK above, so a Node release never changes the build without a commit. The npm
+      # cache is keyed on the lock file.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.20.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        # `ci`, not `install`: fails on a lock file that has drifted from package.json rather
+        # than quietly resolving something else.
+        working-directory: web
+        run: npm ci
+
+      - name: Build the site
+        working-directory: web
+        env:
+          # The site is served from the root of the custom domain in web/public/CNAME, not from
+          # a /<repo>/ project path, so no base path is set. astro.config.mjs defaults to this
+          # same value; it is repeated here so the deployed origin is visible in the job that
+          # builds it.
+          SKIPPER_SITE_URL: https://skipper.airbnb.tech
+        run: npm run build
+
+      # web-publish pushes exactly these bytes. Rebuilding there would risk publishing
+      # something no job ever checked. Also the downloadable copy of the site on every run,
+      # pull requests included.
+      - name: Store the built site
+        uses: actions/upload-artifact@v7
+        with:
+          name: web
+          path: web/dist
+          include-hidden-files: true
+          if-no-files-found: error
+
+  web-publish:
+    needs: web-build
+    # main only: a pull request must not overwrite the published site. The build still runs
+    # on every pull request, so a broken site is caught before merge.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      # To push gh-pages. actions/checkout leaves the token configured on `origin`, which is
+      # the remote scripts/publish-web.sh pushes to by default.
+      contents: write
+    concurrency:
+      group: web-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch the built site from web-build
+        uses: actions/download-artifact@v8
+        with:
+          name: web
+          path: web/dist
+
+      - name: Publish the site to gh-pages
+        run: ./scripts/publish-web.sh
+
+  tag-release:
+    needs: jvm-build
+    # main only: the tag is the release record, so it is only ever cut from a merged, tested
+    # main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the tag
+      actions: write # start the release workflow
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `git describe` needs the tags and the history back to the last one.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Work out the version this main implies
+        id: version
+        run: |
+          if V=$(scripts/next-version.sh); then
+            echo "version=$V" >> "$GITHUB_OUTPUT"
+            echo "main implies $V"
+          else
+            echo "Nothing releasable has landed since the last tag; not tagging."
+          fi
+
+      - name: Tag the release
+        if: steps.version.outputs.version != ''
+        # Re-running this job, or two runs racing on main, must not fail on a tag that already
+        # exists: the first push wins and the rest are no-ops.
+        #
+        # A push made with GITHUB_TOKEN starts no workflow, by design, so the release workflow
+        # is started explicitly on the tag. A tag pushed by hand still starts it through its
+        # own `push` trigger.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="v$RELEASE_VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists; nothing to do."
+            exit 0
+          fi
+          git config user.name "skipper-ci"
+          git config user.email "skipper-ci@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $RELEASE_VERSION"
+          git push origin "refs/tags/$TAG"
+          echo "Pushed $TAG; starting the release workflow on it."
+          gh workflow run release.yml --ref "$TAG"

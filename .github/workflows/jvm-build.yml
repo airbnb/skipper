@@ -1,0 +1,156 @@
+# Reusable JVM build for airbnb/skipper: compiles the engine (Kotlin + Java, joint
+# compilation) plus the skipper-state-machine, skipper-testutils and skipper-metrics-prometheus
+# modules, runs every test subset, and validates the publication metadata. A bare
+# `gradlew build` from the root covers every project in the build.
+#
+# Called from build.yml once per Jackson version (the matrix) and from release.yml once on the
+# tag. One definition, so the release cannot drift from what pull requests were tested with.
+#
+# jackson_version  Empty runs the suite on the Jackson Skipper compiles against (2.9.10, the
+#                  version catalog). Anything else is forced onto the runtime classpaths only,
+#                  via -PjacksonVersion in build.gradle.kts, so the same bytecode is tested on
+#                  the Jackson a host service may already ship.
+#
+# Only the default-Jackson run uploads its ~/.m2 publication (as 0.0.0-CI) for the examples
+# job; uploading the same artifact name from every matrix entry would be a conflict.
+
+name: jvm-build
+
+on:
+  workflow_call:
+    inputs:
+      jackson_version:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  # A long-lived daemon buys nothing in a single-use runner. Workers default to the runner's
+  # core count. Memory: gradle.properties asks for -Xmx2g, and the Kotlin compile daemon is a
+  # second JVM on top of that; if compilation ever gets OOM-killed, add
+  # `-Pkotlin.daemon.jvmargs=-Xmx1g` to the Gradle invocation below.
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  build-and-test:
+    # 22.04, not latest: the MariaDB native libraries installed below are Ubuntu 22.04
+    # package names. On 24.04 libaio1 became libaio1t64 and libncurses5 is gone entirely, so
+    # revisit that step before bumping the runner image.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # JDK 17 matches the Gradle toolchain in build.gradle.kts. The build still emits JVM 8
+      # bytecode (`options.release = 8`, `jvmTarget = 1.8`), so no second JDK is needed. Having
+      # 17 on the runner also keeps Gradle from provisioning a toolchain over the network.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Restore Gradle caches
+        id: gradle-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          # Exact match: same Gradle distribution, same declared dependencies.
+          key: gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('gradle/libs.versions.toml', 'build.gradle.kts', 'skipper-state-machine/build.gradle.kts', 'testutils/build.gradle.kts', 'plugins/prometheus/build.gradle.kts') }}
+          # Partial match: same Gradle distribution, dependencies have moved. Still saves the
+          # wrapper download and most of the module cache.
+          restore-keys: |
+            gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-
+
+      - name: Install embedded MariaDB native dependencies
+        # MySqlWorkflowStoreTest and MySqlSchedulerTest boot a real server through MariaDB4j,
+        # which unpacks the MariaDB 10.2.11 linux64 binaries it bundles. Those are dynamically
+        # linked against libraries the runner image does not carry: mysqld needs libaio.so.1,
+        # and the mysql client MariaDB4j shells out to (to create the test database) needs
+        # libncurses.so.5 and libnsl.so.1. Without these the tests fail in @BeforeAll with
+        # "An error occurred while installing the database".
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libaio1 \
+            libncurses5 \
+            libnsl2
+
+      - name: Build and test
+        # spotlessCheck is excluded here because format-check runs it as its own job.
+        env:
+          JACKSON_VERSION: ${{ inputs.jackson_version }}
+        run: |
+          ARGS=()
+          if [ -n "$JACKSON_VERSION" ]; then
+            ARGS+=("-PjacksonVersion=$JACKSON_VERSION")
+          fi
+          ./gradlew --stacktrace build -x spotlessCheck "${ARGS[@]}"
+
+      - name: Validate the publication metadata
+        # Publishes to the local Maven cache, which needs no credentials and no network.
+        # Catches a malformed POM or a broken publication config in review rather than at
+        # release time, when the fix is far more expensive. The examples job consumes this
+        # exact tree, so what it tests is what this build produced.
+        run: |
+          ./gradlew publishToMavenLocal -PVERSION_NAME=0.0.0-CI
+          echo "SKIPPER_M2=$HOME/.m2/repository/com/airbnb/skipper" >> "$GITHUB_ENV"
+
+      - name: Hand the 0.0.0-CI artifacts to the examples job
+        if: inputs.jackson_version == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: skipper-0.0.0-CI
+          path: ${{ env.SKIPPER_M2 }}
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Drop Gradle lock files
+        # Lock files are per-process state; caching them can wedge the next build.
+        if: always()
+        run: find ~/.gradle -name '*.lock' -type f -delete || true
+
+      - name: Save Gradle caches
+        # Saved even when the build fails: the dependency download is the expensive part and
+        # it is already done by the time anything can fail. Skipped on an exact hit, since a
+        # cache entry is immutable once written.
+        if: always() && steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
+
+      # Uploaded even when an earlier step failed, so a red build still publishes its JUnit XML
+      # and the browsable HTML report.
+      - name: Store test results and reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-jackson-${{ inputs.jackson_version || '2.9.10' }}
+          path: |
+            build/test-results/test
+            build/reports/tests/test
+            skipper-state-machine/build/test-results/test
+            skipper-state-machine/build/reports/tests/test
+            testutils/build/test-results/test
+            testutils/build/reports/tests/test
+            plugins/prometheus/build/test-results/test
+            plugins/prometheus/build/reports/tests/test
+          if-no-files-found: ignore
+
+      - name: Store the built jars
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: libs-jackson-${{ inputs.jackson_version || '2.9.10' }}
+          path: |
+            build/libs
+            skipper-state-machine/build/libs
+            testutils/build/libs
+            plugins/prometheus/build/libs
+          if-no-files-found: ignore

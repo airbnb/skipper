@@ -43,9 +43,10 @@ repository, so a local experiment cannot become a release by accident.
    scripts/next-version.sh   # on an up-to-date main, with the PR's title in mind
    ```
 
-2. **CI tags it.** On `main`, once `jvm-build` and `format-check` pass, the `tag-release` job
-   runs `scripts/next-version.sh` and pushes the `v*` tag it prints. It does nothing when no
-   releasable commit has landed since the last tag, or when the tag already exists, so
+2. **CI tags it.** On `main`, once every gating check passes (`jvm-build` in
+   `.github/workflows/build.yml`), the `tag-release` job runs `scripts/next-version.sh`, pushes
+   the `v*` tag it prints, and starts the `release` workflow on that tag. It does nothing when
+   no releasable commit has landed since the last tag, or when the tag already exists, so
    re-runs and racing pipelines are safe. The tag is the release record, so it goes up before
    the artifact does.
 
@@ -61,9 +62,11 @@ repository, so a local experiment cannot become a release by accident.
    mirror, so the first semantic release had to sort above them or "latest" there would
    point at the older artifact. The script takes over from that tag onward.
 
-3. **The tag triggers the `release` workflow:** `jvm-build` runs the full test suite on the
-   tagged commit, then `publish-release` signs the artifacts and uploads them to the Central
-   Portal, where they sit as a validated deployment.
+3. **The `release` workflow runs on the tag** (`.github/workflows/release.yml`; a hand-pushed
+   tag starts it too): `jvm-build-jackson-2.9.10` runs the full test suite on the tagged
+   commit, then `publish-release` signs the artifacts and uploads them to the Central Portal,
+   where they sit as a validated deployment. The credentials are repository secrets; the
+   workflow header lists them.
 
 4. **Manual release in the Portal.**
 
