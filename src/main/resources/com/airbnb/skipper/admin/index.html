@@ -798,6 +798,13 @@ Cluster view: the live scheduler cluster members and the task-ID bucket range ea
     </div>
 
     {{#if members.length}}
+    {{#unless partitioning_active}}
+    <div class="alert alert-warning">
+      Partitioning is not active on this instance, so it fetches from the whole queue regardless of the
+      assignment below. The ranges show what each member would own if it were: check that the
+      <code>task_partitioning</code> feature key is enabled and that this instance is a registered member.
+    </div>
+    {{/unless}}
     <h5 class="mb-2">Bucket assignment <small class="text-muted">({{total_buckets}} buckets, task ID hashed with CRC32)</small></h5>
     <div class="progress mb-4" style="height: 32px;">
       {{#each members}}
