@@ -9,6 +9,7 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.internal.ActionExecutor
 import com.airbnb.skipper.internal.SkipperEngine
+import com.airbnb.skipper.internal.VersionGateEnforcer
 import java.lang.reflect.Field
 import javax.inject.Provider
 
@@ -22,6 +23,7 @@ data class SkipperInternalDeps(
     val skipperEngineProvider: Provider<SkipperEngine>,
     val contextPropagator: ContextPropagator,
     val defaultRetryStrategy: RetryStrategy,
+    val versionGateEnforcer: VersionGateEnforcer,
 )
 
 /**
@@ -33,6 +35,8 @@ data class SkipperInternalDeps(
  * set them**. This means:
  * - Guice consumers that override bindings (e.g. `TracingActionExecutor`) keep their overrides.
  * - [com.airbnb.skipper.SimpleInjector] consumers get working defaults without registering internal types.
+ *
+ * [Workflow]'s `versionGateEnforcer` is not `@Inject`, so it always comes from [internalDeps].
  */
 fun SkipperInjector.injectWorkflowMembers(
     workflowInstance: Any,
@@ -44,6 +48,7 @@ fun SkipperInjector.injectWorkflowMembers(
         setIfUninitialized(workflowInstance, "actionExecutor", internalDeps.actionExecutor)
         setIfUninitialized(workflowInstance, "skipperEngine", internalDeps.skipperEngineProvider.get())
         setIfUninitialized(workflowInstance, "contextPropagator", internalDeps.contextPropagator)
+        setIfUninitialized(workflowInstance, "versionGateEnforcer", internalDeps.versionGateEnforcer)
     }
 
     for (

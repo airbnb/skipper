@@ -5,6 +5,7 @@ import com.airbnb.skipper.internal.ActionExecutor
 import com.airbnb.skipper.internal.ExceptionClassifier
 import com.airbnb.skipper.internal.ExecutionContext
 import com.airbnb.skipper.internal.SkipperEngine
+import com.airbnb.skipper.internal.VersionGateEnforcer
 import com.airbnb.skipper.internal.api.WaitSignal
 import com.airbnb.skipper.util.allDeclaredFields
 import java.lang.reflect.InvocationTargetException
@@ -68,6 +69,10 @@ abstract class Workflow {
     @Inject lateinit var actionExecutor: ActionExecutor
     @Inject lateinit var skipperEngine: SkipperEngine
     @Inject lateinit var contextPropagator: ContextPropagator
+
+    // Not @Inject: it is always set from SkipperInternalDeps, so a consumer's injector needs no
+    // new bindings for it.
+    private lateinit var versionGateEnforcer: VersionGateEnforcer
 
     /**
      * A map that holds the completable future objects for the given workflow methods. This
@@ -619,11 +624,17 @@ abstract class Workflow {
      * 4. Eventually remove the gate entirely; the orphaned named checkpoint is harmlessly
      *    ignored on replay.
      *
+     * On replay, a stored version outside `[minVersion, maxVersion]` is logged at ERROR and counted.
+     * With [FeatureGate.Keys.ENFORCE_VERSION_GATE_MIN_VERSION] enabled, it also fails the instance
+     * with a [NonRetryableError].
+     *
      * @param changeId stable identifier for this migration; persisted as the checkpoint name
      * @param minVersion the lowest version the current code is willing to handle (>= 1)
      * @param maxVersion the latest version known to the current code (>= [minVersion])
      * @return the active version: [maxVersion] on first execution, or the persisted value on replay
      * @throws IllegalArgumentException if `1 <= minVersion <= maxVersion` is violated
+     * @throws NonRetryableError if the persisted version is outside `[minVersion, maxVersion]` and
+     *   enforcement is enabled for the app
      */
     protected final fun version(
         changeId: String,
@@ -633,9 +644,11 @@ abstract class Workflow {
         require(minVersion >= 1 && minVersion <= maxVersion) {
             "version($changeId): minVersion ($minVersion) must be >= 1 and <= maxVersion ($maxVersion)"
         }
-        return versionGateHelpers
+        val storedVersion = versionGateHelpers
             .named("version:$changeId")
             .getVersion(changeId, minVersion, maxVersion)
+        versionGateEnforcer.enforce(id, changeId, storedVersion, minVersion, maxVersion)
+        return storedVersion
     }
 
     /** Resumes a coroutine continuation, unwrapping [CompletionException] if present. */

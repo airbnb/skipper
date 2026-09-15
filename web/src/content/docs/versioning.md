@@ -82,6 +82,22 @@ if (version("add-fraud-check", 1, 2) >= 2) {
 `version(changeId, minVersion, maxVersion)` returns `maxVersion` on a workflow's first
 execution (and persists it), and the persisted value on every subsequent resume.
 
+### Out-of-range versions on replay
+
+Raise `minVersion` only after every instance that stored an older version has finished. If you
+raise it too early, or roll back to code with a lower `maxVersion`, some instances replay with
+a version the code no longer handles.
+
+When that happens, Skipper logs an ERROR and increments the `versionGate.storedVersionOutOfRange`
+metric, tagged with `changeId`, `direction` (`below_min` or `above_max`) and `enforced`. Both fire
+on every replay of such an instance, so the metric counts replays, not instances.
+
+By default the instance then continues with the stored version. Enable the
+`enforce_version_gate_min_version` feature gate for an app to fail such instances instead, with
+a `NonRetryableError` that moves them to a terminal `ERROR` state. As with any other failure, the
+instance's compensations then run. Watch the metric first, so turning the gate on does not fail
+instances you did not know about.
+
 ## Evolving state fields
 
 - **Adding** a nullable or primitive `@StateField` is safe — old state deserializes and the
