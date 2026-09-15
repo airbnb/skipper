@@ -5,11 +5,12 @@
 #   publish-web.sh [built-site-dir]    defaults to web/dist
 #
 # GitHub Pages has two publishing models. The Actions model uploads the site as a run
-# artifact and needs an OIDC token only GitHub Actions can mint, which this repository
-# cannot use while it is private. The branch model, used here, needs nothing but push
-# access: land the site on a branch and GitHub builds it from there. That makes the whole
-# job a `git push`, so CircleCI needs no Pages permission and no API token - a deploy key
-# with write access is enough.
+# artifact and deploys it through the Pages API. The branch model, used here, needs nothing
+# but push access: land the site on a branch and GitHub builds it from there. That makes the
+# whole job a `git push`, so the web-publish job in .github/workflows/build.yml needs no Pages
+# permission beyond `contents: write` on its own GITHUB_TOKEN. It predates the repository
+# going public, when the Actions model was unavailable, and is kept because it works and
+# leaves the published site inspectable as an ordinary branch.
 #
 # The commit is assembled with plumbing rather than by checking the branch out and copying
 # files into it. The published branch holds generated output that shares no history with
@@ -20,15 +21,14 @@
 #
 # Nothing is pushed when the built site is byte-for-byte what is already published. That
 # guard is load-bearing rather than tidy. GitHub builds a branch-model Pages site with its
-# own internal Actions workflow, and on a private repository those builds draw on the org's
-# Actions minutes - the same constrained resource that blocks the Actions model here. A
-# no-op push would spend them for nothing, and would add a commit to the branch on every
-# unrelated change to main.
+# own internal Actions workflow on every push to the branch, so a no-op push would spend a
+# Pages build for nothing, and would add a commit to the branch on every unrelated change
+# to main.
 #
 # Optional environment:
 #
-#   SKIPPER_PAGES_REMOTE   push target. Default `origin`. CircleCI checks out over SSH, so
-#                          the default already carries the deploy key added to the job.
+#   SKIPPER_PAGES_REMOTE   push target. Default `origin`. actions/checkout leaves the run's
+#                          GITHUB_TOKEN configured on `origin`, so the default can push.
 #   SKIPPER_PAGES_BRANCH   branch to publish to. Default `gh-pages`. Must match
 #                          Settings > Pages > Branch.
 #

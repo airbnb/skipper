@@ -4,7 +4,7 @@ Complete, standalone projects that run Skipper on the JVM stacks people actually
 is its own build against the Skipper artifacts on Maven Central, the way a service would consume
 them, so what you see is what an adopter gets.
 
-They are also Skipper's integration suite. On every push, CircleCI's `examples` job publishes the
+They are also Skipper's integration suite. On every pull request, the `examples` job in GitHub Actions publishes the
 artifacts from that commit to a local Maven repository and builds, tests and runs all five against
 them, so a change that breaks a Spring, Dropwizard, Guice, Kotlin or plain-Java adopter turns the
 pull request red. To do the same locally:
@@ -73,6 +73,6 @@ pick a stack. Each example's README has the details and the exact error text.
 
 Each build pins `skipperVersion` (or `skipper.version` in the POM) in one place; bump all five when
 a release lands so a copied example starts from the current release. CI does not depend on the pin:
-it always builds against the commit under test. The job runs on the machine executor because of
-Docker and waits for the core build, so it is the slowest job in the workflow; that is the price
+it always builds against the commit under test. The job needs Docker for the two MySQL examples
+and waits for the core build, so it is the slowest job in the workflow; that is the price
 of examples that provably work against the code being merged.

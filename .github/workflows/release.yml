@@ -1,0 +1,111 @@
+# Release workflow for airbnb/skipper: publishes a tagged version of skipper-core,
+# skipper-testutils, skipper-state-machine and skipper-metrics-prometheus to Maven Central, the
+# only place Skipper is published. The build workflow is build.yml.
+#
+# Tag-triggered, so a release is re-runnable against an immutable ref and a maintainer can cut
+# one by pushing a `vX.Y.Z` tag with no CI change. The tag-release job in build.yml pushes its
+# tag with GITHUB_TOKEN, and such a push starts no workflow, so that job starts this one
+# through workflow_dispatch on the tag instead; a hand-pushed tag arrives through `push`.
+# Either way the ref is the tag, and the tag is the version, minus the leading `v`.
+#
+#   jvm-build-jackson-2.9.10  The suite on the Jackson Skipper compiles against (jvm-build.yml;
+#                             the release does not repeat the matrix). Redundant for a tag on
+#                             an already-tested commit, but it is what makes a hand-pushed tag
+#                             safe: nothing untested is ever published.
+#
+#   publish-release           Signs the artifacts and uploads them to the Central Portal, where
+#                             the deployment sits until a human releases it in the Portal UI.
+#                             Internal consumers get it from there: Artifactory's Central mirror
+#                             serves it without any direct upload.
+#
+# Required environment for publish-release (Settings > Environments), named `skipper-publish`,
+# holding these four secrets. Restrict the environment's deployment branches and tags to `v*`
+# tags, and add required reviewers if releases should wait for a person. Pull request runs
+# never see environment secrets, and forks never see any:
+#
+#   ORG_GRADLE_PROJECT_mavenCentralUsername  Central Portal user token: username
+#   ORG_GRADLE_PROJECT_mavenCentralPassword  Central Portal user token: password
+#   SIGNING_KEY                              ASCII-armoured PGP private key
+#   SIGNING_PASSWORD                         its passphrase
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jvm-build-jackson-2-9-10:
+    name: jvm-build-jackson-2.9.10
+    # workflow_dispatch can be pointed at any ref; only a release tag may release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/jvm-build.yml
+
+  publish-release:
+    needs: jvm-build-jackson-2-9-10
+    runs-on: ubuntu-latest
+    environment: skipper-publish
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+      ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralUsername }}
+      ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralPassword }}
+      SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+      SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+    steps:
+      - name: Check the ref is a release tag
+        # The `push` filter above already enforces this; workflow_dispatch does not.
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if ! [[ "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Not a release tag: $REF. Releases run only on vX.Y.Z tags."
+            exit 1
+          fi
+
+      - name: Check the release environment is attached
+        # A missing secret surfaces here as one clear line rather than as a Gradle credentials
+        # error several minutes into the upload.
+        run: |
+          missing=""
+          for v in ORG_GRADLE_PROJECT_mavenCentralUsername ORG_GRADLE_PROJECT_mavenCentralPassword SIGNING_KEY SIGNING_PASSWORD; do
+            [ -n "${!v:-}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "Not set:$missing"
+            echo "Add them to the skipper-publish environment (see the header of this file)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Restore Gradle caches
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('gradle/libs.versions.toml', 'build.gradle.kts', 'skipper-state-machine/build.gradle.kts', 'testutils/build.gradle.kts', 'plugins/prometheus/build.gradle.kts') }}
+          restore-keys: |
+            gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-
+
+      - name: Publish the tagged release to Maven Central
+        # Uploads a signed bundle and waits for Central's validation; the deployment then sits
+        # in the Portal until someone releases it. Central refuses to overwrite an existing
+        # version, so re-running an already-published tag fails rather than silently replacing
+        # the artifact.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          echo "Publishing com.airbnb.skipper skipper-core, skipper-testutils, skipper-state-machine and skipper-metrics-prometheus $VERSION to Maven Central"
+          ./gradlew --stacktrace publishToMavenCentral -PVERSION_NAME="$VERSION"
