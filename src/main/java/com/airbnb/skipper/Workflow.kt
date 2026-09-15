@@ -5,6 +5,7 @@ import com.airbnb.skipper.internal.ActionExecutor
 import com.airbnb.skipper.internal.ExceptionClassifier
 import com.airbnb.skipper.internal.ExecutionContext
 import com.airbnb.skipper.internal.SkipperEngine
+import com.airbnb.skipper.internal.VersionGateEnforcer
 import com.airbnb.skipper.internal.api.WaitSignal
 import com.airbnb.skipper.util.allDeclaredFields
 import java.lang.reflect.InvocationTargetException
@@ -68,6 +69,7 @@ abstract class Workflow {
     @Inject lateinit var actionExecutor: ActionExecutor
     @Inject lateinit var skipperEngine: SkipperEngine
     @Inject lateinit var contextPropagator: ContextPropagator
+    @Inject lateinit var versionGateEnforcer: VersionGateEnforcer
 
     /**
      * A map that holds the completable future objects for the given workflow methods. This
@@ -619,11 +621,22 @@ abstract class Workflow {
      * 4. Eventually remove the gate entirely; the orphaned named checkpoint is harmlessly
      *    ignored on replay.
      *
+     * If the persisted version falls outside `[minVersion, maxVersion]` on replay — because a
+     * version's branch was pruned while instances holding it were still in flight, or because a
+     * deploy was rolled back to code with a lower [maxVersion] — the stale value is no longer
+     * returned silently. [VersionGateEnforcer] always logs the mismatch at ERROR and emits a metric,
+     * and, when [FeatureGate.Keys.ENFORCE_VERSION_GATE_MIN_VERSION] is enabled for the app, fails the
+     * instance with a [NonRetryableError] (terminal error state, no retry). This is distinct from the
+     * argument [require] below, which validates the *caller's* arguments; the enforcer validates
+     * *persisted state*.
+     *
      * @param changeId stable identifier for this migration; persisted as the checkpoint name
      * @param minVersion the lowest version the current code is willing to handle (>= 1)
      * @param maxVersion the latest version known to the current code (>= [minVersion])
      * @return the active version: [maxVersion] on first execution, or the persisted value on replay
      * @throws IllegalArgumentException if `1 <= minVersion <= maxVersion` is violated
+     * @throws NonRetryableError if the persisted version is outside `[minVersion, maxVersion]` and
+     *   enforcement is enabled for the app
      */
     protected final fun version(
         changeId: String,
@@ -633,9 +646,10 @@ abstract class Workflow {
         require(minVersion >= 1 && minVersion <= maxVersion) {
             "version($changeId): minVersion ($minVersion) must be >= 1 and <= maxVersion ($maxVersion)"
         }
-        return versionGateHelpers
+        val storedVersion = versionGateHelpers
             .named("version:$changeId")
             .getVersion(changeId, minVersion, maxVersion)
+        return versionGateEnforcer.enforce(id, changeId, storedVersion, minVersion, maxVersion)
     }
 
     /** Resumes a coroutine continuation, unwrapping [CompletionException] if present. */
