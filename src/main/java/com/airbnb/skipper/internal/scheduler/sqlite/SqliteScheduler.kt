@@ -285,7 +285,12 @@ class SqliteScheduler
                 // Java-side bucket filtering: run the base query WITHOUT the MySQL-only CRC32 predicate,
                 // materialize the candidate rows, then keep only rows whose BucketPartitioner.hashToBucket
                 // bucket falls in [startInclusive, endExclusive). hashToBucket computes the same CRC32%1000
-                // as MySQL, so results are identical.
+                // as MySQL, so the same tasks qualify. Because the filter runs after the read, the read must
+                // over-fetch: it pages PARTITION_CANDIDATE_PAGE_SIZE candidates (at least `limit`), exactly
+                // as the UDS scheduler pages a fixed candidate window before filtering in memory, and only
+                // the first `limit` survivors are leased. Reading just `limit` rows would starve the
+                // partition in proportion to the share of the queue owned by other members.
+                val candidatePageSize = maxOf(limit, PARTITION_CANDIDATE_PAGE_SIZE)
                 val querySql =
                     "SELECT * FROM $schedulerTasksTable " +
                         "WHERE owner = ? AND status IN (?, ?) AND run_after <= ? " +
@@ -307,9 +312,9 @@ class SqliteScheduler
                                 ps.setString(++i, Task.Status.PENDING.name)
                                 ps.setString(++i, Task.Status.RUNNING.name)
                                 ps.setTimestamp(++i, Timestamp.from(clock.instant()))
-                                ps.setInt(++i, limit)
+                                ps.setInt(++i, candidatePageSize)
                                 ps.executeQuery().use { rs ->
-                                    while (rs.next()) {
+                                    while (rs.next() && candidates.size < limit) {
                                         val taskId = rs.getString("task_id")
                                         val bucket = bucketPartitioner.hashToBucket(taskId)
                                         if (bucket >= partition.startInclusive && bucket < partition.endExclusive) {
@@ -799,6 +804,12 @@ class SqliteScheduler
             private val log = org.slf4j.LoggerFactory.getLogger(SqliteScheduler::class.java)
 
             private const val METRICS_COMPONENT = "sqliteScheduler"
+
+            /**
+             * Rows read per partitioned fetch before the in-memory bucket filter is applied (the UDS
+             * scheduler's fixed candidate window); raised to `limit` when a caller asks for more.
+             */
+            private const val PARTITION_CANDIDATE_PAGE_SIZE = 50
 
             /** SQLite primary result code for a constraint violation (`SQLITE_CONSTRAINT`). */
             private const val SQLITE_CONSTRAINT = 19
