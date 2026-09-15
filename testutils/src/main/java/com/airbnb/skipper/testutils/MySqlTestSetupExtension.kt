@@ -83,7 +83,8 @@ class MySqlTestSetupExtension
                     "action_checkpoints",
                     "timers",
                     "scheduler_tasks",
-                    "persisted_signals"
+                    "persisted_signals",
+                    "cluster_members"
                 )
 
             private var ds: DataSource? = null

@@ -6,6 +6,7 @@ import com.airbnb.skipper.internal.common.SneakyThrow
 import java.sql.Connection
 import java.util.UUID
 import java.util.function.Function
+import java.util.function.Supplier
 import javax.inject.Singleton
 import javax.sql.DataSource
 import kotlin.random.Random
@@ -93,6 +94,38 @@ class JdbcTransactionManager(private val ds: DataSource) {
     }
 
     /**
+     * Runs [action], retrying it a bounded number of times when it fails with transient lock
+     * contention (see [isTransientLockContention]), for work that manages its own connection via
+     * [getConnection] instead of running inside [execute] — e.g. the schedulers' auto-commit fetch
+     * paths and the cluster membership reads. The same SQLite `SQLITE_LOCKED` / `SQLITE_BUSY`
+     * conditions that [execute] retries can hit any statement when several Skipper instances share
+     * one database; [action] must therefore be safe to re-run from the top (which holds for the
+     * versioned, optimistic writes Skipper issues: a repeat either finds the row already moved and
+     * skips it, or moves it once). Backends whose errors never match (e.g. MySQL) run [action]
+     * exactly once.
+     *
+     * Only retry work that has not yet produced a side effect the caller depends on seeing (e.g. a
+     * SELECT phase); a write phase should handle contention per statement instead, as the SQLite
+     * scheduler's lease loop does, so that nothing already written is dropped from the result.
+     */
+    fun <T> retryOnTransientLockContention(action: Supplier<T>): T {
+        var attempt = 0
+        while (true) {
+            try {
+                return action.get()
+            } catch (
+                @Suppress("TooGenericExceptionCaught") e: Throwable
+            ) {
+                if (attempt >= MAX_TRANSIENT_LOCK_RETRIES || !isTransientLockContention(e)) {
+                    throw SneakyThrow.sneakyThrow(e)
+                }
+                attempt++
+            }
+            backoffBeforeRetry(attempt)
+        }
+    }
+
+    /**
      * Rolls back the current transaction, swallowing any rollback failure so it cannot mask the
      * original error that triggered the rollback.
      */
@@ -126,7 +159,7 @@ class JdbcTransactionManager(private val ds: DataSource) {
      * primary / extended result codes, and so other backends (whose messages do not contain these
      * tokens) are never retried.
      */
-    private fun isTransientLockContention(error: Throwable): Boolean {
+    fun isTransientLockContention(error: Throwable): Boolean {
         var cause: Throwable? = error
         while (cause != null) {
             val message = cause.message

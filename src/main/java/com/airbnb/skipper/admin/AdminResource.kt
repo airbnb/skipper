@@ -1,5 +1,6 @@
 package com.airbnb.skipper.admin
 
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.Timer
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowsService
@@ -7,6 +8,8 @@ import com.airbnb.skipper.internal.CheckpointTag
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.api.PersistedSignal
+import com.airbnb.skipper.internal.cluster.BucketPartitioner
+import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.common.SneakyThrow
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
@@ -54,6 +57,9 @@ class AdminResource
         scheduler: Scheduler,
         skipperEngine: SkipperEngine,
         workflowsService: WorkflowsService,
+        clusterMembershipManager: ClusterMembershipManager,
+        partitioner: BucketPartitioner,
+        featureGate: FeatureGate,
     ) {
         // Note: the constructor parameter `engine` is assigned to the `store` field, preserving the
         // original Java signature where the first injected parameter was named `engine`.
@@ -74,6 +80,9 @@ class AdminResource
         private val scheduler: Scheduler = scheduler
         private val skipperEngine: SkipperEngine = skipperEngine
         private val workflowsService: WorkflowsService = workflowsService
+        private val clusterMembershipManager: ClusterMembershipManager = clusterMembershipManager
+        private val partitioner: BucketPartitioner = partitioner
+        private val featureGate: FeatureGate = featureGate
 
         @GET
         @Path("/")
@@ -208,6 +217,49 @@ class AdminResource
             val dlqTasksCount: Int = scheduler.getFailedTasks<Any>().size()
             val schedulerBacklogCount: Long = scheduler.countBacklog()
             return json(DashboardStats(exhaustedRetriesCount, dlqTasksCount, schedulerBacklogCount))
+        }
+
+        /**
+         * The scheduler cluster as this instance sees it: the live members (those whose heartbeat is
+         * within the membership manager's liveness window) and the range of task-ID buckets each one
+         * fetches from. Ranges are derived with the same [BucketPartitioner] and member ordering the
+         * scheduler manager uses, so what is shown is what is running. `partitioning_active` is false
+         * when the feature gate is off, when this instance is not a registered member, or when its
+         * own heartbeat is not (yet) in the live list — in all of which cases the scheduler fetches
+         * from the whole queue.
+         */
+        @GET
+        @Produces(MediaType.APPLICATION_JSON)
+        @Path("/cluster")
+        fun getCluster(): Response {
+            val registered = clusterMembershipManager.isRegistered
+            // Implementations may throw rather than return null for an unregistered instance.
+            val currentMemberId: String? = if (registered) clusterMembershipManager.currentMemberId else null
+            val members = clusterMembershipManager.activeMemberIds
+            val memberViews =
+                members
+                    .map { id ->
+                        val range = partitioner.getBucketRangeForMember(id, members)
+                        ClusterMemberView(id, range.startInclusive, range.endExclusive, id == currentMemberId)
+                    }
+                    .toJavaList()
+            // Mirrors SkipperSchedulerManager.fetchTasksWithOptionalPartitioning: it fetches a partition only
+            // when the gate is on, this instance is registered, and its own id is in the live member list.
+            val partitioningActive =
+                featureGate.isEnabled(FeatureGate.Keys.TASK_PARTITIONING) &&
+                    registered &&
+                    currentMemberId != null &&
+                    members.contains(currentMemberId)
+            return json(
+                ClusterView(
+                    clusterMembershipManager.clusterName,
+                    currentMemberId,
+                    registered,
+                    partitioningActive,
+                    BucketPartitioner.TOTAL_BUCKETS,
+                    memberViews,
+                ),
+            )
         }
 
         @GET
@@ -828,6 +880,46 @@ class AdminResource
             fun getFailed(): List<String> {
                 return this.failed
             }
+        }
+
+        /** One live cluster member and the half-open bucket range `[start, end)` it fetches tasks from. */
+        class ClusterMemberView internal constructor(
+            private val memberId: String,
+            private val startBucketInclusive: Int,
+            private val endBucketExclusive: Int,
+            private val current: Boolean,
+        ) {
+            fun getMemberId(): String = memberId
+
+            fun getStartBucketInclusive(): Int = startBucketInclusive
+
+            fun getEndBucketExclusive(): Int = endBucketExclusive
+
+            fun getBucketCount(): Int = endBucketExclusive - startBucketInclusive
+
+            /** True for the member that served this request. */
+            fun getCurrent(): Boolean = current
+        }
+
+        class ClusterView internal constructor(
+            private val clusterName: String,
+            private val currentMemberId: String?,
+            private val registered: Boolean,
+            private val partitioningActive: Boolean,
+            private val totalBuckets: Int,
+            private val members: List<ClusterMemberView>,
+        ) {
+            fun getClusterName(): String = clusterName
+
+            fun getCurrentMemberId(): String? = currentMemberId
+
+            fun getRegistered(): Boolean = registered
+
+            fun getPartitioningActive(): Boolean = partitioningActive
+
+            fun getTotalBuckets(): Int = totalBuckets
+
+            fun getMembers(): List<ClusterMemberView> = members
         }
 
         class DashboardStats internal constructor(

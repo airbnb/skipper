@@ -107,15 +107,24 @@ Flyway.configure()
 If you manage schema changes with your own tooling, apply the `V*__*.sql` files from
 `db/migration` in order instead.
 
-**Migrations are immutable.** Every schema change ships as a new migration file. Because the
-library runs against each adopting service's database, a code change that references a new
-column must wait until that migration has been applied everywhere it runs — otherwise the
-deployed code references a column that doesn't yet exist. Apply the migration first, then
-deploy the code.
+### Running multiple instances
 
-> Configuration such as the store, scheduler, retry strategy, and checkpoint mode is set on
-> `SkipperConfig` directly. `SkipperRuntime(config)` then wires the engine from it — see the
-> **[Quickstart](/docs/quickstart/)**.
+Several instances of your service can share one MySQL database. Leases keep any task from being
+processed twice, but by default every instance polls the whole scheduler queue and they compete
+for the same rows. Enable **task partitioning** so each instance fetches only its own share:
+
+```kotlin
+val config = SkipperConfig.forService("my-service").apply {
+  workflowStore = MySqlWorkflowStore.Factory()
+  scheduler = MySqlScheduler.Factory()
+  clusterMembershipManager = JdbcClusterMembershipManager.MySqlFactory()
+  mySqlDataSource = dataSource
+  clusterMemberName = System.getenv("HOSTNAME") // unique per instance; defaults to the hostname
+}
+```
+
+How membership, bucket ranges, and failover work, and how to watch it in the admin UI, is covered
+in **[Scaling Out & Task Partitioning](/docs/scaling-out/)**.
 
 ## Serialization
 

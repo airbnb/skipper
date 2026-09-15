@@ -17,7 +17,7 @@ version is on the
 ```kotlin
 // build.gradle.kts
 dependencies {
-  implementation("com.airbnb.skipper:skipper-core:0.6.3")
+  implementation("com.airbnb.skipper:skipper-core:0.8.0")
 }
 ```
 
@@ -26,7 +26,7 @@ dependencies {
 <dependency>
   <groupId>com.airbnb.skipper</groupId>
   <artifactId>skipper-core</artifactId>
-  <version>0.6.3</version>
+  <version>0.8.0</version>
 </dependency>
 ```
 

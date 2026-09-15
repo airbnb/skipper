@@ -1,6 +1,7 @@
 package com.airbnb.skipper.factory
 
 import com.airbnb.skipper.SkipperConfig
+import com.airbnb.skipper.internal.cluster.jdbc.JdbcClusterMembershipManager
 import com.airbnb.skipper.internal.scheduler.mysql.MySqlScheduler
 import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
 import com.airbnb.skipper.internal.storage.mysql.MySqlWorkflowStore
@@ -43,6 +44,31 @@ class SkipperRuntimeStorageGuardTest {
     }
 
     @Test
+    fun membershipManagerOnOtherBackendIsRejected() {
+        val config = SkipperConfig.forService("guard")
+        config.clusterMembershipManager = JdbcClusterMembershipManager.MySqlFactory()
+        val error = assertThrows<IllegalStateException> { SkipperRuntime(config) }
+        assertTrue(error.message!!.contains("clusterMembershipManager"), error.message)
+    }
+
+    @Test
+    fun sqliteFactoriesOnDifferentDatabasesAreRejected() {
+        // Same dialect, different file: the membership manager would register in a database no other
+        // component reads.
+        val membership = SkipperConfig.forService("guard")
+        membership.workflowStore = SqliteWorkflowStore.Factory("skipper.db")
+        membership.scheduler = SqliteScheduler.Factory("skipper.db")
+        membership.clusterMembershipManager = JdbcClusterMembershipManager.SqliteFactory()
+        val error = assertThrows<IllegalStateException> { SkipperRuntime(membership) }
+        assertTrue(error.message!!.contains("different SQLite databases"), error.message)
+
+        val storeVsScheduler = SkipperConfig.forService("guard")
+        storeVsScheduler.workflowStore = SqliteWorkflowStore.Factory("a.db")
+        storeVsScheduler.scheduler = SqliteScheduler.Factory("b.db")
+        assertThrows<IllegalStateException> { SkipperRuntime(storeVsScheduler) }
+    }
+
+    @Test
     fun consistentConfigsAreAccepted() {
         assertDoesNotThrow { SkipperRuntime(SkipperConfig.forService("guard")) }
         val mysql = SkipperConfig.forService("guard")
@@ -53,6 +79,13 @@ class SkipperRuntimeStorageGuardTest {
         val file = SkipperConfig.forService("guard")
         file.workflowStore = SqliteWorkflowStore.Factory("ignored.db")
         file.scheduler = SqliteScheduler.Factory("ignored.db")
+        file.clusterMembershipManager = JdbcClusterMembershipManager.SqliteFactory("ignored.db")
         assertDoesNotThrow { SkipperRuntime(file) }
+        val mysqlCluster = SkipperConfig.forService("guard")
+        mysqlCluster.workflowStore = MySqlWorkflowStore.Factory()
+        mysqlCluster.scheduler = MySqlScheduler.Factory()
+        mysqlCluster.clusterMembershipManager = JdbcClusterMembershipManager.MySqlFactory()
+        mysqlCluster.mySqlDataSource = mock<DataSource>()
+        assertDoesNotThrow { SkipperRuntime(mysqlCluster) }
     }
 }

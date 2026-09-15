@@ -589,6 +589,40 @@ abstract class BaseSchedulerTest {
         assertTrue(intersection.isEmpty(), "Partitions should not overlap")
     }
 
+    /**
+     * A partition that holds at least `limit` ready tasks must yield `limit` tasks, even when the
+     * queue also holds many tasks outside the partition. Guards against implementations that apply the
+     * bucket filter after a `LIMIT`-bounded read, which would starve a partition in proportion to the
+     * share of the queue owned by other members.
+     */
+    @Test
+    fun testFetchWithPartitionReturnsUpToLimit() {
+        val partitioner = BucketPartitioner()
+        val t1 = Instant.EPOCH
+        whenever(mockClock.instant()).thenReturn(t1)
+
+        // 20 tasks in the lower half of the bucket space and 20 in the upper half.
+        val lower = (0 until 20).map { i -> findTaskIdForBucket(partitioner, i * 25) }
+        val upper = (0 until 20).map { i -> findTaskIdForBucket(partitioner, 500 + i * 25) }
+        for (id in lower + upper) {
+            scheduler().schedule(
+                ScheduleRequest.builder<String>()
+                    .id(id)
+                    .payload(id)
+                    .type(Task.Type.WORKFLOW)
+                    .dedupToken(id)
+                    .runAfter(t1)
+                    .build()
+            )
+        }
+
+        val tasks = scheduler().fetch<String>(10, BucketRange(0, 500))
+        assertEquals(10, tasks.size())
+        for (task in tasks) {
+            assertTrue(lower.contains(task.id), "task ${task.id} is outside the partition")
+        }
+    }
+
     @Test
     fun testFetchWithNullPartition() {
         val t1 = Instant.EPOCH

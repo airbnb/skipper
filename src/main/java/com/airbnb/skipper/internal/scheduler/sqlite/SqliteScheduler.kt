@@ -210,7 +210,27 @@ class SqliteScheduler
             }
         }
 
-        override fun <T> fetch(limit: Int): List<Task<T>> {
+        override fun <T> fetch(limit: Int): List<Task<T>> = transactionManager.retryOnTransientLockContention { fetchOnce(limit) }
+
+        override fun <T> fetch(
+            limit: Int,
+            partition: BucketRange?
+        ): List<Task<T>> {
+            if (partition == null) {
+                return fetch(limit)
+            }
+            return transactionManager.retryOnTransientLockContention { fetchPartitionedOnce(limit, partition) }
+        }
+
+        /**
+         * One attempt at [fetch]. Several Skipper instances sharing one SQLite database contend for
+         * table locks (`SQLITE_LOCKED` / `SQLITE_BUSY`), so the public method wraps this in
+         * [JdbcTransactionManager.retryOnTransientLockContention]. Only the SELECT phase can surface
+         * such an error to the retry: [leaseCandidates] absorbs contention on an individual lease
+         * `UPDATE` (treating it like a lost optimistic race, so the task is left for the next fetch)
+         * precisely so that a retry never discards leases already taken by this attempt.
+         */
+        private fun <T> fetchOnce(limit: Int): List<Task<T>> {
             try {
                 val querySql =
                     "SELECT * FROM $schedulerTasksTable " +
@@ -256,18 +276,21 @@ class SqliteScheduler
             }
         }
 
-        override fun <T> fetch(
+        /** One attempt at the partitioned [fetch]; see [fetchOnce] for why it is retried. */
+        private fun <T> fetchPartitionedOnce(
             limit: Int,
-            partition: BucketRange?
+            partition: BucketRange
         ): List<Task<T>> {
             try {
-                if (partition == null) {
-                    return fetch(limit)
-                }
                 // Java-side bucket filtering: run the base query WITHOUT the MySQL-only CRC32 predicate,
                 // materialize the candidate rows, then keep only rows whose BucketPartitioner.hashToBucket
                 // bucket falls in [startInclusive, endExclusive). hashToBucket computes the same CRC32%1000
-                // as MySQL, so results are identical.
+                // as MySQL, so the same tasks qualify. Because the filter runs after the read, the read must
+                // over-fetch: it pages PARTITION_CANDIDATE_PAGE_SIZE candidates (at least `limit`), exactly
+                // as the UDS scheduler pages a fixed candidate window before filtering in memory, and only
+                // the first `limit` survivors are leased. Reading just `limit` rows would starve the
+                // partition in proportion to the share of the queue owned by other members.
+                val candidatePageSize = maxOf(limit, PARTITION_CANDIDATE_PAGE_SIZE)
                 val querySql =
                     "SELECT * FROM $schedulerTasksTable " +
                         "WHERE owner = ? AND status IN (?, ?) AND run_after <= ? " +
@@ -289,9 +312,9 @@ class SqliteScheduler
                                 ps.setString(++i, Task.Status.PENDING.name)
                                 ps.setString(++i, Task.Status.RUNNING.name)
                                 ps.setTimestamp(++i, Timestamp.from(clock.instant()))
-                                ps.setInt(++i, limit)
+                                ps.setInt(++i, candidatePageSize)
                                 ps.executeQuery().use { rs ->
-                                    while (rs.next()) {
+                                    while (rs.next() && candidates.size < limit) {
                                         val taskId = rs.getString("task_id")
                                         val bucket = bucketPartitioner.hashToBucket(taskId)
                                         if (bucket >= partition.startInclusive && bucket < partition.endExclusive) {
@@ -344,8 +367,30 @@ class SqliteScheduler
                     updatePs.setString(++j, owner)
                     updatePs.setString(++j, candidate.taskId)
                     updatePs.setInt(++j, candidate.version)
-                    val rowsUpdated = updatePs.executeUpdate()
-                    if (rowsUpdated != 1) {
+                    // Each candidate ends in exactly one of three outcomes: leased, lost the optimistic
+                    // race (rowsUpdated == 0), or hit lock contention (rowsUpdated == null).
+                    val rowsUpdated: Int? =
+                        try {
+                            updatePs.executeUpdate()
+                        } catch (e: SQLException) {
+                            if (!transactionManager.isTransientLockContention(e)) {
+                                throw e
+                            }
+                            // Another instance holds the table lock right now. Skip this candidate rather than
+                            // fail the whole fetch (which would drop the leases already taken above); the task
+                            // stays PENDING and is picked up by a later fetch.
+                            metrics
+                                .counter(
+                                    ImmutableMap.of("source", metricSource),
+                                    METRICS_COMPONENT,
+                                    "leaseLockContention"
+                                )
+                                .inc()
+                            null
+                        }
+                    if (rowsUpdated == null) {
+                        // Contention: already counted above, nothing else to record.
+                    } else if (rowsUpdated != 1) {
                         // Another thread got the lease first, skip this task.
                         metrics
                             .counter(
@@ -743,7 +788,8 @@ class SqliteScheduler
         class Factory
             @JvmOverloads
             constructor(
-                private val path: String? = null,
+                /** The on-disk database this factory targets, or `null` for [SkipperConfig.sqliteDataSource]. */
+                val path: String? = null,
             ) : ComponentFactory<Scheduler> {
                 override fun create(config: SkipperConfig): Scheduler {
                     val dataSource = path?.let { JdbcTransactionManager.SqliteFactory.fileDataSource(it) }
@@ -763,6 +809,12 @@ class SqliteScheduler
             private val log = org.slf4j.LoggerFactory.getLogger(SqliteScheduler::class.java)
 
             private const val METRICS_COMPONENT = "sqliteScheduler"
+
+            /**
+             * Rows read per partitioned fetch before the in-memory bucket filter is applied (the UDS
+             * scheduler's fixed candidate window); raised to `limit` when a caller asks for more.
+             */
+            private const val PARTITION_CANDIDATE_PAGE_SIZE = 50
 
             /** SQLite primary result code for a constraint violation (`SQLITE_CONSTRAINT`). */
             private const val SQLITE_CONSTRAINT = 19

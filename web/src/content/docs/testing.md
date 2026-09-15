@@ -2,7 +2,7 @@
 title: Testing
 description: Run workflows end to end in-memory with the WorkflowTest base class and assert on their behavior.
 section: Guides
-order: 18
+order: 19
 ---
 
 You test actions like any other code. Workflows are tested with **`WorkflowTest`**, a JUnit 5
