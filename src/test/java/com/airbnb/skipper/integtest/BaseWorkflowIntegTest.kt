@@ -2125,6 +2125,10 @@ abstract class BaseWorkflowIntegTest {
             // First persisted increment: counter -> 1, workflow advances to the next wait and is
             // still non-terminal. Exactly one EXECUTED row exists.
             workflow.incrementCounterDurably()
+            // The signal marks the instance RUNNING and schedules a re-run that writes it back to
+            // WAITING. Replaying before that re-run has drained races its write of the instance and
+            // fails with OptimisticLockingError, so wait for the workflow to settle first.
+            helper.expectWorkflowToWait()
             helper.waitForCondition { workflowStore.getPersistedSignals(workflowId).size() == 1 }
             val signals = workflowStore.getPersistedSignals(workflowId).toJavaList()
             assertThat(signals).hasSize(1)
