@@ -3,6 +3,7 @@ package com.airbnb.skipper.internal.scheduler
 import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.ExecutionTimeout
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.FixedRetryStrategy
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NonRetryableError
@@ -65,6 +66,7 @@ class WorkflowExecutionTaskHandler
         private val eventPublisher: EventPublisher,
         private val skipperEngine: SkipperEngine,
         private val middleware: RawRequestContextMiddleware,
+        private val featureGate: FeatureGate,
     ) : TaskHandler {
         private val now: Clock = clock
 
@@ -441,28 +443,31 @@ class WorkflowExecutionTaskHandler
             // TODO: skip persisting if there was no change in the workflow instance
             var currentWorkflowInstance = workflowInstance
             var context = executionContext
-            // Cancelled while executing: cancelWorkflow already wrote CANCELLED and removed the task,
-            // so a status write here would only lose the optimistic lock and reschedule a dead
-            // workflow. Keep the checkpoints, skip the write, and hand the caller the recorded
-            // cancellation. Not keyed on the result type: the execution may end with any outcome.
-            val stored: Option<WorkflowInstance>? = workflowStore.getWorkflow(workflowInstance.workflowId)
-            if (stored != null && stored.isDefined && stored.get().status == WorkflowInstance.Status.CANCELLED) {
-                if (!context.dirtyCheckpoints.isEmpty) {
-                    workflowStore.storeActionCheckpoints(
+            // With in-flight cancellation on: if cancelWorkflow already wrote CANCELLED, a status write
+            // here would only lose the optimistic lock and reschedule a dead workflow, so keep the
+            // checkpoints, skip the write and hand the caller the recorded cancellation. Not keyed on
+            // the result type: the execution may end with any outcome. Off: the lock failure and the
+            // retry's start-of-execution gate handle it, at the cost of one wasted re-execution.
+            if (featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)) {
+                val stored: Option<WorkflowInstance>? = workflowStore.getWorkflow(workflowInstance.workflowId)
+                if (stored != null && stored.isDefined && stored.get().status == WorkflowInstance.Status.CANCELLED) {
+                    if (!context.dirtyCheckpoints.isEmpty) {
+                        workflowStore.storeActionCheckpoints(
+                            workflowInstance.workflowId,
+                            context.dirtyCheckpoints,
+                        )
+                    }
+                    log.info(
+                        "workflow instance with id={} was cancelled while executing (execution ended " +
+                            "as {}); settled without a status write",
                         workflowInstance.workflowId,
-                        context.dirtyCheckpoints,
+                        result.newStatus,
                     )
+                    return WorkflowExecutor.ExecutionResult.builder()
+                        .newStatus(WorkflowInstance.Status.CANCELLED)
+                        .result(Either.left(storedCancellation(stored.get())))
+                        .build()
                 }
-                log.info(
-                    "workflow instance with id={} was cancelled while executing (execution ended " +
-                        "as {}); settled without a status write",
-                    workflowInstance.workflowId,
-                    result.newStatus,
-                )
-                return WorkflowExecutor.ExecutionResult.builder()
-                    .newStatus(WorkflowInstance.Status.CANCELLED)
-                    .result(Either.left(storedCancellation(stored.get())))
-                    .build()
             }
             if (context.shouldReloadWorkflowInstance.get()) {
                 log.info(

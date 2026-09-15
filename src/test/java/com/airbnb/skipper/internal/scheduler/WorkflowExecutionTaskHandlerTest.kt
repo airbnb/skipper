@@ -7,6 +7,7 @@ import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.Execute
 import com.airbnb.skipper.ExecutionTimeout
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.NonRetryableError
@@ -78,6 +79,7 @@ class WorkflowExecutionTaskHandlerTest {
     private val metrics: Metrics = NoOpMetrics.INSTANCE
     private lateinit var mockEventPublisher: EventPublisher
     private lateinit var skipperEngine: SkipperEngine
+    private lateinit var mockFeatureGate: FeatureGate
 
     @BeforeEach
     fun setUp() {
@@ -91,6 +93,7 @@ class WorkflowExecutionTaskHandlerTest {
         mockScheduler = mock()
         mockEventPublisher = mock()
         skipperEngine = mock()
+        mockFeatureGate = mock()
         taskHandler =
             WorkflowExecutionTaskHandler(
                 mockWorkflowExecutor,
@@ -102,7 +105,8 @@ class WorkflowExecutionTaskHandlerTest {
                 mockScheduler,
                 mockEventPublisher,
                 skipperEngine,
-                RawRequestContextMiddleware.NOOP
+                RawRequestContextMiddleware.NOOP,
+                mockFeatureGate
             )
     }
 
@@ -145,7 +149,7 @@ class WorkflowExecutionTaskHandlerTest {
 
         verify(mockWorkflowStore, times(1))
             .updateWorkflowAndStoreCheckpointsAndTimers(eq(updateRequest), any(), any())
-        verify(mockWorkflowStore, times(2)).getWorkflow(eq(workflowInstance.workflowId))
+        verify(mockWorkflowStore, times(1)).getWorkflow(eq(workflowInstance.workflowId))
         val captor = argumentCaptor<WorkflowInstanceView>()
         verify(callbackHandler, times(1)).onSuccess(captor.capture())
         assertEquals(workflowInstance.workflowId, captor.firstValue.id)
@@ -207,7 +211,7 @@ class WorkflowExecutionTaskHandlerTest {
 
         verify(mockWorkflowStore, times(0))
             .updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
-        verify(mockWorkflowStore, times(3)).getWorkflow(eq(workflowInstance.workflowId))
+        verify(mockWorkflowStore, times(2)).getWorkflow(eq(workflowInstance.workflowId))
     }
 
     @Test
@@ -639,7 +643,8 @@ class WorkflowExecutionTaskHandlerTest {
             mockScheduler,
             mockEventPublisher,
             skipperEngine,
-            RawRequestContextMiddleware.NOOP
+            RawRequestContextMiddleware.NOOP,
+            mockFeatureGate
         )
 
     /**
@@ -1402,7 +1407,8 @@ class WorkflowExecutionTaskHandlerTest {
             mockScheduler,
             mockEventPublisher,
             skipperEngine,
-            middleware
+            middleware,
+            mockFeatureGate
         )
 
     /**
@@ -1569,6 +1575,8 @@ class WorkflowExecutionTaskHandlerTest {
             }
         }
 
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS))
+            .thenReturn(true)
         val workflowInstance = TestUtils.getWorkflowInstance()
         val checkpoint =
             ActionCheckpoint.builder()
