@@ -72,5 +72,15 @@ interface FeatureGate {
          * persisting WAITING and removing its task is silently lost.
          */
         BUMP_TASK_VERSION_ON_HONORED_LEASE("bump_task_version_on_honored_lease"),
+
+        /**
+         * Opt-in enforcement for [Workflow.version]. When enabled for an app, an instance that
+         * replays with a persisted version outside the current code's `minVersion..maxVersion`
+         * range fails with a [NonRetryableError] instead of silently continuing. Off by default:
+         * the out-of-range condition is always logged at ERROR and counted via metrics, so an
+         * operator can discover a prematurely-raised `minVersion` (or a rolled-back `maxVersion`)
+         * before turning the hard failure on.
+         */
+        ENFORCE_VERSION_GATE_MIN_VERSION("enforce_version_gate_min_version"),
     }
 }

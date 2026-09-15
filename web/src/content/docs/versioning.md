@@ -82,6 +82,25 @@ if (version("add-fraud-check", 1, 2) >= 2) {
 `version(changeId, minVersion, maxVersion)` returns `maxVersion` on a workflow's first
 execution (and persists it), and the persisted value on every subsequent resume.
 
+### Removing a version's path is detectable
+
+Raising `minVersion` and pruning a branch is only safe once every instance that persisted the
+old version has drained. Do it too early — or roll a deploy back to code with a lower
+`maxVersion` — and the affected instances replay with a persisted version the code no longer
+handles. This used to pass silently; it no longer does.
+
+On resume, `version()` checks the persisted value against `[minVersion, maxVersion]`. When it
+falls outside — `stored < minVersion` (pruned branch) or `stored > maxVersion` (rollback) —
+Skipper always logs the mismatch at ERROR and emits the `versionGate.storedVersionOutOfRange`
+metric (tagged with `changeId`, `direction`, and whether enforcement is on). When the
+`enforce_version_gate_min_version` feature gate is enabled for the app, it additionally fails the
+instance with a `NonRetryableError`, moving it to a terminal `ERROR` state rather than letting it
+mis-execute.
+
+The metric and log fire regardless of the gate, so a premature `minVersion` raise (or a rollback)
+is discoverable before the hard failure is switched on. Enable the gate per app once you have
+confirmed no in-flight instance is stranded below the new range.
+
 ## Evolving state fields
 
 - **Adding** a nullable or primitive `@StateField` is safe — old state deserializes and the

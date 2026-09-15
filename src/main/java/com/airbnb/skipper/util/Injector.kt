@@ -9,6 +9,7 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.internal.ActionExecutor
 import com.airbnb.skipper.internal.SkipperEngine
+import com.airbnb.skipper.internal.VersionGateEnforcer
 import java.lang.reflect.Field
 import javax.inject.Provider
 
@@ -22,15 +23,16 @@ data class SkipperInternalDeps(
     val skipperEngineProvider: Provider<SkipperEngine>,
     val contextPropagator: ContextPropagator,
     val defaultRetryStrategy: RetryStrategy,
+    val versionGateEnforcer: VersionGateEnforcer,
 )
 
 /**
  * Injects dependencies into the specified workflow instance and recursively into all its nested `Actions` objects.
  *
  * The consumer's injector is called first to resolve all `@Inject` fields (including any overrides).
- * Then, Skipper-internal fields on [Workflow] (`actionExecutor`, `skipperEngine`, `contextPropagator`)
- * and [Actions] (`retryStrategy`) are set from [internalDeps] **only if the injector did not already
- * set them**. This means:
+ * Then, Skipper-internal fields on [Workflow] (`actionExecutor`, `skipperEngine`, `contextPropagator`,
+ * `versionGateEnforcer`) and [Actions] (`retryStrategy`) are set from [internalDeps] **only if the
+ * injector did not already set them**. This means:
  * - Guice consumers that override bindings (e.g. `TracingActionExecutor`) keep their overrides.
  * - [com.airbnb.skipper.SimpleInjector] consumers get working defaults without registering internal types.
  */
@@ -44,6 +46,7 @@ fun SkipperInjector.injectWorkflowMembers(
         setIfUninitialized(workflowInstance, "actionExecutor", internalDeps.actionExecutor)
         setIfUninitialized(workflowInstance, "skipperEngine", internalDeps.skipperEngineProvider.get())
         setIfUninitialized(workflowInstance, "contextPropagator", internalDeps.contextPropagator)
+        setIfUninitialized(workflowInstance, "versionGateEnforcer", internalDeps.versionGateEnforcer)
     }
 
     for (
