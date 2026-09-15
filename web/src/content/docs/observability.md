@@ -2,7 +2,7 @@
 title: Observability & Admin UI
 description: Enable the built-in admin UI to inspect and recover workflows, and wire up metrics to Prometheus or your own backend to monitor the engine.
 section: Guides
-order: 19
+order: 20
 ---
 
 Skipper ships with a built-in **admin UI** for inspecting and recovering workflow instances,
@@ -56,7 +56,7 @@ The UI — and the JSON API behind it — lets you:
 - Review workflows that exhausted their retries and the scheduler **dead-letter queue**, and
   requeue stuck tasks.
 - See the scheduler **cluster**: the live members and the range of task-ID buckets each one
-  fetches from, and whether [task partitioning](/docs/storage/#running-multiple-instances) is
+  fetches from, and whether [task partitioning](/docs/scaling-out/) is
   active on this instance — `GET /skipper/admin/cluster`.
 - List and **replay durable [signals](/docs/signals-and-queries/)**:
 

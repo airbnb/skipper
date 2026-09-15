@@ -2,7 +2,7 @@
 title: Troubleshooting
 description: Common errors when building Skipper workflows and how to resolve them.
 section: Guides
-order: 20
+order: 21
 ---
 
 A few issues come up often when getting started. Here's how to diagnose and fix them.

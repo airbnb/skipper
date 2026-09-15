@@ -15,7 +15,7 @@ See [Quickstart](/docs/quickstart/) and [Storage Backends](/docs/storage/).
 | `workflowStore` / `scheduler` | The storage and scheduler factories. Default to the embedded SQLite store and scheduler (`SqliteWorkflowStore.Factory()` / `SqliteScheduler.Factory()`, in `com.airbnb.skipper.internal.storage.sqlite` and `...internal.scheduler.sqlite`). Pass a file path to either for a durable on-disk database. |
 | `sqliteDataSource` | Optional JDBC `DataSource` for the SQLite backend; `null` means an ephemeral in-memory database. |
 | `mySqlDataSource` | JDBC `DataSource` for the MySQL adapter. |
-| `clusterMembershipManager` | `ClusterMembershipManager` factory. Defaults to a single-member manager that leaves task partitioning off; set `JdbcClusterMembershipManager.MySqlFactory()` (or `.SqliteFactory(path)`) so instances sharing a store each fetch a disjoint partition of the ready tasks — see [Storage](/docs/storage/#running-multiple-instances). |
+| `clusterMembershipManager` | `ClusterMembershipManager` factory. Defaults to a single-member manager that leaves task partitioning off; set `JdbcClusterMembershipManager.MySqlFactory()` (or `.SqliteFactory(path)`) so instances sharing a store each fetch a disjoint partition of the ready tasks — see [Scaling Out & Task Partitioning](/docs/scaling-out/). |
 | `clusterHeartBeatInterval` | How often a cluster-aware membership manager refreshes this instance's heartbeat (default 10 s). Members silent for 60 s are dropped. |
 | `clusterMemberName` | This instance's identifier in the cluster membership table; `null` (the default) uses the local hostname. Set it when several instances run on one host. |
 | `gracefulShutdownTimeout` | How long `stop()` waits for in-flight tasks before forcing shutdown (default 30 s). |
