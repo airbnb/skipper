@@ -9,6 +9,7 @@ import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_TASK_HANDLER_POOL
 import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_TASK_MAX_RETRIES
 import com.airbnb.skipper.SkipperAnnotationNames.SKIPPER_MAIN_THREAD_POOL
 import com.airbnb.skipper.internal.cluster.BucketPartitioner
+import com.airbnb.skipper.internal.cluster.BucketRange
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.common.SneakyThrow
 import com.airbnb.skipper.internal.scheduler.LeaseRenewalManager
@@ -226,6 +227,13 @@ class SkipperSchedulerManager
                     log.debug("No active members found, falling back to regular fetch")
                     return scheduler.fetch(getMaxTasks())
                 }
+                if (!activeMembers.contains(currentMember)) {
+                    // Our own heartbeat has not landed (or has aged out while others' succeed): we cannot
+                    // compute a partition, so fetch from the whole queue like the empty-list case rather
+                    // than surface it as an error on every fetch.
+                    log.debug("Current member {} not in active members, falling back to regular fetch", currentMember)
+                    return scheduler.fetch(getMaxTasks())
+                }
                 // Calculate this member's bucket partition
                 val partition = partitioner.getBucketRangeForMember(currentMember, activeMembers)
                 log.debug(
@@ -296,26 +304,16 @@ class SkipperSchedulerManager
             if (clusterMembershipManager.isRegistered) {
                 val currentMember = clusterMembershipManager.currentMemberId
                 val clusterName = clusterMembershipManager.clusterName
+                // Both gauges report an empty range (0, 0) while this member is absent from the active list,
+                // mirroring the fetch fallback above, instead of throwing on the metrics scrape thread.
                 metrics.gauge(
-                    {
-                        val activeMembers: io.vavr.collection.List<String> =
-                            clusterMembershipManager.activeMemberIds
-                        val partition =
-                            partitioner.getBucketRangeForMember(currentMember, activeMembers)
-                        partition.startInclusive.toLong()
-                    },
+                    { currentPartition(currentMember)?.startInclusive?.toLong() ?: 0L },
                     ImmutableMap.of("memberId", currentMember, "clusterName", clusterName),
                     METRICS_COMPONENT,
                     "clusterMemberStartRange",
                 )
                 metrics.gauge(
-                    {
-                        val activeMembers: io.vavr.collection.List<String> =
-                            clusterMembershipManager.activeMemberIds
-                        val partition =
-                            partitioner.getBucketRangeForMember(currentMember, activeMembers)
-                        partition.endExclusive.toLong()
-                    },
+                    { currentPartition(currentMember)?.endExclusive?.toLong() ?: 0L },
                     ImmutableMap.of("memberId", currentMember, "clusterName", clusterName),
                     METRICS_COMPONENT,
                     "clusterMemberEndRange",
@@ -323,6 +321,15 @@ class SkipperSchedulerManager
             } else {
                 log.debug("Cluster membership not registered; skipping partition range metrics")
             }
+        }
+
+        /** This member's bucket range, or null when it is not (yet) in the active member list. */
+        private fun currentPartition(currentMember: String): BucketRange? {
+            val activeMembers = clusterMembershipManager.activeMemberIds
+            if (!activeMembers.contains(currentMember)) {
+                return null
+            }
+            return partitioner.getBucketRangeForMember(currentMember, activeMembers)
         }
 
         // Faithful port of the Java baseline's `catch (Throwable $ex) { throw

@@ -24,6 +24,7 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Named
@@ -40,19 +41,27 @@ import org.slf4j.LoggerFactory
  * range. That is what lets `SkipperSchedulerManager` fetch a partition of the ready tasks instead
  * of the whole queue, removing lease contention between instances.
  *
- * This mirrors Airbnb's internal `UdsClusterMembershipManager` method-for-method: the same
- * in-memory registered-member set, the same start/stop life-cycle (`isRegistered` is true only
- * while the heartbeat loop is running *and* at least one member is registered), the same 60 s
- * liveness threshold, and the same heartbeat semantics (update the member's row, or create it on
- * the first beat). A member that stops is not deleted; its row simply ages out of the liveness
- * window. Only the persistence layer differs: plain JDBC over [JdbcTransactionManager], with SQL
- * that is identical for both dialects.
+ * This mirrors Airbnb's internal `UdsClusterMembershipManager`: the same in-memory registered-member
+ * set, `isRegistered` true only while the heartbeat loop is running *and* at least one member is
+ * registered, the same 60 s liveness threshold, and the same heartbeat semantics (update the
+ * member's row, or create it on the first beat). Only the persistence layer differs: plain JDBC
+ * over [JdbcTransactionManager], with SQL that is identical for both dialects.
  *
- * Two deliberate departures from the UDS life-cycle, neither observable through the interface:
- * the heartbeat thread is a daemon and is interrupted by [stop], so a host that forgets to stop
- * Skipper can still exit and a stopped manager stops promptly rather than after one more sleep;
- * and a stopped manager can be [start]ed again (UDS's cannot), each start owning a fresh loop.
- * Routine heartbeat refreshes are logged at debug rather than info.
+ * Deliberate departures from the UDS life-cycle, all in the direction of what the
+ * [ClusterMembershipManager] contract already promises:
+ * - [start] performs the first heartbeat synchronously, so the moment [isRegistered] turns true
+ *   this member is already in every instance's [getActiveMemberIds] (UDS has a window until the
+ *   first asynchronous beat lands, during which the partitioner cannot find the member).
+ * - [stop] and [unregisterMember] delete the member's row, handing its bucket range to the
+ *   survivors immediately instead of after the liveness window (UDS lets the row age out). A
+ *   crashed member still ages out; this only affects graceful shutdown.
+ * - [stop] waits for the heartbeat loop to exit, so [isRegistered] is false when it returns, and a
+ *   stopped manager can be [start]ed again. The loop thread is a daemon.
+ * - [getActiveMemberIds] serves a list cached for one [heartbeatInterval] (refreshed by every beat,
+ *   or on demand via [refreshMembershipCache]) rather than querying on every call, because the
+ *   scheduler manager calls it before every fetch and from its metrics gauges. Liveness is judged
+ *   on a 60 s window, so a list at most one interval old loses nothing.
+ * - Routine heartbeat refreshes are logged at debug rather than info.
  *
  * INVARIANT: `owner` and `clusterName` are both bound to [TENANT], i.e. they hold the same string
  * at runtime. A Skipper tenant runs exactly one cluster, and the cluster's identity is its tenant.
@@ -82,9 +91,31 @@ class JdbcClusterMembershipManager
         @Volatile
         private var executor: ExecutorService? = null
 
+        /** The last member list read from the store, with the wall-clock time it was read at. */
+        @Volatile
+        private var cachedMembers: CachedMembers? = null
+
+        private class CachedMembers(val members: List<String>, val readAtNanos: Long)
+
         override fun getClusterName(): String = clusterName
 
-        override fun getActiveMemberIds(): List<String> = transactionManager.retryOnTransientLockContention { readActiveMemberIds() }
+        override fun getActiveMemberIds(): List<String> {
+            val cached = cachedMembers
+            if (cached != null && System.nanoTime() - cached.readAtNanos < heartbeatInterval.toNanos()) {
+                return cached.members
+            }
+            return refreshAndGetActiveMemberIds()
+        }
+
+        override fun refreshMembershipCache() {
+            refreshAndGetActiveMemberIds()
+        }
+
+        private fun refreshAndGetActiveMemberIds(): List<String> {
+            val members = transactionManager.retryOnTransientLockContention { readActiveMemberIds() }
+            cachedMembers = CachedMembers(members, System.nanoTime())
+            return members
+        }
 
         private fun readActiveMemberIds(): List<String> {
             val sql =
@@ -122,6 +153,7 @@ class JdbcClusterMembershipManager
 
         override fun unregisterMember(memberId: String) {
             registeredMemberIds.remove(memberId)
+            deleteMemberRows(listOf(memberId))
         }
 
         override fun getCurrentMemberId(): String = registeredMemberIds.keys.firstOrNull() ?: throw IllegalStateException("No registered member ID")
@@ -137,6 +169,9 @@ class JdbcClusterMembershipManager
             registerMember(clusterMemberName)
             log.info("Starting JdbcClusterMembershipManager for owner:{} and clusterName:{}", owner, clusterName)
             shouldStop.set(false)
+            // First beat runs on the caller's thread so this member is visible to the cluster (and to
+            // its own partition computation) by the time isRegistered() reports true.
+            heartbeatQuietly()
             val loop =
                 Executors.newSingleThreadExecutor(
                     ThreadFactoryBuilder().setNameFormat("skipper-jdbcCluster-%d").setDaemon(true).build(),
@@ -145,17 +180,15 @@ class JdbcClusterMembershipManager
             loop.submit {
                 while (!shouldStop.get()) {
                     try {
-                        heartbeat()
-                    } catch (
-                        @Suppress("TooGenericExceptionCaught") e: Exception
-                    ) {
-                        log.error("Error during heartbeat", e)
-                    }
-                    try {
                         Thread.sleep(heartbeatInterval.toMillis())
                     } catch (ie: InterruptedException) {
                         Thread.currentThread().interrupt()
+                        break
                     }
+                    if (shouldStop.get()) {
+                        break
+                    }
+                    heartbeatQuietly()
                 }
                 running.set(false)
                 log.info(
@@ -168,9 +201,20 @@ class JdbcClusterMembershipManager
             log.info("JdbcClusterMembershipManager for owner:{} and clusterName:{} has started", owner, clusterName)
         }
 
+        private fun heartbeatQuietly() {
+            try {
+                heartbeat()
+            } catch (
+                @Suppress("TooGenericExceptionCaught") e: Exception
+            ) {
+                log.error("Error during heartbeat", e)
+            }
+        }
+
         /**
          * Refreshes `last_heartbeat_at` for every registered member, inserting the member's row on its
-         * first beat. Each member is handled independently so one failure cannot starve the others.
+         * first beat, then refreshes the cached member list. Each member is handled independently so
+         * one failure cannot starve the others.
          */
         private fun heartbeat() {
             metrics.timer(METRICS_COMPONENT, "heartbeat").time().use { _ ->
@@ -193,6 +237,7 @@ class JdbcClusterMembershipManager
                     }
                 }
             }
+            refreshAndGetActiveMemberIds()
         }
 
         /** One heartbeat for one member: refresh its row, or create it on the first beat. */
@@ -210,12 +255,7 @@ class JdbcClusterMembershipManager
                     memberId,
                 )
             } else {
-                log.info(
-                    "Creating new member for owner:{}, clusterName:{}, memberId:{}",
-                    owner,
-                    clusterName,
-                    memberId,
-                )
+                log.info("Creating new member for owner:{}, clusterName:{}, memberId:{}", owner, clusterName, memberId)
                 insertMember(conn, memberId, now)
             }
         }
@@ -263,13 +303,60 @@ class JdbcClusterMembershipManager
             }
         }
 
+        /**
+         * Best-effort removal of the given members' rows so the survivors redistribute their buckets
+         * at once. A failure is logged, not thrown: the rows age out of the liveness window anyway.
+         */
+        private fun deleteMemberRows(memberIds: Collection<String>) {
+            if (memberIds.isEmpty()) {
+                return
+            }
+            val sql = "DELETE FROM $clusterMembersTable WHERE owner = ? AND cluster_name = ? AND member_id = ?"
+            for (memberId in memberIds) {
+                try {
+                    transactionManager.retryOnTransientLockContention {
+                        transactionManager.getConnection().use { conn ->
+                            conn.prepareStatement(sql).use { ps ->
+                                ps.setString(1, owner)
+                                ps.setString(2, clusterName)
+                                ps.setString(3, memberId)
+                                ps.executeUpdate()
+                            }
+                        }
+                    }
+                } catch (
+                    @Suppress("TooGenericExceptionCaught") e: Exception
+                ) {
+                    log.warn(
+                        "Failed to remove cluster member row for owner:{}, clusterName:{}, memberId:{}; it will age out",
+                        owner,
+                        clusterName,
+                        memberId,
+                        e,
+                    )
+                }
+            }
+            cachedMembers = null
+        }
+
         @Synchronized
         override fun stop() {
             shouldStop.set(true)
-            // Interrupt the sleeping heartbeat loop so it observes shouldStop now, not after one more
-            // heartbeatInterval; the loop itself flips `running` to false on the way out.
-            executor?.shutdownNow()
+            val loop = executor
             executor = null
+            if (loop != null) {
+                // Interrupt the sleeping loop and wait for it to exit so no beat can land after we return.
+                loop.shutdownNow()
+                try {
+                    if (!loop.awaitTermination(STOP_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+                        log.warn("Heartbeat loop did not exit within {}", STOP_TIMEOUT)
+                    }
+                } catch (ie: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+            running.set(false)
+            deleteMemberRows(registeredMemberIds.keys.toList())
         }
 
         /**
@@ -284,14 +371,16 @@ class JdbcClusterMembershipManager
          * Builds a [JdbcClusterMembershipManager] over the SQLite database Skipper uses, resolved the
          * same way `SqliteScheduler.Factory` resolves it: the given file [path] when set, otherwise
          * [SkipperConfig.sqliteDataSource], otherwise an ephemeral in-memory database. Pair it with the
-         * SQLite store and scheduler built from the same path / DataSource. Note that each in-memory
-         * default is a distinct database, so with neither a path nor a DataSource the manager only ever
-         * sees itself — which is also all a single-process in-memory deployment could ever be.
+         * SQLite store and scheduler built from the same path / DataSource (`SkipperRuntime` rejects a
+         * mismatch). Note that each in-memory default is a distinct database, so with neither a path nor
+         * a DataSource the manager only ever sees itself — which is also all a single-process in-memory
+         * deployment could ever be.
          */
         class SqliteFactory
             @JvmOverloads
             constructor(
-                private val path: String? = null,
+                /** The on-disk database this factory targets, or `null` for [SkipperConfig.sqliteDataSource]. */
+                val path: String? = null,
             ) : ComponentFactory<ClusterMembershipManager> {
                 override fun create(config: SkipperConfig): ClusterMembershipManager {
                     val dataSource = path?.let { JdbcTransactionManager.SqliteFactory.fileDataSource(it) }
@@ -307,6 +396,9 @@ class JdbcClusterMembershipManager
             /** A member whose last heartbeat is older than this is considered gone. */
             @JvmField
             val LIVENESS_THRESHOLD: Duration = Duration.ofSeconds(60)
+
+            /** How long [stop] waits for the heartbeat loop to exit. */
+            private val STOP_TIMEOUT: Duration = Duration.ofSeconds(5)
 
             /** Upper bound on the members returned by [getActiveMemberIds]. */
             private const val MAX_MEMBERS = 1000

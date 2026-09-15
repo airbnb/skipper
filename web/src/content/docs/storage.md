@@ -134,9 +134,11 @@ config.setMySqlDataSource(dataSource);
 config.setClusterMemberName(System.getenv("HOSTNAME")); // unique per instance; defaults to the hostname
 ```
 
-An instance whose heartbeat is older than 60 seconds drops out of the member list and its buckets
-are redistributed among the rest; a new instance is included after its first heartbeat
-(`clusterHeartBeatInterval`, 10 seconds by default). Partitioning is gated by the
+A new instance is in the member list as soon as it starts (its first heartbeat runs synchronously),
+and a gracefully stopped one removes itself, so its buckets are redistributed at once. An instance
+that crashes drops out once its heartbeat is older than 60 seconds; heartbeats run every
+`clusterHeartBeatInterval` (10 seconds by default), and each instance refreshes its view of the
+membership at that cadence. Partitioning is gated by the
 `task_partitioning` feature key, which the default `FeatureGate` enables; an instance that cannot
 determine its partition falls back to fetching from the whole queue, so it degrades to today's
 behavior rather than stalling. The same manager is available for a file-backed SQLite database

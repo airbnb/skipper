@@ -75,13 +75,13 @@ abstract class BaseClusterMembershipManagerTest {
 
     @AfterEach
     fun tearDown() {
+        // stop() waits for the heartbeat loop to exit, so no in-flight beat can land after the next
+        // test's table reset.
         if (clusterManager().isRegistered) {
             clusterManager().stop()
-            sleep(100)
         }
         extraManagers.forEach { it.stop() }
-        // Wait for each heartbeat loop to exit so no in-flight beat lands after the next test's reset.
-        extraManagers.forEach { m -> awaitCondition { !m.isRegistered } }
+        extraManagers.forEach { m -> assertFalse(m.isRegistered, "manager still registered after stop()") }
         extraManagers.clear()
     }
 
@@ -180,25 +180,16 @@ abstract class BaseClusterMembershipManagerTest {
 
     @Test
     fun testGetActiveMemberIdsWithExpiredMembers() {
-        val initialTime = Instant.EPOCH
-        whenever(mockClock.instant()).thenReturn(initialTime)
-
-        val memberId = "member-1"
-        clusterManager().registerMember(memberId)
-        clusterManager().start()
-
-        // Wait for the heartbeat thread to create the member record with polling
-        awaitCondition { clusterManager().activeMemberIds.size() == 1 }
-
-        // Stop heartbeating (so the row keeps its old timestamp), then advance the clock beyond the
-        // liveness threshold.
-        clusterManager().stop()
-        awaitCondition { !clusterManager().isRegistered }
-        val expiredTime = initialTime.plus(LIVENESS_THRESHOLD).plusSeconds(30)
-        whenever(mockClock.instant()).thenReturn(expiredTime)
+        // A member whose last heartbeat is older than the liveness threshold (as left behind by a
+        // crashed instance) is not returned; one inside the window is. Rows are written directly so the
+        // stale one cannot be refreshed or removed by a running manager.
+        val now = Instant.EPOCH.plus(LIVENESS_THRESHOLD).plusSeconds(30)
+        whenever(mockClock.instant()).thenReturn(now)
+        insertMemberRow(owner, "expired-member", Instant.EPOCH)
+        insertMemberRow(owner, "live-member", now.minus(LIVENESS_THRESHOLD).plusSeconds(1))
 
         val activeMembers = clusterManager().activeMemberIds
-        assertTrue(activeMembers.isEmpty, "Expired members should not be returned")
+        assertEquals(listOf("live-member"), activeMembers.toJavaList(), "Expired members should not be returned")
     }
 
     @Test
@@ -284,6 +275,65 @@ abstract class BaseClusterMembershipManagerTest {
         assertEquals(currentTime, member2.lastHeartbeatAt)
     }
 
+    // ========== LIFE-CYCLE TESTS ==========
+
+    @Test
+    fun testStartMakesMemberVisibleImmediately() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH.plusSeconds(20))
+
+        clusterManager().start()
+
+        // No polling: the first heartbeat runs before start() returns.
+        assertTrue(clusterManager().isRegistered)
+        assertEquals(listOf(defaultMemberName), clusterManager().activeMemberIds.toJavaList())
+        assertTrue(readMember(defaultMemberName) != null)
+    }
+
+    @Test
+    fun testStopRemovesMemberRowAndUnregisters() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH.plusSeconds(20))
+        val other = startExtraManager("member-2")
+        clusterManager().start()
+        awaitCondition { other.activeMemberIds.size() == 2 }
+
+        clusterManager().stop()
+
+        assertFalse(clusterManager().isRegistered)
+        assertTrue(readMember(defaultMemberName) == null, "stop() should remove this member's row")
+        other.refreshMembershipCache()
+        assertEquals(listOf("member-2"), other.activeMemberIds.toJavaList())
+    }
+
+    @Test
+    fun testUnregisterMemberRemovesItsRow() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH.plusSeconds(20))
+        clusterManager().registerMember("member-2")
+        clusterManager().start()
+        awaitCondition { readMember("member-2") != null }
+
+        clusterManager().unregisterMember("member-2")
+
+        assertTrue(readMember("member-2") == null)
+        assertTrue(readMember(defaultMemberName) != null)
+    }
+
+    @Test
+    fun testRestartAfterStop() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH.plusSeconds(20))
+        clusterManager().start()
+        clusterManager().stop()
+        assertFalse(clusterManager().isRegistered)
+
+        clusterManager().start()
+
+        assertTrue(clusterManager().isRegistered)
+        assertEquals(listOf(defaultMemberName), clusterManager().activeMemberIds.toJavaList())
+        // And the loop is alive again: a clock advance is reflected by a later beat.
+        val later = Instant.EPOCH.plusSeconds(40)
+        whenever(mockClock.instant()).thenReturn(later)
+        awaitCondition { readMember(defaultMemberName)?.lastHeartbeatAt == later }
+    }
+
     // ========== CROSS-INSTANCE TESTS ==========
 
     @Test
@@ -296,11 +346,11 @@ abstract class BaseClusterMembershipManagerTest {
         clusterManager().registerMember("member-a")
         clusterManager().start()
 
-        awaitCondition { clusterManager().activeMemberIds.size() == 3 }
-
+        // Each manager serves a list cached for one heartbeat interval, so wait for every view.
         val expected = listOf("member-1", "member-a", "member-b")
-        assertEquals(expected, clusterManager().activeMemberIds.toJavaList())
-        assertEquals(expected, other.activeMemberIds.toJavaList())
+        awaitCondition {
+            clusterManager().activeMemberIds.toJavaList() == expected && other.activeMemberIds.toJavaList() == expected
+        }
     }
 
     @Test
@@ -311,11 +361,12 @@ abstract class BaseClusterMembershipManagerTest {
         val second = startExtraManager("member-2")
         val third = startExtraManager("member-3")
 
-        awaitCondition { clusterManager().activeMemberIds.size() == 3 }
+        val managers = listOf(clusterManager(), second, third)
+        awaitCondition { managers.all { it.activeMemberIds.size() == 3 } }
 
         val partitioner = BucketPartitioner()
         val ranges =
-            listOf(clusterManager(), second, third).map { m ->
+            managers.map { m ->
                 partitioner.getBucketRangeForMember(m.currentMemberId, m.activeMemberIds)
             }
         val covered = BooleanArray(BucketPartitioner.TOTAL_BUCKETS)
@@ -336,23 +387,9 @@ abstract class BaseClusterMembershipManagerTest {
         awaitCondition { clusterManager().activeMemberIds.size() == 1 }
 
         // A row for a different owner/cluster never shows up in this cluster's member list.
-        dataSource().connection.use { conn ->
-            conn.prepareStatement(
-                "INSERT INTO ${SkipperConfig.DEFAULT_TABLE_PREFIX}cluster_members " +
-                    "(owner, cluster_name, member_id, last_heartbeat_at, created_at, updated_at) " +
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-            ).use { ps ->
-                val now = Timestamp.from(mockClock.instant())
-                ps.setString(1, "other-owner")
-                ps.setString(2, "other-owner")
-                ps.setString(3, "member-1")
-                ps.setTimestamp(4, now)
-                ps.setTimestamp(5, now)
-                ps.setTimestamp(6, now)
-                ps.executeUpdate()
-            }
-        }
+        insertMemberRow("other-owner", "member-1", mockClock.instant())
 
+        clusterManager().refreshMembershipCache()
         assertEquals(listOf("member-1"), clusterManager().activeMemberIds.toJavaList())
     }
 
@@ -361,6 +398,30 @@ abstract class BaseClusterMembershipManagerTest {
         extraManagers.add(manager)
         manager.start()
         return manager
+    }
+
+    /** Writes a member row directly, bypassing any manager, with `owner` doubling as the cluster name. */
+    protected fun insertMemberRow(
+        rowOwner: String,
+        memberId: String,
+        heartbeatAt: Instant,
+    ) {
+        dataSource().connection.use { conn ->
+            conn.prepareStatement(
+                "INSERT INTO ${SkipperConfig.DEFAULT_TABLE_PREFIX}cluster_members " +
+                    "(owner, cluster_name, member_id, last_heartbeat_at, created_at, updated_at) " +
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+            ).use { ps ->
+                val ts = Timestamp.from(heartbeatAt)
+                ps.setString(1, rowOwner)
+                ps.setString(2, rowOwner)
+                ps.setString(3, memberId)
+                ps.setTimestamp(4, ts)
+                ps.setTimestamp(5, ts)
+                ps.setTimestamp(6, ts)
+                ps.executeUpdate()
+            }
+        }
     }
 
     /** Reads the persisted row for [memberId] in this test's cluster, or `null` if there is none. */

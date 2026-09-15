@@ -1629,7 +1629,8 @@ class SqliteWorkflowStore
         class Factory
             @JvmOverloads
             constructor(
-                private val path: String? = null,
+                /** The on-disk database this factory targets, or `null` for [SkipperConfig.sqliteDataSource]. */
+                val path: String? = null,
             ) : ComponentFactory<WorkflowStore> {
                 override fun create(config: SkipperConfig): WorkflowStore {
                     val dataSource = path?.let { JdbcTransactionManager.SqliteFactory.fileDataSource(it) }

@@ -87,6 +87,18 @@ class AdminResourceClusterTest {
     }
 
     @Test
+    fun registeredButNotYetInLiveListReportsInactivePartitioning() {
+        // Between start() and the first persisted heartbeat the scheduler manager falls back to the
+        // whole queue; the view must say so rather than claim a partition that is not being fetched.
+        val view = cluster(FixedMembership(List.of("member-a", "member-b"), "member-c"))
+
+        assertTrue(view["registered"].asBoolean())
+        assertFalse(view["partitioning_active"].asBoolean())
+        assertEquals(2, view["members"].size())
+        assertFalse(view["members"].any { it["current"].asBoolean() })
+    }
+
+    @Test
     fun featureGateOffReportsInactivePartitioningButStillListsMembers() {
         val view =
             cluster(FixedMembership(List.of("member-a", "member-b"), "member-a"), partitioningEnabled = false)

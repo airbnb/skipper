@@ -367,7 +367,9 @@ class SqliteScheduler
                     updatePs.setString(++j, owner)
                     updatePs.setString(++j, candidate.taskId)
                     updatePs.setInt(++j, candidate.version)
-                    val rowsUpdated =
+                    // Each candidate ends in exactly one of three outcomes: leased, lost the optimistic
+                    // race (rowsUpdated == 0), or hit lock contention (rowsUpdated == null).
+                    val rowsUpdated: Int? =
                         try {
                             updatePs.executeUpdate()
                         } catch (e: SQLException) {
@@ -384,9 +386,11 @@ class SqliteScheduler
                                     "leaseLockContention"
                                 )
                                 .inc()
-                            0
+                            null
                         }
-                    if (rowsUpdated != 1) {
+                    if (rowsUpdated == null) {
+                        // Contention: already counted above, nothing else to record.
+                    } else if (rowsUpdated != 1) {
                         // Another thread got the lease first, skip this task.
                         metrics
                             .counter(
@@ -784,7 +788,8 @@ class SqliteScheduler
         class Factory
             @JvmOverloads
             constructor(
-                private val path: String? = null,
+                /** The on-disk database this factory targets, or `null` for [SkipperConfig.sqliteDataSource]. */
+                val path: String? = null,
             ) : ComponentFactory<Scheduler> {
                 override fun create(config: SkipperConfig): Scheduler {
                     val dataSource = path?.let { JdbcTransactionManager.SqliteFactory.fileDataSource(it) }

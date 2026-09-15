@@ -224,8 +224,9 @@ class AdminResource
          * within the membership manager's liveness window) and the range of task-ID buckets each one
          * fetches from. Ranges are derived with the same [BucketPartitioner] and member ordering the
          * scheduler manager uses, so what is shown is what is running. `partitioning_active` is false
-         * when the feature gate is off, when this instance is not a registered member, or when no
-         * member is live yet — in all of which cases the scheduler fetches from the whole queue.
+         * when the feature gate is off, when this instance is not a registered member, or when its
+         * own heartbeat is not (yet) in the live list — in all of which cases the scheduler fetches
+         * from the whole queue.
          */
         @GET
         @Produces(MediaType.APPLICATION_JSON)
@@ -242,8 +243,13 @@ class AdminResource
                         ClusterMemberView(id, range.startInclusive, range.endExclusive, id == currentMemberId)
                     }
                     .toJavaList()
+            // Mirrors SkipperSchedulerManager.fetchTasksWithOptionalPartitioning: it fetches a partition only
+            // when the gate is on, this instance is registered, and its own id is in the live member list.
             val partitioningActive =
-                featureGate.isEnabled(FeatureGate.Keys.TASK_PARTITIONING) && registered && !members.isEmpty
+                featureGate.isEnabled(FeatureGate.Keys.TASK_PARTITIONING) &&
+                    registered &&
+                    currentMemberId != null &&
+                    members.contains(currentMemberId)
             return json(
                 ClusterView(
                     clusterMembershipManager.clusterName,

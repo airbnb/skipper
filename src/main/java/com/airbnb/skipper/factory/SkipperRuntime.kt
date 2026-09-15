@@ -102,6 +102,20 @@ class SkipperRuntime
                 "clusterMembershipManager is JdbcClusterMembershipManager.SqliteFactory but the workflow store or " +
                     "scheduler is the MySQL backend; the membership manager must share the scheduler's database."
             }
+            // Same dialect is not enough for SQLite: each factory resolves its own database from its `path`
+            // (or, when null, from sqliteDataSource / the in-memory default), so two SQLite factories with
+            // different paths are two different databases.
+            val storePath = (config.workflowStore as? SqliteWorkflowStore.Factory)?.path
+            val schedulerPath = (config.scheduler as? SqliteScheduler.Factory)?.path
+            val membershipPath = (config.clusterMembershipManager as? JdbcClusterMembershipManager.SqliteFactory)?.path
+            check(!(sqliteStore && sqliteScheduler) || storePath == schedulerPath) {
+                "workflowStore and scheduler point at different SQLite databases ($storePath vs $schedulerPath); " +
+                    "they must share one database."
+            }
+            check(!(sqliteMembership && sqliteScheduler) || membershipPath == schedulerPath) {
+                "clusterMembershipManager and scheduler point at different SQLite databases ($membershipPath vs " +
+                    "$schedulerPath); the membership manager must share the scheduler's database."
+            }
         }
 
         private fun <T> singleton(factory: () -> T): Provider<T> {

@@ -841,8 +841,8 @@ Cluster view: the live scheduler cluster members and the task-ID bucket range ea
     </div>
     <p class="text-muted small">
       Members are ordered by ID and split the {{total_buckets}} buckets evenly, the first members taking one
-      extra when it does not divide. A member whose heartbeat stops drops out of this list after the
-      liveness window and its buckets are redistributed among the rest.
+      extra when it does not divide. A member that stops gracefully leaves this list at once; one that
+      crashes drops out after the liveness window. Either way its buckets are redistributed among the rest.
     </p>
     {{else}}
     <div class="alert alert-secondary">
