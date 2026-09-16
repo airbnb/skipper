@@ -20,6 +20,7 @@ import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.storage.WorkflowStore
+import com.airbnb.skipper.internal.testutils.RecordingMetrics
 import io.opentracing.Scope
 import io.opentracing.Span
 import io.opentracing.Tracer
@@ -31,8 +32,10 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -52,6 +55,10 @@ import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 class ActionExecutorTest {
+    companion object {
+        @Volatile var blockStarted = CountDownLatch(1)
+    }
+
     private val executorService: ExecutorService = Executors.newSingleThreadExecutor()
     private lateinit var mockClock: Clock
     private lateinit var mockWorkflowStore: WorkflowStore
@@ -97,8 +104,11 @@ class ActionExecutorTest {
                 mockTracer,
                 ContextPropagator.NOOP,
                 null,
+                inFlightActions,
             )
     }
+
+    private val inFlightActions = InFlightActions()
 
     private fun newExecContext(): ExecutionContext =
         ExecutionContext.builder()
@@ -150,6 +160,7 @@ class ActionExecutorTest {
                 mockTracer,
                 ContextPropagator.NOOP,
                 InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS to true)),
+                inFlightActions,
             )
         whenever(mockWorkflowStore.getWorkflow(any())).thenReturn(
             Option.of(
@@ -174,6 +185,98 @@ class ActionExecutorTest {
         // The action never ran: no iteration increment and no checkpoint recorded.
         assertEquals(0, executionContext.getActionIteration(DemoActions::class.java, "hello"))
         assertEquals(0, executionContext.dirtyCheckpoints.size())
+    }
+
+    @Test
+    fun testInterruptedActionEndsAsCancelled() {
+        // A cancel interrupting the running action ends the action as cancelled, not as a retryable
+        // action error: nothing is checkpointed and the thread's interrupt flag does not leak.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        blockStarted = CountDownLatch(1)
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "block" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actionMap[DemoActions::class.java]!!)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val interruptingExecutor =
+            ActionExecutor(
+                mockWorkflowStore,
+                CheckpointMode.EVENTUAL_CHECKPOINT,
+                metrics,
+                errorMapper,
+                mockEventPublisher,
+                mockExecutionMetricsCollector,
+                mockTracer,
+                ContextPropagator.NOOP,
+                InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT to true)),
+                inFlightActions,
+            )
+        val outcome = CompletableFuture<Throwable?>()
+        val worker =
+            Thread {
+                try {
+                    interruptingExecutor.executeAction(req)
+                    outcome.complete(null)
+                } catch (e: Throwable) {
+                    outcome.complete(e)
+                }
+            }
+        worker.start()
+        assertTrue(blockStarted.await(5, TimeUnit.SECONDS))
+        assertTrue(inFlightActions.interrupt(executionContext.workflow.workflowId))
+        val thrown = outcome.get(5, TimeUnit.SECONDS)
+        assertTrue(thrown is WorkflowCancelledException, "was: $thrown")
+        assertEquals(0, executionContext.dirtyCheckpoints.size())
+        assertFalse(inFlightActions.interrupt(executionContext.workflow.workflowId))
+    }
+
+    @Test
+    fun testActionThatSurvivesTheInterruptCompletesWithAClearFlag() {
+        // The accepted cost: an action that swallows the interrupt completes and is checkpointed, the
+        // pooled thread leaves with a clear flag, and the ignored delivery is counted.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val recording = RecordingMetrics()
+        val executor =
+            ActionExecutor(
+                mockWorkflowStore,
+                CheckpointMode.EVENTUAL_CHECKPOINT,
+                recording,
+                errorMapper,
+                mockEventPublisher,
+                mockExecutionMetricsCollector,
+                mockTracer,
+                ContextPropagator.NOOP,
+                InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT to true)),
+                inFlightActions,
+            )
+        blockStarted = CountDownLatch(1)
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "swallow" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actionMap[DemoActions::class.java]!!)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val outcome = CompletableFuture<Pair<Any?, Boolean>>()
+        Thread {
+            val result = executor.executeAction(req)
+            outcome.complete(result to Thread.currentThread().isInterrupted)
+        }.start()
+        assertTrue(blockStarted.await(5, TimeUnit.SECONDS))
+        assertTrue(inFlightActions.interrupt(executionContext.workflow.workflowId))
+        val (result, flagAfter) = outcome.get(5, TimeUnit.SECONDS)
+        assertEquals("survived", result)
+        assertFalse(flagAfter)
+        assertEquals(1, executionContext.dirtyCheckpoints.size())
+        assertTrue(recording.counters.contains("actionExecutor.inflightCancellationIgnored"))
     }
 
     @Test
@@ -224,6 +327,7 @@ class ActionExecutorTest {
                 mockTracer,
                 ContextPropagator.NOOP,
                 gate,
+                inFlightActions,
             )
         whenever(mockWorkflowStore.getWorkflow(any())).thenReturn(
             Option.of(
@@ -333,6 +437,7 @@ class ActionExecutorTest {
                 mockTracer,
                 ContextPropagator.NOOP,
                 null,
+                inFlightActions,
             )
 
         val executionContext = newExecContext()
@@ -380,6 +485,7 @@ class ActionExecutorTest {
                 mockTracer,
                 ContextPropagator.NOOP,
                 null,
+                inFlightActions,
             )
         val executionContext = newExecContext()
         whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
@@ -423,6 +529,7 @@ class ActionExecutorTest {
                 mockTracer,
                 ContextPropagator.NOOP,
                 null,
+                inFlightActions,
             )
         val executionContext = newExecContext()
         whenever(mockWorkflowStore.storeActionCheckpoints(any(), any()))
@@ -1332,6 +1439,22 @@ class ActionExecutorTest {
     }
 
     private class DemoActions : Actions() {
+        fun block(): String {
+            blockStarted.countDown()
+            Thread.sleep(20_000)
+            return "unblocked"
+        }
+
+        fun swallow(): String {
+            blockStarted.countDown()
+            try {
+                Thread.sleep(20_000)
+            } catch (e: InterruptedException) {
+                // an action not written for interrupts: carries on
+            }
+            return "survived"
+        }
+
         @Execute
         fun hello(name: String): String = "Hello $name"
 

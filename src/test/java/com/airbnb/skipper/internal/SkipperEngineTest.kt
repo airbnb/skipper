@@ -40,8 +40,11 @@ import java.time.Clock
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -74,6 +77,7 @@ class SkipperEngineTest {
     private lateinit var mockEventPublisher: EventPublisher
     private val mockMetrics: Metrics = NoOpMetrics.INSTANCE
     private lateinit var mockCallbackHandlerInjector: SkipperInjector
+    private val inFlightActions = InFlightActions()
 
     @BeforeEach
     fun setUp() {
@@ -97,6 +101,7 @@ class SkipperEngineTest {
                 mockEventPublisher,
                 mockMetrics,
                 mockCallbackHandlerInjector,
+                inFlightActions,
             )
     }
 
@@ -572,6 +577,82 @@ class SkipperEngineTest {
         assertThrows(IllegalArgumentException::class.java) {
             skipperEngine.cancelWorkflow("test-workflow-id", "test cancellation reason")
         }
+    }
+
+    @Test
+    fun testCancelWorkflow_interruptsTheRunningActionWhenEnabled() {
+        val original = TestUtils.getWorkflowInstance()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(original))
+        whenever(mockWorkflowStore.updateWorkflow(any()))
+            .thenReturn(original.toBuilder().status(WorkflowInstance.Status.CANCELLED).build())
+        whenever(mockPersistentScheduler.getTask<Any>(any())).thenReturn(Option.none())
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT)).thenReturn(true)
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val (running, interrupted) = blockedActionThread(original.workflowId)
+
+        skipperEngine.cancelWorkflow(original.workflowId, "cancelled while running")
+
+        running.join(5_000)
+        assertTrue(interrupted.get())
+    }
+
+    @Test
+    fun testCancelWorkflow_doesNotInterruptWhenTheFlagIsOff() {
+        val original = TestUtils.getWorkflowInstance()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(original))
+        whenever(mockWorkflowStore.updateWorkflow(any()))
+            .thenReturn(original.toBuilder().status(WorkflowInstance.Status.CANCELLED).build())
+        whenever(mockPersistentScheduler.getTask<Any>(any())).thenReturn(Option.none())
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val (running, interrupted) = blockedActionThread(original.workflowId)
+
+        skipperEngine.cancelWorkflow(original.workflowId, "cancelled while running")
+
+        running.join(1_000)
+        assertTrue(running.isAlive)
+        assertFalse(interrupted.get())
+        running.interrupt()
+        running.join(5_000)
+    }
+
+    @Test
+    fun testCancelWorkflow_doesNotInterruptWithoutTheCheckpointGate() {
+        val original = TestUtils.getWorkflowInstance()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(original))
+        whenever(mockWorkflowStore.updateWorkflow(any()))
+            .thenReturn(original.toBuilder().status(WorkflowInstance.Status.CANCELLED).build())
+        whenever(mockPersistentScheduler.getTask<Any>(any())).thenReturn(Option.none())
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT)).thenReturn(true)
+        val (running, interrupted) = blockedActionThread(original.workflowId)
+
+        skipperEngine.cancelWorkflow(original.workflowId, "cancelled while running")
+
+        running.join(1_000)
+        assertTrue(running.isAlive)
+        assertFalse(interrupted.get())
+        running.interrupt()
+        running.join(5_000)
+    }
+
+    /** A thread registered as running an action for [workflowId], blocked until interrupted. */
+    private fun blockedActionThread(workflowId: String): Pair<Thread, AtomicBoolean> {
+        val entered = CountDownLatch(1)
+        val interrupted = AtomicBoolean(false)
+        val thread =
+            Thread {
+                val registration = inFlightActions.enter(workflowId)
+                entered.countDown()
+                try {
+                    Thread.sleep(20_000)
+                } catch (e: InterruptedException) {
+                    interrupted.set(true)
+                } finally {
+                    inFlightActions.exit(registration)
+                }
+            }
+        thread.start()
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        return thread to interrupted
     }
 
     @Test

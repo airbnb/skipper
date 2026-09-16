@@ -72,6 +72,7 @@ class CompensationExecutorTest {
                 mockTracer,
                 deps.config.contextPropagator,
                 null,
+                InFlightActions(),
             )
 
         compensationExecutor =
