@@ -13,6 +13,7 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.StateField
 import com.airbnb.skipper.ValidationError
 import com.airbnb.skipper.Workflow
+import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.internal.TestUtils.REQUEST_CONTEXT
@@ -228,6 +229,23 @@ class WorkflowExecutorTest {
         assertNull(result3.retryDelay)
         val wrappedError = result3.result!!.left.cause as ApplicationError
         assertEquals(IllegalStateException::class.java.name, wrappedError.type)
+    }
+
+    @Test
+    fun testExecuteWorkflowMethod_whenWorkflowCancelledExceptionThrown() {
+        // WorkflowCancelledException settles the execution as CANCELLED, not ERROR (which would
+        // schedule compensation).
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(Greeter::class.java)
+                .workflowMethod("hello")
+                .input("workflow-cancelled")
+                .build()
+        val result =
+            workflowExecutor.executeWorkflowMethod(instance, executorService, executionContext).join()
+        assertEquals(WorkflowInstance.Status.CANCELLED, result.newStatus)
+        assertNull(result.retryDelay)
+        assertTrue(result.result!!.left is WorkflowCancelledException)
     }
 
     @Test
@@ -507,6 +525,10 @@ class WorkflowExecutorTest {
             }
             if ("rejected-execution" == name) {
                 throw RejectedExecutionException("thread pool is shutting down")
+            }
+            if ("workflow-cancelled" == name) {
+                // Simulates the in-flight cancellation check raising this from action code.
+                throw WorkflowCancelledException("workflow cancelled mid-execution")
             }
             lastGreeting = String.format("Workflow Id: %s; Hello, %s!", id, name)
             return lastGreeting

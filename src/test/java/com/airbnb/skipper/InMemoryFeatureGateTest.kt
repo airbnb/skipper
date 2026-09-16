@@ -1,17 +1,16 @@
 package com.airbnb.skipper
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class InMemoryFeatureGateTest {
     private val gate = InMemoryFeatureGate()
 
     @Test
-    fun featuresAreEnabledByDefault() {
+    fun featuresResolveToTheirDeclaredDefault() {
         FeatureGate.Keys.values()
-            .filter { it != FeatureGate.Keys.DISABLE_SIGNAL_PERSISTENCE }
-            .forEach { assertTrue(gate.isEnabled(it), it.name) }
+            .forEach { assertEquals(it.enabledByDefault, gate.isEnabled(it), it.name) }
     }
 
     @Test

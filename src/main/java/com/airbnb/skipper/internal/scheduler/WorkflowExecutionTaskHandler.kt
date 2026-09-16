@@ -3,6 +3,7 @@ package com.airbnb.skipper.internal.scheduler
 import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.ExecutionTimeout
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.FixedRetryStrategy
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NonRetryableError
@@ -13,10 +14,12 @@ import com.airbnb.skipper.RetryStrategy
 import com.airbnb.skipper.RetryableError
 import com.airbnb.skipper.SkipperAnnotationNames.UNEXPECTED_ERROR_RETRY_DELAY
 import com.airbnb.skipper.SkipperAnnotationNames.UTC_CLOCK
+import com.airbnb.skipper.SkipperError
 import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Timer
 import com.airbnb.skipper.TransientError
 import com.airbnb.skipper.WorkflowCallbackHandler
+import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.api.ActionCheckpointView
 import com.airbnb.skipper.api.WorkflowInstanceView
@@ -34,6 +37,7 @@ import io.vavr.control.Option
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutorService
@@ -62,6 +66,7 @@ class WorkflowExecutionTaskHandler
         private val eventPublisher: EventPublisher,
         private val skipperEngine: SkipperEngine,
         private val middleware: RawRequestContextMiddleware,
+        private val featureGate: FeatureGate,
     ) : TaskHandler {
         private val now: Clock = clock
 
@@ -322,6 +327,22 @@ class WorkflowExecutionTaskHandler
             return Option.some(now.instant().plus(unexpectedErrorRetryDelay))
         }
 
+        /** The cancellation cancelWorkflow recorded, as loaded from the store. */
+        private fun storedCancellation(stored: WorkflowInstance): SkipperError {
+            if (stored.result.isCompletedExceptionally) {
+                try {
+                    stored.result.join()
+                } catch (e: CompletionException) {
+                    (e.cause as? SkipperError)?.let { return it }
+                } catch (e: CancellationException) {
+                    // fall through to the default below
+                }
+            }
+            return WorkflowCancelledException(
+                "workflow instance with id=${stored.workflowId} was cancelled while executing",
+            )
+        }
+
         private fun notifyCaller(
             result: WorkflowExecutor.ExecutionResult,
             workflowInstance: WorkflowInstance,
@@ -392,6 +413,19 @@ class WorkflowExecutionTaskHandler
                         workflowInstance.result.completeExceptionally(error)
                     }
                 }
+                WorkflowInstance.Status.CANCELLED -> {
+                    // cancelWorkflow already ran onCancelled and the event; only release a blocked caller.
+                    log.info(
+                        "workflow instance with id={} was cancelled while executing",
+                        workflowInstance.workflowId,
+                    )
+                    val error: Throwable =
+                        result.result?.left
+                            ?: WorkflowCancelledException(
+                                "workflow instance with id=${workflowInstance.workflowId} was cancelled",
+                            )
+                    workflowInstance.result.completeExceptionally(error)
+                }
                 else -> {}
             }
             return if (result.retryDelay == null) {
@@ -409,7 +443,32 @@ class WorkflowExecutionTaskHandler
             // TODO: skip persisting if there was no change in the workflow instance
             var currentWorkflowInstance = workflowInstance
             var context = executionContext
-            // Check if we need to reload the workflow instance to avoid stale errors.
+            // With in-flight cancellation on: if cancelWorkflow already wrote CANCELLED, a status write
+            // here would only lose the optimistic lock and reschedule a dead workflow, so keep the
+            // checkpoints, skip the write and hand the caller the recorded cancellation. Not keyed on
+            // the result type: the execution may end with any outcome. Off: the lock failure and the
+            // retry's start-of-execution gate handle it, at the cost of one wasted re-execution.
+            if (featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)) {
+                val stored: Option<WorkflowInstance>? = workflowStore.getWorkflow(workflowInstance.workflowId)
+                if (stored != null && stored.isDefined && stored.get().status == WorkflowInstance.Status.CANCELLED) {
+                    if (!context.dirtyCheckpoints.isEmpty) {
+                        workflowStore.storeActionCheckpoints(
+                            workflowInstance.workflowId,
+                            context.dirtyCheckpoints,
+                        )
+                    }
+                    log.info(
+                        "workflow instance with id={} was cancelled while executing (execution ended " +
+                            "as {}); settled without a status write",
+                        workflowInstance.workflowId,
+                        result.newStatus,
+                    )
+                    return WorkflowExecutor.ExecutionResult.builder()
+                        .newStatus(WorkflowInstance.Status.CANCELLED)
+                        .result(Either.left(storedCancellation(stored.get())))
+                        .build()
+                }
+            }
             if (context.shouldReloadWorkflowInstance.get()) {
                 log.info(
                     "reloading workflow instance with id={} to avoid stale errors",

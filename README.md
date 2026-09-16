@@ -212,6 +212,13 @@ the [API reference](https://skipper.airbnb.tech/docs/reference/annotations/), ru
 [troubleshooting guide](https://skipper.airbnb.tech/docs/troubleshooting/). The source for the
 site is in [`web/`](web/).
 
+## Compatibility
+
+Everything outside `com.airbnb.skipper.internal` is supported API. Classes under `internal` may
+change in any release; if you need a hook they provide, open an issue for a supported one. Versions
+follow the Conventional Commit prefixes in [RELEASING.md](RELEASING.md); release notes are the GitHub
+releases page.
+
 ## Contributing
 
 Issues and pull requests are welcome. CI runs `./gradlew build` and `./gradlew spotlessCheck`, which fails on any Kotlin or Java file that ktlint or google-java-format would change; `./gradlew spotlessApply` reformats them.

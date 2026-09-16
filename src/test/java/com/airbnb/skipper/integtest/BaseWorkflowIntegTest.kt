@@ -2,6 +2,7 @@ package com.airbnb.skipper.integtest
 
 import com.airbnb.skipper.Actions
 import com.airbnb.skipper.ApplicationError
+import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.CheckpointMode
 import com.airbnb.skipper.Compensate
 import com.airbnb.skipper.Execute
@@ -65,6 +66,8 @@ import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
 import org.mockito.kotlin.any
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -841,6 +844,10 @@ abstract class BaseWorkflowIntegTest {
             // coroutine TripBooking example) leak in and break timer/wait-based assertions here.
             MutableClock.resetInstance()
             deps = createTestRuntime()
+            // All gate stubbing happens before schedulerManager.start(): stubbing a mock that another
+            // thread is invoking can attach the stub to the wrong invocation. Suites override
+            // specific keys in customizeDeps.
+            whenever(deps.featureGate.isEnabled(any())).thenReturn(true)
             testClient = mock()
             callbackHandler = mock()
 
@@ -851,7 +858,6 @@ abstract class BaseWorkflowIntegTest {
             customizeDeps(deps)
 
             schedulerManager.start()
-            whenever(featureGate.isEnabled(any())).thenReturn(true)
             workflowId = UUID.randomUUID().toString()
             helper = TestHelper(skipperEngine, scheduler, workflowId)
         }
@@ -1163,7 +1169,6 @@ abstract class BaseWorkflowIntegTest {
         // TODO: remove this test once these feature gates are completely ramped up.
         @Test
         fun testWaitingWorkflowWhenFeatureGatesTurnedOn() {
-            whenever(featureGate.isEnabled(FeatureGate.Keys.FORCE_SIGNAL_WORKFLOW_EXEC_IN_SCHEDULER)).thenReturn(true)
             val workflowId = workflowId
             val workflow = workflowFactory<SampleWorkflow>(workflowId)
             workflow.waitingWorkflow("test")
@@ -1376,6 +1381,33 @@ abstract class BaseWorkflowIntegTest {
                 .find { it.actionMethod == "compensateImmediateCheckpoint" }
             assertThat(compensateCheckpoint).isNotNull()
             assertThat(compensateCheckpoint!!.result.isSuccess).isTrue()
+        }
+
+        @Test
+        fun testInflightCancelMidCompensableWorkflowStopsNextActionAndSkipsCompensation() {
+            // Cancelled while the first (compensable) action runs: the caller gets the recorded
+            // CancelledWorkflow, the next action never starts, no compensation runs. The gate is on
+            // via SuiteBase's blanket isEnabled stub.
+            val workflow = workflowFactory<CompensationWorkflow>(workflowId)
+            // Make the first action's execution cancel the workflow mid-flight, simulating a cancel
+            // request that lands after action 1 ran but before action 2's boundary.
+            doAnswer {
+                skipperEngine.cancelWorkflow(workflowId, "cancelled mid-flight")
+                null
+            }.whenever(testClient).action("executeActionWithImmediateCompensation")
+
+            assertThrows<CancelledWorkflow> {
+                workflow.workflowWithImmediateCheckpointCompensation()
+            }
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.CANCELLED)
+
+            // The next action never started.
+            verify(testClient, never()).action("failingAction")
+            // No compensation ran for the already-completed first action (a cancel is not an ERROR).
+            verify(testClient, never()).action("compensateImmediateCheckpoint")
+            // Durably CANCELLED — not COMPENSATION_* or ERROR.
+            assertThat(workflow.getWorkflowInstanceView().status)
+                .isEqualTo(WorkflowInstanceStatusView.CANCELLED)
         }
 
         @Test
@@ -1640,12 +1672,7 @@ abstract class BaseWorkflowIntegTest {
             deps.clock = Clock.systemUTC()
             deps.config.schedulerTaskLeaseDuration = Duration.ofSeconds(5)
             deps.config.leaseRenewalGracePeriod = Duration.ofSeconds(1)
-        }
-
-        @BeforeEach
-        override fun setUp() {
-            super.setUp()
-            whenever(featureGate.isEnabled(FeatureGate.Keys.AUTOMATIC_LEASE_RENEWAL))
+            whenever(deps.featureGate.isEnabled(FeatureGate.Keys.AUTOMATIC_LEASE_RENEWAL))
                 .thenReturn(true)
         }
 
@@ -1813,7 +1840,6 @@ abstract class BaseWorkflowIntegTest {
 
         @RepeatedTest(10)
         fun testWorkflowWithContention() {
-            whenever(featureGate.isEnabled(FeatureGate.Keys.FORCE_SIGNAL_WORKFLOW_EXEC_IN_SCHEDULER)).thenReturn(true)
             val workflow = workflowFactory<SampleWorkflow>(workflowId)
             workflow.contentiousWorkflow()
             // Immediately after invocation, call the signal method to update the state
@@ -2026,20 +2052,14 @@ abstract class BaseWorkflowIntegTest {
      * be replayed in place (reusing the same row, no new record), and `persist = false` signals
      * write no rows.
      *
-     * NOTE: [SuiteBase.setUp] stubs `featureGate.isEnabled(any()) == true`, which makes
-     * `DISABLE_SIGNAL_PERSISTENCE` resolve to true and therefore DISABLES persistence. Every test
-     * that expects rows to be written must explicitly opt persistence back on by stubbing
-     * `DISABLE_SIGNAL_PERSISTENCE` to false before sending the signal.
+     * The SuiteBase blanket stub turns `DISABLE_SIGNAL_PERSISTENCE` on; this suite turns it back
+     * off in [customizeDeps] so persistence is exercised.
      */
     @Nested
     inner class TestPersistedSignals : SuiteBase() {
         override fun customizeDeps(deps: TestRuntime) {
             deps.clock = Clock.systemUTC()
-        }
-
-        /** Re-enables signal persistence, which the SuiteBase blanket stub otherwise disables. */
-        private fun enableSignalPersistence() {
-            whenever(featureGate.isEnabled(FeatureGate.Keys.DISABLE_SIGNAL_PERSISTENCE))
+            whenever(deps.featureGate.isEnabled(FeatureGate.Keys.DISABLE_SIGNAL_PERSISTENCE))
                 .thenReturn(false)
         }
 
@@ -2053,7 +2073,6 @@ abstract class BaseWorkflowIntegTest {
 
         @Test
         fun testPersistedSignalSuccess_writesSingleExecutedRowAndWorkflowProceeds() {
-            enableSignalPersistence()
             val workflow = startWaitingWorkflow()
 
             // Persisted signal that flips shouldProceed; on success the workflow resumes and
@@ -2085,7 +2104,6 @@ abstract class BaseWorkflowIntegTest {
          */
         @Test
         fun testPersistedSignalThatThrows_surfacesErrorMarksRowFailedAndDoesNotAdvanceState() {
-            enableSignalPersistence()
             val workflow = startWaitingWorkflow()
 
             val e = assertThrows<NonRetryableError> {
@@ -2117,7 +2135,6 @@ abstract class BaseWorkflowIntegTest {
          */
         @Test
         fun testReplaySignal_reusesSameRowAndDoesNotDuplicate() {
-            enableSignalPersistence()
             val workflow = workflowFactory<WaitWorkflow>(workflowId)
             helper.expectWaitSignal { workflow.waitWorkflow(2).join() }
             helper.expectWorkflowToWait()
@@ -2146,7 +2163,6 @@ abstract class BaseWorkflowIntegTest {
 
         @Test
         fun testNonPersistedSignal_writesNoRows() {
-            enableSignalPersistence()
             val workflow = startWaitingWorkflow()
 
             // updateShouldProceed is a plain (persist = false) signal: it advances the workflow

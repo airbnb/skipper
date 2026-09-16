@@ -48,8 +48,10 @@ interface FeatureGate {
      *
      * The name of the key must match the name of the feature in the feature-gate configuration
      * (e.g. `feature_gates.<feature_key>`).
+     *
+     * `enabledByDefault` is what [InMemoryFeatureGate] answers unless overridden.
      */
-    enum class Keys(val key: String) {
+    enum class Keys(val key: String, val enabledByDefault: Boolean = true) {
         TEST_FEATURE("test_feature"),
         AUTOMATIC_LEASE_RENEWAL("automatic_lease_renewal"),
         FORCE_SIGNAL_WORKFLOW_EXEC_IN_SCHEDULER("force_signal_workflow_exec_in_scheduler"),
@@ -61,7 +63,7 @@ interface FeatureGate {
          * `@SignalMethod(persist = true)` are executed without being persisted, reverting to the
          * legacy behavior. Persistence is on by default for opted-in signals.
          */
-        DISABLE_SIGNAL_PERSISTENCE("disable_signal_persistence"),
+        DISABLE_SIGNAL_PERSISTENCE("disable_signal_persistence", enabledByDefault = false),
 
         /**
          * When the engine reschedules a workflow task honouring an active lease (the path a signal
@@ -72,5 +74,11 @@ interface FeatureGate {
          * persisting WAITING and removing its task is silently lost.
          */
         BUMP_TASK_VERSION_ON_HONORED_LEASE("bump_task_version_on_honored_lease"),
+
+        /**
+         * Re-check the workflow status between actions and stop once it is cancelled, instead of
+         * only at the next scheduling boundary. Off by default.
+         */
+        INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints", enabledByDefault = false),
     }
 }

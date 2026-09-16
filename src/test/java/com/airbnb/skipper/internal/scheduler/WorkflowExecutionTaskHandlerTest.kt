@@ -1,11 +1,13 @@
 package com.airbnb.skipper.internal.scheduler
 
 import com.airbnb.skipper.Actions
+import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.Compensate
 import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.Execute
 import com.airbnb.skipper.ExecutionTimeout
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.NonRetryableError
@@ -60,6 +62,7 @@ import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -76,6 +79,7 @@ class WorkflowExecutionTaskHandlerTest {
     private val metrics: Metrics = NoOpMetrics.INSTANCE
     private lateinit var mockEventPublisher: EventPublisher
     private lateinit var skipperEngine: SkipperEngine
+    private lateinit var mockFeatureGate: FeatureGate
 
     @BeforeEach
     fun setUp() {
@@ -89,6 +93,7 @@ class WorkflowExecutionTaskHandlerTest {
         mockScheduler = mock()
         mockEventPublisher = mock()
         skipperEngine = mock()
+        mockFeatureGate = mock()
         taskHandler =
             WorkflowExecutionTaskHandler(
                 mockWorkflowExecutor,
@@ -100,7 +105,8 @@ class WorkflowExecutionTaskHandlerTest {
                 mockScheduler,
                 mockEventPublisher,
                 skipperEngine,
-                RawRequestContextMiddleware.NOOP
+                RawRequestContextMiddleware.NOOP,
+                mockFeatureGate
             )
     }
 
@@ -637,7 +643,8 @@ class WorkflowExecutionTaskHandlerTest {
             mockScheduler,
             mockEventPublisher,
             skipperEngine,
-            RawRequestContextMiddleware.NOOP
+            RawRequestContextMiddleware.NOOP,
+            mockFeatureGate
         )
 
     /**
@@ -1400,7 +1407,8 @@ class WorkflowExecutionTaskHandlerTest {
             mockScheduler,
             mockEventPublisher,
             skipperEngine,
-            middleware
+            middleware,
+            mockFeatureGate
         )
 
     /**
@@ -1551,5 +1559,87 @@ class WorkflowExecutionTaskHandlerTest {
             mapOf("source" to source, "handler" to "WorkflowCallbackHandler"),
             handlerErrors[0].tags
         )
+    }
+
+    @Test
+    fun testHandleSettlesAsCancelledWhenStoreIsCancelledDuringExecution() {
+        // Execution ended TRANSIENT_ERROR while the store already holds CANCELLED: nothing written or
+        // rescheduled, checkpoint kept, caller gets CancelledWorkflow.
+        class TestActions : Actions() {
+            @Execute
+            fun testAction(input: String): String = "result"
+
+            @Compensate(forExecute = "testAction")
+            fun compensateTestAction(input: String) {
+                // compensation logic
+            }
+        }
+
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS))
+            .thenReturn(true)
+        val workflowInstance = TestUtils.getWorkflowInstance()
+        val checkpoint =
+            ActionCheckpoint.builder()
+                .checkpointTag(
+                    CheckpointTag.builder()
+                        .workflowId(workflowInstance.workflowId)
+                        .actionClass(TestActions::class.java)
+                        .actionMethod("testAction")
+                        .iteration(0)
+                        .build()
+                )
+                .executionStartTime(Instant.EPOCH)
+                .executionEndTime(Instant.EPOCH)
+                .result(Either.right("success"))
+                .isTransient(false)
+                .resultIsAsync(false)
+                .build()
+        val result =
+            WorkflowExecutor.ExecutionResult.builder()
+                .result(Either.left(RetryableError("worker interrupted")))
+                .newStatus(WorkflowInstance.Status.TRANSIENT_ERROR)
+                .retryDelay(Duration.ofSeconds(1))
+                .build()
+        whenever(mockWorkflowExecutor.executeWorkflowMethod(any(), any(), any())).thenAnswer { invocation ->
+            invocation.getArgument<ExecutionContext>(2).addDirtyCheckpoint(checkpoint)
+            CompletableFuture.completedFuture(result)
+        }
+        val cancelledInStore =
+            workflowInstance.toBuilder()
+                .status(WorkflowInstance.Status.CANCELLED)
+                .result(
+                    CompletableFuture<Any?>().apply {
+                        completeExceptionally(CancelledWorkflow("cancelled by test"))
+                    }
+                )
+                .build()
+        // The store holds RUNNING when the execution starts (the payload refresh) and CANCELLED by
+        // the time the execution ends (the settle check).
+        val getWorkflowInvocations = AtomicInteger(0)
+        whenever(mockWorkflowStore.getWorkflow(eq(workflowInstance.workflowId))).thenAnswer {
+            if (getWorkflowInvocations.incrementAndGet() == 1) {
+                Option.of(workflowInstance)
+            } else {
+                Option.of(cancelledInStore)
+            }
+        }
+        whenever(mockWorkflowStore.storeActionCheckpoints(eq(workflowInstance.workflowId), any()))
+            .thenReturn(List.of(checkpoint))
+        whenever(mockWorkflowStore.getTimers(eq(workflowInstance.workflowId)))
+            .thenReturn(List.empty())
+
+        val task: Task<*> = TestUtils.getTestTask(workflowInstance)
+        val handleResult = taskHandler.handle(task, executor).join()
+
+        assertTrue(handleResult.isEmpty)
+        verify(mockWorkflowStore, never()).updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
+        verify(mockWorkflowStore, never()).updateWorkflow(any())
+        verify(mockWorkflowStore, times(1))
+            .storeActionCheckpoints(eq(workflowInstance.workflowId), eq(List.of(checkpoint)))
+        verify(mockScheduler, times(0)).schedule<Any>(any())
+        val callerFuture = (task.payload as WorkflowInstance).result
+        assertTrue(callerFuture.isCompletedExceptionally)
+        val thrown = assertThrows(CompletionException::class.java) { callerFuture.join() }
+        assertTrue(thrown.cause is CancelledWorkflow)
     }
 }

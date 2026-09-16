@@ -184,7 +184,8 @@ class SkipperRuntime
                 NoOpEventPublisher(),
                 executionMetricsCollector.get(),
                 GlobalTracer.get(),
-                config.contextPropagator
+                config.contextPropagator,
+                featureGate.get()
             )
         }
 
@@ -296,7 +297,8 @@ class SkipperRuntime
                 scheduler.get(),
                 NoOpEventPublisher(),
                 skipperEngine.get(),
-                middleware.get()
+                middleware.get(),
+                featureGate.get(),
             )
         }
 
