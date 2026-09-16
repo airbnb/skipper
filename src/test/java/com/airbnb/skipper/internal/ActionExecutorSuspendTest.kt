@@ -70,6 +70,7 @@ class ActionExecutorSuspendTest {
             mockTracer,
             ContextPropagator.NOOP,
             null,
+            InFlightActions(),
         )
     }
 
