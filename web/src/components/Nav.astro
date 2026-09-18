@@ -22,25 +22,57 @@ const { heroNav = false } = Astro.props;
       <Wordmark class="nav__wordmark" />
     </a>
 
-    <nav class="nav__links" aria-label="Primary">
+    <nav class="nav__links" id="nav-links" aria-label="Primary">
       {links.map((l) => <a href={l.href}>{l.label}</a>)}
+      <a class="nav__links-mobile" href={`${base}/docs/`}>Get Started</a>
     </nav>
 
     <div class="nav__cta">
       <a class="btn btn--ghost" href={`${base}/docs/`}>Get Started</a>
       <a class="btn btn--primary" href={GITHUB} aria-label="GitHub repository">
-        <Icon name="github" size={18} /> GitHub
+        <Icon name="github" size={18} /> <span class="nav__gh-label">GitHub</span>
       </a>
+      <button class="nav__toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav-links">
+        <span class="nav__toggle-open"><Icon name="menu" size={24} /></span>
+        <span class="nav__toggle-close"><Icon name="close" size={24} /></span>
+      </button>
     </div>
   </div>
 </header>
 
 <script>
   const nav = document.getElementById('site-nav');
+  const toggle = nav?.querySelector<HTMLButtonElement>('.nav__toggle');
+
   // Only the hero nav (homepage) toggles blue → white on scroll. Other pages stay white.
-  if (nav && nav.dataset.hero === 'true') {
-    const onScroll = () => nav.classList.toggle('nav--scrolled', window.scrollY > 8);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
+  // The hero nav also goes white while the mobile menu is open, so the menu panel reads as one
+  // surface with the header regardless of scroll position.
+  const isHero = nav?.dataset.hero === 'true';
+  const syncScrolled = () => {
+    if (!nav || !isHero) return;
+    nav.classList.toggle('nav--scrolled', window.scrollY > 8 || nav.classList.contains('is-open'));
+  };
+  if (isHero) {
+    syncScrolled();
+    window.addEventListener('scroll', syncScrolled, { passive: true });
+  }
+
+  // Mobile menu (the primary links collapse behind a hamburger below 860px).
+  if (nav && toggle) {
+    const setOpen = (open: boolean) => {
+      nav.classList.toggle('is-open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+      syncScrolled();
+    };
+    toggle.addEventListener('click', () => setOpen(!nav.classList.contains('is-open')));
+    nav.querySelectorAll('.nav__links a').forEach((a) => a.addEventListener('click', () => setOpen(false)));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setOpen(false); });
+    document.addEventListener('click', (e) => {
+      if (nav.classList.contains('is-open') && !nav.contains(e.target as Node)) setOpen(false);
+    });
+    // Leaving the mobile breakpoint restores the inline links; drop the open state so it
+    // does not linger if the viewport shrinks again.
+    window.matchMedia('(min-width: 861px)').addEventListener('change', (e) => { if (e.matches) setOpen(false); });
   }
 </script>
