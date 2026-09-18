@@ -184,6 +184,51 @@ public void onRetriesExhausted(WorkflowInstanceView workflow, Throwable error) {
 
 See **[Instance Management](/docs/instance-management/)** for re-executing these workflows.
 
+## Don't catch blanket exceptions in workflow code
+
+Never catch `Throwable`, `Exception`, `RuntimeException`, or `Error` inside a
+`@WorkflowMethod` (or any code it calls directly). Skipper drives execution through
+exceptions, and a broad `catch` intercepts them:
+
+- `waitUntil` suspends a workflow by throwing an internal control-flow signal when its
+  condition is not yet met. Catching it makes the workflow continue as if the wait had been
+  satisfied.
+- A failing action surfaces as a `RetryableError` or non-retryable error. Catching it stops
+  Skipper from retrying, moving the workflow to `ERROR`, or running compensation, so the
+  workflow proceeds down a path it was never meant to take.
+
+```kotlin
+// Don't do this
+@WorkflowMethod
+suspend fun run() {
+  try {
+    waitUntil { isApproved == true }
+    ledger.charge(order)
+  } catch (e: Exception) {   // swallows the wait signal and action errors
+    log.warn("something went wrong", e)
+  }
+}
+```
+
+```java
+// Don't do this
+@WorkflowMethod
+public void run() {
+  try {
+    waitUntil(() -> Boolean.TRUE.equals(isApproved));
+    ledger.charge(order);
+  } catch (Exception e) {   // swallows the wait signal and action errors
+    log.warn("something went wrong", e);
+  }
+}
+```
+
+If part of a workflow needs its own error handling, do it **inside the action**, where you
+can catch the concrete exception type and decide whether to rethrow it as a
+`RetryableError`. Let anything that escapes an action propagate out of the workflow
+method so Skipper can handle it. The same rule applies to helpers that catch broadly on
+your behalf, such as `runCatching` in Kotlin or a wrapper that logs and swallows exceptions.
+
 ## Workflow-level and unexpected failures
 
 - Exceptions thrown by **workflow code** (not actions) are not run through the classifier —
