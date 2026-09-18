@@ -82,9 +82,10 @@ In practice this means a few operations must not happen directly inside workflow
 Anything non-deterministic belongs in an **action** (or a `checkpoint`, below). This is the
 single most important rule when writing workflows.
 
-> Don't wrap action calls in a `catch` for `Throwable`/`Error` — Skipper uses control-flow
-> signals internally, and swallowing them leads to undefined behavior. Catch the specific
-> exception types you expect instead.
+> Don't catch `Throwable`, `Exception`, or `Error` in workflow code — Skipper uses
+> exceptions internally to suspend workflows and to surface action failures, and swallowing
+> them leads to undefined behavior. See
+> [Error Handling](/docs/error-handling/#dont-catch-blanket-exceptions-in-workflow-code).
 
 ## Durable state &amp; checkpoints
 

@@ -109,3 +109,7 @@ String workflowId = this.id;
   with signals.
 - Combine `waitUntil` with [signals](/docs/signals-and-queries/) to bring in external data.
 - Keep timeouts meaningful — they are your safety net against waiting forever.
+- Never wrap `waitUntil` or action calls in a blanket `catch` (`Throwable`, `Exception`,
+  `Error`). `waitUntil` suspends the workflow by throwing, and action failures propagate as
+  exceptions Skipper needs to see. See
+  [Error Handling](/docs/error-handling/#dont-catch-blanket-exceptions-in-workflow-code).
