@@ -1,6 +1,7 @@
 ---
 import Layout from './Layout.astro';
 import { getCollection } from 'astro:content';
+import Icon from '../components/Icon.astro';
 
 interface Props { title: string; description?: string; }
 const { title, description } = Astro.props;
@@ -37,7 +38,11 @@ const next = idx >= 0 && idx < flat.length - 1 ? flat[idx + 1] : null;
         />
         <div class="docs-search__results" hidden></div>
       </div>
-      <nav class="docs__nav" aria-label="Documentation">
+      <button class="docs__nav-toggle" type="button" aria-expanded="false" aria-controls="docs-nav">
+        <span>Browse the docs</span>
+        <Icon name="chevron" size={18} />
+      </button>
+      <nav class="docs__nav" id="docs-nav" aria-label="Documentation">
         {grouped.map((g) => (
           <div class="docs__group">
             <h4>{g.section}</h4>
@@ -80,6 +85,20 @@ const next = idx >= 0 && idx < flat.length - 1 ? flat[idx + 1] : null;
     </article>
   </div>
 </Layout>
+
+<script>
+  // On narrow screens the sidebar sits above the article and its ~25 links would push the
+  // content below the fold, so the nav list is collapsed behind a toggle there.
+  const sidebar = document.querySelector<HTMLElement>('.docs__sidebar');
+  const navToggle = sidebar?.querySelector<HTMLButtonElement>('.docs__nav-toggle');
+  if (sidebar && navToggle) {
+    navToggle.addEventListener('click', () => {
+      const open = !sidebar.classList.contains('is-open');
+      sidebar.classList.toggle('is-open', open);
+      navToggle.setAttribute('aria-expanded', String(open));
+    });
+  }
+</script>
 
 <script>
   // Merge each Kotlin code block immediately followed by a Java block into the shared
