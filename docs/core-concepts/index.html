@@ -48,9 +48,10 @@ must always take the same path.</p>
 <p>Anything non-deterministic belongs in an <strong>action</strong> (or a <code>checkpoint</code>, below). This is the
 single most important rule when writing workflows.</p>
 <blockquote>
-<p>Don’t wrap action calls in a <code>catch</code> for <code>Throwable</code>/<code>Error</code> — Skipper uses control-flow
-signals internally, and swallowing them leads to undefined behavior. Catch the specific
-exception types you expect instead.</p>
+<p>Don’t catch <code>Throwable</code>, <code>Exception</code>, or <code>Error</code> in workflow code — Skipper uses
+exceptions internally to suspend workflows and to surface action failures, and swallowing
+them leads to undefined behavior. See
+<a href="/docs/error-handling/#dont-catch-blanket-exceptions-in-workflow-code">Error Handling</a>.</p>
 </blockquote>
 <h2 id="durable-state--checkpoints">Durable state &#x26; checkpoints</h2>
 <p>Fields you want to persist across the life of a workflow are marked with <code>@StateField</code>.
