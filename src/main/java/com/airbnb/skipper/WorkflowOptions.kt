@@ -21,14 +21,28 @@ import java.time.Duration
  * workflows that do not exist (workflows that have never run) If false, calling a @Query method on
  * such a workflow will throw an IllegalStateException. If true, the @Query method will run using
  * the workflow's initial state.
+ * @property createExistingWorkflowIsNoop Indicates whether invoking a workflow method for an
+ * existing workflow should return its current result without scheduling another execution.
  */
 data class WorkflowOptions(
     val executionTimeout: Duration? = null,
     val refreshRequestContextForLongRunningWorkflows: Boolean = false,
-    val allowQueryOnNonExistentWorkflow: Boolean = false
+    val allowQueryOnNonExistentWorkflow: Boolean = false,
+    val createExistingWorkflowIsNoop: Boolean = false
 ) {
     constructor(executionTimeout: Duration?, refreshRequestContextForLongRunningWorkflows: Boolean) :
-        this(executionTimeout, refreshRequestContextForLongRunningWorkflows, false)
+        this(executionTimeout, refreshRequestContextForLongRunningWorkflows, false, false)
+
+    constructor(
+        executionTimeout: Duration?,
+        refreshRequestContextForLongRunningWorkflows: Boolean,
+        allowQueryOnNonExistentWorkflow: Boolean,
+    ) : this(
+        executionTimeout,
+        refreshRequestContextForLongRunningWorkflows,
+        allowQueryOnNonExistentWorkflow,
+        false,
+    )
 
     /**
      * Merges this WorkflowOptions with another, with the other options taking precedence.
@@ -42,7 +56,8 @@ data class WorkflowOptions(
         return WorkflowOptions(
             executionTimeout = override.executionTimeout ?: this.executionTimeout,
             refreshRequestContextForLongRunningWorkflows = override.refreshRequestContextForLongRunningWorkflows,
-            allowQueryOnNonExistentWorkflow = override.allowQueryOnNonExistentWorkflow
+            allowQueryOnNonExistentWorkflow = override.allowQueryOnNonExistentWorkflow,
+            createExistingWorkflowIsNoop = override.createExistingWorkflowIsNoop
         )
     }
 }

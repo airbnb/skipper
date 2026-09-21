@@ -219,6 +219,60 @@ class SkipperEngineTest {
     }
 
     @Test
+    @Throws(Exception::class)
+    fun testStartWorkflowWhenWorkflowExistsAndRequestMakesCreationNoop() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP))
+            .thenReturn(false)
+        whenever(mockWorkflowStore.createWorkflow(any())).thenThrow(EntityAlreadyExists())
+        whenever(mockWorkflowStore.getWorkflow(any<String>()))
+            .thenReturn(Option.of(TestUtils.getWorkflowInstance()))
+
+        val result =
+            skipperEngine.startWorkflow(
+                RunRequest.builder()
+                    .workflowId("test-workflow-id")
+                    .workflowClass(Workflow::class.java)
+                    .input("test")
+                    .workflowMethod("test-method")
+                    .requestContext(REQUEST_CONTEXT)
+                    .extraRequestData(ExtraRequestData())
+                    .createExistingWorkflowIsNoop(true)
+                    .build(),
+            )
+
+        assertFalse(result.result.isDone)
+        verify(mockScheduler, times(0)).schedule<Any>(any())
+    }
+
+    @Test
+    fun testStartWorkflowWhenRetriesAreExhaustedIgnoresRequestCreationNoop() {
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .status(WorkflowInstance.Status.RETRIES_EXHAUSTED)
+                .build()
+        whenever(mockWorkflowStore.createWorkflow(any())).thenThrow(EntityAlreadyExists())
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+        val task = getTestTask(getWorkflowInstance())
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(task)
+
+        val result =
+            skipperEngine.startWorkflow(
+                RunRequest.builder()
+                    .workflowId("test-workflow-id")
+                    .workflowClass(Workflow::class.java)
+                    .input("test")
+                    .workflowMethod("test-method")
+                    .requestContext(REQUEST_CONTEXT)
+                    .extraRequestData(ExtraRequestData())
+                    .createExistingWorkflowIsNoop(true)
+                    .build(),
+            )
+
+        assertFalse(result.result.isDone)
+        verify(mockScheduler, times(1)).schedule<Any>(any())
+    }
+
+    @Test
     fun testStartWorkflowWhenWorkflowExistsAndIsCompleted() {
         val instance =
             TestUtils.getWorkflowInstance().toBuilder()
