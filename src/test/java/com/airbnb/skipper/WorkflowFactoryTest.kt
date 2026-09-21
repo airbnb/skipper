@@ -464,6 +464,30 @@ class WorkflowFactoryTest {
     }
 
     @Test
+    fun testInvokeWorkflowMethod_passesCreateExistingWorkflowIsNoop() {
+        val workflowInstance = TestUtils.getWorkflowInstance()
+        workflowInstance.result.complete("Workflow method executed")
+        whenever(skipperEngine.startWorkflow(any()))
+            .thenReturn(workflowInstance)
+
+        val customWorkflowOptions = WorkflowOptions(createExistingWorkflowIsNoop = true)
+        val workflow = workflowFactory<SampleWorkflow>(workflowId, REQUEST_CONTEXT, customWorkflowOptions)
+
+        assertEquals("Workflow method executed", workflow.workflowMethod("input"))
+        verify(skipperEngine).startWorkflow(
+            RunRequest.builder()
+                .workflowId(workflowId)
+                .workflowClass(SampleWorkflow::class.java)
+                .workflowMethod("workflowMethod")
+                .input("input")
+                .requestContext(REQUEST_CONTEXT)
+                .extraRequestData(ExtraRequestData())
+                .createExistingWorkflowIsNoop(true)
+                .build()
+        )
+    }
+
+    @Test
     fun testInvokeSuspendWorkflowMethod_stripsContinuation() {
         // When the proxy intercepts a suspend @WorkflowMethod with 1 user arg,
         // the Kotlin compiler passes [input, Continuation] as the args array.
