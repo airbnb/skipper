@@ -1,5 +1,6 @@
 # GitHub Actions configuration for airbnb/skipper: model-checks the TLA+ specifications under
-# formal/. See formal/tla/README.md for what the models cover.
+# formal/ and checks that the engine still behaves as they describe. See formal/tla/README.md for
+# what the models cover and formal/tla/trace/README.md for trace validation.
 #
 #   tla-model-check  Runs formal/tla/check.sh, which model-checks every config in
 #                    formal/tla/models/ with TLC and compares each verdict with the one the
@@ -10,9 +11,18 @@
 #                    line in the same change). TLC's full output, counterexample traces included,
 #                    is stored as a run artifact.
 #
-# The models are independent of the Kotlin sources, so the job only runs when formal/ or this
-# file changes. It is not a required check: the main branch ruleset requires `jvm-build` only,
-# and a path-filtered check cannot be required without leaving other pull requests waiting on it.
+#   trace-validation Runs the engine's end-to-end test suites with trace recording on
+#                    (formal/tla/trace/record_traces.sh), then checks every recorded workflow run
+#                    against the model (check_traces.sh --self-test). Red when the engine takes a
+#                    step the model says it cannot, meaning the code or the spec has drifted, or when
+#                    the self-test finds the checker accepting a corrupted trace. A trace TLC cannot
+#                    decide within its time budget is reported as inconclusive, with a warning,
+#                    rather than failing the job. The recorded traces and TLC's output are stored as
+#                    run artifacts.
+#
+# Both jobs run when the model, the engine, or the test harness changes; nothing else can move a
+# verdict. Neither is a required check: the main branch ruleset requires `jvm-build` only, and a
+# path-filtered check cannot be required without leaving other pull requests waiting on it.
 #
 # TLC is pinned to a release and its checksum verified, so a new TLA+ release cannot change a
 # verdict without a change here.
@@ -24,10 +34,16 @@ on:
     branches: [main]
     paths:
       - "formal/**"
+      - "src/main/**"
+      - "testutils/**"
+      - "build.gradle.kts"
       - ".github/workflows/formal.yml"
   pull_request:
     paths:
       - "formal/**"
+      - "src/main/**"
+      - "testutils/**"
+      - "build.gradle.kts"
       - ".github/workflows/formal.yml"
   workflow_dispatch:
 
@@ -73,4 +89,58 @@ jobs:
           name: tlc-output
           path: |
             ${{ runner.temp }}/tlc/*.out
+          if-no-files-found: ignore
+
+  trace-validation:
+    runs-on: ubuntu-latest
+    # Each trace has its own time budget (TRACE_BUDGET); this only catches a job that hangs.
+    timeout-minutes: 60
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Restore Gradle caches
+        # Same keys as jvm-build.yml, read-only: the JVM build saves them.
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('gradle/libs.versions.toml', 'build.gradle.kts', 'skipper-state-machine/build.gradle.kts', 'testutils/build.gradle.kts', 'plugins/prometheus/build.gradle.kts') }}
+          restore-keys: |
+            gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-
+
+      - name: Download TLC ${{ env.TLA_TOOLS_VERSION }}
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/tla2tools.jar" \
+            "https://github.com/tlaplus/tlaplus/releases/download/$TLA_TOOLS_VERSION/tla2tools.jar"
+          echo "$TLA_TOOLS_SHA256  $RUNNER_TEMP/tla2tools.jar" | sha256sum --check -
+
+      - name: Record traces from the end-to-end suites
+        run: formal/tla/trace/record_traces.sh "$RUNNER_TEMP/traces"
+
+      - name: Check the traces against the model
+        env:
+          TLA2TOOLS: ${{ runner.temp }}/tla2tools.jar
+          OUT_DIR: ${{ runner.temp }}/trace-check
+          JOBS: 4
+          TRACE_BUDGET: 300
+        run: formal/tla/trace/check_traces.sh --self-test "$RUNNER_TEMP/traces"
+
+      - name: Store traces and TLC output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trace-validation
+          path: |
+            ${{ runner.temp }}/traces
+            ${{ runner.temp }}/trace-check/**/MC.*
+            ${{ runner.temp }}/trace-check/**/tlc.out
+            ${{ runner.temp }}/trace-check/*.jsonl
           if-no-files-found: ignore

@@ -30,7 +30,10 @@ CONSTANTS
     NoopOnExisting,     \* FeatureGate CREATE_EXISTING_WORKFLOW_IS_NOOP (default on)
     BumpOnHonoredLease, \* FeatureGate BUMP_TASK_VERSION_ON_HONORED_LEASE (default on)
     InMemoryStart,      \* startWorkflow may take the in-process path (synchronous start)
-    UserFailures        \* the workflow body may fail: transient, non-retryable, retries exhausted
+    SignalInMemory,     \* signals take the in-process path: FORCE_SIGNAL_WORKFLOW_EXEC_IN_SCHEDULER off
+    MaxStartCalls,      \* startWorkflow calls the caller makes, beyond retries after a failure
+    UserFailures,       \* the workflow body may fail: transient, non-retryable, retries exhausted
+    FreeBody            \* the body's outcome is unconstrained (trace validation runs real workflows)
 
 FaultKinds == {
     "crash",        \* a worker or the caller's JVM dies; its local state is lost
@@ -46,7 +49,8 @@ ASSUME /\ Workers # {}
        /\ MaxFaults \in Nat /\ MaxRenewals \in Nat /\ MaxRequeues \in Nat
        /\ Faults \subseteq FaultKinds
        /\ NoopOnExisting \in BOOLEAN /\ BumpOnHonoredLease \in BOOLEAN /\ UserFailures \in BOOLEAN
-       /\ InMemoryStart \in BOOLEAN
+       /\ InMemoryStart \in BOOLEAN /\ SignalInMemory \in BOOLEAN /\ FreeBody \in BOOLEAN
+       /\ MaxStartCalls \in Nat \ {0}
 
 -----------------------------------------------------------------------------------------
 (* Task ids. The WORKFLOW task's id is the workflow id; TIMER task k belongs to wait k. *)
@@ -61,9 +65,9 @@ LATER == 2      \* run_after > now + lease: not fetchable, hasActiveLease() does
 FirstLease == 3 \* values from here on are leases: run_after = now + lease, fresh per fetch/renewal
 
 NoRow == [st |-> "NONE", ra |-> DUE, ver |-> 0, rc |-> 0]
-NoHeld == [id |-> WF, ver |-> 0, ra |-> DUE, rc |-> 0, rerun |-> FALSE]
+NoHeld == [id |-> WF, ver |-> 0, ra |-> DUE, rc |-> 0, rerun |-> FALSE, wv |-> 0]
 NoDirty == [k \in Timers |-> "NONE"]
-IdleW == [pc |-> "idle", held |-> NoHeld, att |-> FALSE, out |-> "none", rv |-> 0,
+IdleW == [pc |-> "idle", held |-> NoHeld, att |-> FALSE, out |-> "none", rv |-> 0, rs |-> "NONE",
           dirty |-> NoDirty, pend |-> {}, fop |-> "remove", fra |-> DUE]
 
 Terminal == {"COMPLETED", "ERROR"}
@@ -73,15 +77,14 @@ VARIABLES
     wf,       \* workflow row: [ex, st, ver, sig]; sig = signals applied to the workflow state
     tm,       \* timer rows: k -> NONE | ACTIVE | EXPIRED | CANCELLED
     row,      \* scheduler task rows: id -> [st: NONE|PENDING|RUNNING|FAILED, ra, ver, rc]
-    tok,      \* next fresh lease value
     wk,       \* per-worker local state (see IdleW)
     cpc,      \* startWorkflow caller: ready (a call is due) | sched | done
     lq,       \* the caller JVM's in-memory queue: {} or {held snapshot}
     spc,      \* signal sender: idle | exec | sched
     sRead,    \* workflow version the in-flight signal read
-    sigSent, faults, renewals, requeues
+    sigSent, faults, renewals, requeues, starts
 
-vars == <<wf, tm, row, tok, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+vars == <<wf, tm, row, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 TypeOK ==
     /\ wf \in [ex: BOOLEAN, st: {"CREATED", "RUNNING", "WAITING", "TRANSIENT_ERROR",
@@ -89,7 +92,7 @@ TypeOK ==
                ver: Nat, sig: Nat]
     /\ tm \in [Timers -> {"NONE", "ACTIVE", "EXPIRED", "CANCELLED"}]
     /\ row \in [TaskIds -> [st: {"NONE", "PENDING", "RUNNING", "FAILED"}, ra: Nat, ver: Nat, rc: Nat]]
-    /\ \A p \in Workers : wk[p].pc \in {"idle", "dlq", "wf_exec", "wf_persist", "wf_timers",
+    /\ \A p \in Workers : wk[p].pc \in {"idle", "dlq", "wf_exec", "wf_run", "wf_persist", "wf_timers",
                                         "tm_exec", "tm_sched", "finish"}
     /\ cpc \in {"ready", "sched", "done"}
     /\ spc \in {"idle", "exec", "sched"}
@@ -112,6 +115,14 @@ Sched(t, ra, honor) ==
          THEN IF BumpOnHonoredLease THEN [row[t] EXCEPT !.ver = @ + 1] ELSE row[t]
          ELSE [st |-> "PENDING", ra |-> ra, ver |-> row[t].ver + 1, rc |-> 0]
 
+(* A lease value nobody holds or sees: one past every run_after in a row, a worker's    *)
+(* hand or the in-memory queue. Only equality between leases matters, so this is as good *)
+(* as a counter, and states that differ only in how many leases came before merge.       *)
+NewLease ==
+    LET used == {FirstLease - 1} \cup {row[t].ra : t \in TaskIds}
+                \cup {wk[p].held.ra : p \in Workers} \cup {h.ra : h \in lq}
+    IN 1 + (CHOOSE m \in used : \A u \in used : u <= m)
+
 (* The holder of task t's lease is still working and will renew or finish it.          *)
 LiveHolder(t) ==
     \E p \in Workers : /\ wk[p].pc # "idle" /\ wk[p].att
@@ -128,11 +139,37 @@ Walk(k, sig, acc) ==
     ELSE IF tm[k] = "NONE" THEN [o |-> "WAIT", d |-> [acc EXCEPT ![k] = "ACTIVE"]]
     ELSE [o |-> "WAIT", d |-> acc]
 
+Outcomes == {"WAIT", "COMPLETE", "TRANSIENT", "NONRETRYABLE", "EXHAUSTED"}
+
+(* Any body, as far as the engine can tell. A run replays the waits in program order     *)
+(* (timer k is the k-th wait to create its timer) and may end at any point, but it only  *)
+(* suspends inside waitUntil: at a wait whose timer is not over, which it cancels if the *)
+(* condition now holds, and otherwise suspends on, creating the timer on the first visit.*)
+Ends == {"COMPLETE", "TRANSIENT", "NONRETRYABLE", "EXHAUSTED"}
+
+RECURSIVE FreeWalk(_, _)
+FreeWalk(k, acc) ==
+    {[o |-> f, d |-> acc] : f \in Ends} \cup
+    (IF k > NWaits THEN {}
+     ELSE IF tm[k] \in {"EXPIRED", "CANCELLED"} THEN FreeWalk(k + 1, acc)
+     ELSE FreeWalk(k + 1, [acc EXCEPT ![k] = "CANCELLED"]) \cup
+          {[o |-> "WAIT", d |-> IF tm[k] = "NONE" THEN [acc EXCEPT ![k] = "ACTIVE"] ELSE acc]})
+
+FreeResults == FreeWalk(1, NoDirty)
+
 Results ==
+    IF FreeBody THEN FreeResults ELSE
     {Walk(1, wf.sig, NoDirty)} \cup
     (IF UserFailures
      THEN {[o |-> f, d |-> NoDirty] : f \in {"TRANSIENT", "NONRETRYABLE", "EXHAUSTED"}}
      ELSE {})
+
+(* updateWorkflowAndStoreCheckpointsAndTimers creates a missing timer (then moves it to *)
+(* the dirty status) and moves an existing one only as Timer.Status.canTransitionTo allows.*)
+TimerMoves(cur, new) ==
+    /\ new # "NONE"
+    /\ \/ cur = "NONE"
+       \/ cur = "ACTIVE" /\ new \in {"CANCELLED", "EXPIRED"}
 
 StatusOf(o) ==
     CASE o = "WAIT" -> "WAITING"
@@ -141,7 +178,14 @@ StatusOf(o) ==
       [] o = "NONRETRYABLE" -> "ERROR"
       [] o = "EXHAUSTED" -> "RETRIES_EXHAUSTED"
 
-Fault(kind) == kind \in Faults /\ faults < MaxFaults /\ faults' = faults + 1
+(* Faults are budgeted so liveness can assume they stop. Trace validation checks no      *)
+(* liveness, and a counter that only records how many early expiries a behaviour used    *)
+(* would keep otherwise equal states apart, so it turns counting off (SkipperTrace.tla).  *)
+FaultsCounted == TRUE
+
+Fault(kind) ==
+    /\ kind \in Faults
+    /\ IF FaultsCounted THEN faults < MaxFaults /\ faults' = faults + 1 ELSE UNCHANGED faults
 
 SetW(p, r) == wk' = [wk EXCEPT ![p] = r]
 
@@ -154,22 +198,21 @@ Fetch(p) ==
     /\ wk[p].pc = "idle"
     /\ \E t \in TaskIds :
          /\ Live(t) /\ row[t].ra = DUE
-         /\ LET r == [st |-> "RUNNING", ra |-> tok, ver |-> row[t].ver + 1, rc |-> row[t].rc + 1]
+         /\ LET r == [st |-> "RUNNING", ra |-> NewLease, ver |-> row[t].ver + 1, rc |-> row[t].rc + 1]
             IN /\ row' = [row EXCEPT ![t] = r]
                /\ SetW(p, [IdleW EXCEPT
                      !.pc = IF r.rc > MaxRetries THEN "dlq"
                             ELSE IF t = WF THEN "wf_exec" ELSE "tm_exec",
-                     !.held = [id |-> t, ver |-> r.ver, ra |-> r.ra, rc |-> r.rc, rerun |-> FALSE],
+                     !.held = [id |-> t, ver |-> r.ver, ra |-> r.ra, rc |-> r.rc, rerun |-> FALSE, wv |-> 0],
                      !.att = TRUE])
-    /\ tok' = tok + 1
-    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* A consumer takes the in-memory copy startWorkflow queued in this JVM.               *)
 Take(p) ==
     /\ wk[p].pc = "idle" /\ lq # {}
     /\ \E h \in lq : SetW(p, [IdleW EXCEPT !.pc = "wf_exec", !.held = h, !.att = TRUE])
     /\ lq' = {}
-    /\ UNCHANGED <<wf, tm, row, tok, cpc, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, row, cpc, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* Scheduler.markAsFailed, versioned; a lost race is swallowed and the row left alone.  *)
 MarkFailed(p) ==
@@ -179,20 +222,29 @@ MarkFailed(p) ==
                 THEN [row EXCEPT ![t].st = "FAILED", ![t].ver = @ + 1]
                 ELSE row
     /\ SetW(p, IdleW)
-    /\ UNCHANGED <<wf, tm, tok, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
-(* WorkflowExecutionTaskHandler: load the instance and run the body. A terminal         *)
-(* workflow is not run again (WorkflowExecutor short-circuits).                         *)
-WfExec(p) ==
+(* WorkflowExecutionTaskHandler.handle, in the two reads it makes before running the     *)
+(* body. WfRead: load the instance, unless this is an in-memory copy, which runs on the  *)
+(* instance it was queued with (wv). WfRun: load the timers and run the body. A terminal *)
+(* workflow's body is not run again: WorkflowExecutor short-circuits to its current      *)
+(* status, which is then persisted as usual.                                            *)
+WfRead(p) ==
     /\ wk[p].pc = "wf_exec"
     /\ IF ~wf.ex
        THEN SetW(p, IdleW)   \* NonRetryableError thrown outside the future; row left to its lease
-       ELSE IF wf.st \in Terminal
-       THEN SetW(p, [wk[p] EXCEPT !.pc = "finish", !.out = "noop", !.fop = "remove"])
+       ELSE SetW(p, [wk[p] EXCEPT !.pc = "wf_run", !.rs = wf.st,
+                                  !.rv = IF wk[p].held.wv > 0 THEN wk[p].held.wv ELSE wf.ver])
+    /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
+
+WfRun(p) ==
+    /\ wk[p].pc = "wf_run"
+    /\ IF wk[p].rs \in Terminal
+       THEN SetW(p, [wk[p] EXCEPT !.pc = "wf_persist", !.dirty = NoDirty,
+                                  !.out = IF wk[p].rs = "COMPLETED" THEN "COMPLETE" ELSE "NONRETRYABLE"])
        ELSE \E res \in Results :
-              SetW(p, [wk[p] EXCEPT !.pc = "wf_persist", !.out = res.o, !.dirty = res.d,
-                                    !.rv = wf.ver])
-    /\ UNCHANGED <<wf, tm, row, tok, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+              SetW(p, [wk[p] EXCEPT !.pc = "wf_persist", !.out = res.o, !.dirty = res.d])
+    /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* updateWorkflowAndStoreCheckpointsAndTimers: status, state and dirty timers in one    *)
 (* versioned transaction. Losing the optimistic lock is a TRANSIENT_ERROR result that   *)
@@ -202,16 +254,16 @@ WfPersist(p) ==
     /\ LET w == wk[p] IN
        IF wf.ver = w.rv
        THEN /\ wf' = [wf EXCEPT !.st = StatusOf(w.out), !.ver = @ + 1]
-            /\ tm' = [k \in Timers |-> IF w.dirty[k] = "NONE" THEN tm[k] ELSE w.dirty[k]]
-            /\ \E ra \in {SOON, LATER} :
+            /\ tm' = [k \in Timers |-> IF TimerMoves(tm[k], w.dirty[k]) THEN w.dirty[k] ELSE tm[k]]
+            /\ \E ra \in {DUE, SOON, LATER} :
                  SetW(p, [w EXCEPT !.pc = "wf_timers",
-                                   !.pend = {k \in Timers : w.dirty[k] = "ACTIVE"},
+                                   !.pend = {k \in Timers : w.dirty[k] = "ACTIVE" /\ tm[k] = "NONE"},
                                    !.fop = IF w.out = "TRANSIENT" THEN "retry" ELSE "remove",
                                    !.fra = ra])
        ELSE /\ UNCHANGED <<wf, tm>>
-            /\ \E ra \in {SOON, LATER} :
+            /\ \E ra \in {DUE, SOON, LATER} :
                  SetW(p, [w EXCEPT !.pc = "finish", !.fop = "retry", !.fra = ra])
-    /\ UNCHANGED <<row, tok, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<row, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* After the transaction, one TIMER task is scheduled per timer the run created.        *)
 WfTimers(p) ==
@@ -219,10 +271,10 @@ WfTimers(p) ==
     /\ IF wk[p].pend = {}
        THEN /\ SetW(p, [wk[p] EXCEPT !.pc = "finish"])
             /\ UNCHANGED row
-       ELSE \E k \in wk[p].pend :
-              /\ row' = [row EXCEPT ![k] = Sched(k, LATER, FALSE)]
+       ELSE \E k \in wk[p].pend, ra \in {DUE, SOON, LATER} :
+              /\ row' = [row EXCEPT ![k] = Sched(k, ra, FALSE)]
               /\ SetW(p, [wk[p] EXCEPT !.pend = @ \ {k}])
-    /\ UNCHANGED <<wf, tm, tok, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* TimerTaskHandler: defer while the workflow task holds a lease, else expire the timer *)
 (* (idempotent) and schedule the workflow. A cancelled or missing timer is dropped.     *)
@@ -241,13 +293,13 @@ TmExec(p) ==
          [] OTHER ->
                 /\ SetW(p, [wk[p] EXCEPT !.pc = "finish", !.fop = "remove"])
                 /\ UNCHANGED tm
-    /\ UNCHANGED <<wf, row, tok, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, row, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 TmSched(p) ==
     /\ wk[p].pc = "tm_sched"
     /\ row' = [row EXCEPT ![WF] = Sched(WF, DUE, TRUE)]
     /\ SetW(p, [wk[p] EXCEPT !.pc = "finish", !.fop = "remove"])
-    /\ UNCHANGED <<wf, tm, tok, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* SkipperSchedulerManager.finishTask: the final versioned remove or rescheduleForRetry.*)
 (* A version that moved with run_after unchanged means a rerun was requested on our     *)
@@ -270,7 +322,7 @@ Finish(p) ==
                  ELSE IF r.st # "NONE" /\ r.ra = w.held.ra THEN RerunNow(t)
                  ELSE row                                   \* removed elsewhere, or lease lost
     /\ SetW(p, IdleW)
-    /\ UNCHANGED <<wf, tm, tok, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* LeaseRenewalManager.attemptToRenewOneTask. A version bump that left run_after alone  *)
 (* is adopted and remembered as a rerun request; any other failure cancels handleTask's *)
@@ -284,17 +336,16 @@ Renew(p) ==
            r == row[t]
        IN IF r.st \notin {"PENDING", "RUNNING"}
           THEN /\ SetW(p, [w EXCEPT !.att = FALSE])
-               /\ UNCHANGED <<row, tok>>
+               /\ UNCHANGED row
           ELSE IF r.ver = w.held.ver
-          THEN /\ row' = [row EXCEPT ![t].ver = @ + 1, ![t].ra = tok]
-               /\ tok' = tok + 1
-               /\ SetW(p, [w EXCEPT !.held.ver = r.ver + 1, !.held.ra = tok])
+          THEN /\ row' = [row EXCEPT ![t].ver = @ + 1, ![t].ra = NewLease]
+               /\ SetW(p, [w EXCEPT !.held.ver = r.ver + 1, !.held.ra = NewLease])
           ELSE IF r.ra = w.held.ra
           THEN /\ SetW(p, [w EXCEPT !.held.ver = r.ver, !.held.rerun = TRUE])
-               /\ UNCHANGED <<row, tok>>
+               /\ UNCHANGED row
           ELSE /\ SetW(p, [w EXCEPT !.att = FALSE])
-               /\ UNCHANGED <<row, tok>>
-    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, requeues>>
+               /\ UNCHANGED row
+    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, requeues, starts>>
 
 -----------------------------------------------------------------------------------------
 (* Time. A lease whose holder is gone lapses; a backoff or timer comes due.             *)
@@ -302,12 +353,12 @@ Renew(p) ==
 ExpireFree(t) ==
     /\ Live(t) /\ row[t].ra >= FirstLease /\ ~LiveHolder(t)
     /\ row' = [row EXCEPT ![t].ra = DUE]
-    /\ UNCHANGED <<wf, tm, tok, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 Tick(t) ==
     /\ Live(t) /\ row[t].ra \in {SOON, LATER}
-    /\ row' = [row EXCEPT ![t].ra = DUE]
-    /\ UNCHANGED <<wf, tm, tok, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ \E ra \in {DUE, SOON} : ra < row[t].ra /\ row' = [row EXCEPT ![t].ra = ra]
+    /\ UNCHANGED <<wf, tm, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 -----------------------------------------------------------------------------------------
 (* Environment: the caller of startWorkflow, a signal sender, an operator.              *)
@@ -318,12 +369,24 @@ Tick(t) ==
 StartCreate ==
     /\ cpc = "ready"
     /\ IF ~wf.ex
-       THEN /\ wf' = [ex |-> TRUE, st |-> "CREATED", ver |-> 1, sig |-> 0]
+       THEN /\ wf' = [ex |-> TRUE, st |-> "RUNNING", ver |-> 1, sig |-> 0]
             /\ cpc' = "sched"
        ELSE /\ UNCHANGED wf
             /\ cpc' = IF (wf.st \in Terminal \/ NoopOnExisting) /\ wf.st # "RETRIES_EXHAUSTED"
                       THEN "done" ELSE "sched"
-    /\ UNCHANGED <<tm, row, tok, wk, lq, spc, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<tm, row, wk, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
+
+(* SchedulerExecutionQueue.schedule for a due workflow task: persist a leased backstop  *)
+(* row and queue the task in this JVM, unless it is already queued here. The queued     *)
+(* copy carries the workflow instance as it is now (wv): the handler runs on that        *)
+(* payload instead of reading the store again.                                          *)
+InMemorySchedule ==
+    \/ /\ lq = {}
+       /\ LET r == Sched(WF, NewLease, TRUE) IN
+            /\ row' = [row EXCEPT ![WF] = r]
+            /\ lq' = {[id |-> WF, ver |-> r.ver, ra |-> r.ra, rc |-> 0, rerun |-> FALSE, wv |-> wf.ver]}
+    \/ /\ lq # {}
+       /\ UNCHANGED <<row, lq>>
 
 (* Part 2: scheduleExecution, a separate transaction. Async goes to the persistent      *)
 (* scheduler; in-process execution persists a leased backstop row and queues the task   *)
@@ -332,15 +395,15 @@ StartSched ==
     /\ cpc = "sched"
     /\ cpc' = "done"
     /\ \/ /\ row' = [row EXCEPT ![WF] = Sched(WF, DUE, TRUE)]
-          /\ UNCHANGED <<tok, lq>>
-       \/ /\ InMemoryStart /\ lq = {}
-          /\ LET r == Sched(WF, tok, TRUE) IN
-               /\ row' = [row EXCEPT ![WF] = r]
-               /\ lq' = {[id |-> WF, ver |-> r.ver, ra |-> r.ra, rc |-> 0, rerun |-> FALSE]}
-          /\ tok' = tok + 1
-       \/ /\ InMemoryStart /\ lq # {}   \* already queued in this JVM: nothing is written
-          /\ UNCHANGED <<row, tok, lq>>
-    /\ UNCHANGED <<wf, tm, wk, spc, sRead, sigSent, faults, renewals, requeues>>
+          /\ UNCHANGED <<lq>>
+       \/ InMemoryStart /\ InMemorySchedule
+    /\ UNCHANGED <<wf, tm, wk, spc, sRead, sigSent, faults, renewals, requeues, starts>>
+
+(* The caller invokes the workflow method again (a sync caller reading its result).     *)
+StartAgain ==
+    /\ cpc = "done" /\ starts < MaxStartCalls
+    /\ cpc' = "ready" /\ starts' = starts + 1
+    /\ UNCHANGED <<wf, tm, row, wk, lq, spc, sRead, sigSent, faults, renewals, requeues>>
 
 (* SkipperEngine.runSignal: read, run the signal method, persist state and RUNNING      *)
 (* (versioned), then schedule the workflow task honouring an active lease.              *)
@@ -348,7 +411,7 @@ SignalStart ==
     /\ spc = "idle" /\ sigSent < MaxSignals
     /\ wf.ex /\ wf.st \notin Terminal
     /\ spc' = "exec" /\ sRead' = wf.ver /\ sigSent' = sigSent + 1
-    /\ UNCHANGED <<wf, tm, row, tok, wk, cpc, lq, faults, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, row, wk, cpc, lq, faults, renewals, requeues, starts>>
 
 SignalPersist ==
     /\ spc = "exec"
@@ -357,20 +420,23 @@ SignalPersist ==
             /\ spc' = "sched"
        ELSE /\ UNCHANGED wf
             /\ spc' = "idle"   \* OptimisticLockingError surfaces to the sender
-    /\ UNCHANGED <<tm, row, tok, wk, cpc, lq, sRead, sigSent, faults, renewals, requeues>>
+    /\ UNCHANGED <<tm, row, wk, cpc, lq, sRead, sigSent, faults, renewals, requeues, starts>>
 
 SignalSched ==
     /\ spc = "sched"
-    /\ row' = [row EXCEPT ![WF] = Sched(WF, DUE, TRUE)]
     /\ spc' = "idle"
-    /\ UNCHANGED <<wf, tm, tok, wk, cpc, lq, sRead, sigSent, faults, renewals, requeues>>
+    /\ IF ~SignalInMemory
+       THEN /\ row' = [row EXCEPT ![WF] = Sched(WF, DUE, TRUE)]
+            /\ UNCHANGED <<lq>>
+       ELSE InMemorySchedule
+    /\ UNCHANGED <<wf, tm, wk, cpc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* Scheduler.requeueFailedTask from the admin DLQ view.                                 *)
 Requeue(t) ==
     /\ row[t].st = "FAILED" /\ requeues < MaxRequeues
     /\ row' = [row EXCEPT ![t] = [st |-> "PENDING", ra |-> DUE, ver |-> @.ver + 1, rc |-> 0]]
     /\ requeues' = requeues + 1
-    /\ UNCHANGED <<wf, tm, tok, wk, cpc, lq, spc, sRead, sigSent, faults, renewals>>
+    /\ UNCHANGED <<wf, tm, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, starts>>
 
 -----------------------------------------------------------------------------------------
 (* Faults, each bounded by MaxFaults and enabled per kind.                              *)
@@ -378,22 +444,22 @@ Requeue(t) ==
 Crash(p) ==
     /\ wk[p].pc # "idle" /\ Fault("crash")
     /\ SetW(p, IdleW)
-    /\ UNCHANGED <<wf, tm, row, tok, cpc, lq, spc, sRead, sigSent, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 LoseLocalQueue ==
     /\ lq # {} /\ Fault("crash")
     /\ lq' = {}
-    /\ UNCHANGED <<wf, tm, row, tok, wk, cpc, spc, sRead, sigSent, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, row, wk, cpc, spc, sRead, sigSent, renewals, requeues, starts>>
 
 HandlerTimeout(p) ==
     /\ wk[p].pc \notin {"idle", "dlq"} /\ wk[p].att /\ Fault("timeout")
     /\ SetW(p, [wk[p] EXCEPT !.att = FALSE])
-    /\ UNCHANGED <<wf, tm, row, tok, cpc, lq, spc, sRead, sigSent, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 ExpireEarly(t) ==
     /\ Live(t) /\ row[t].ra >= FirstLease /\ LiveHolder(t) /\ Fault("early_expiry")
     /\ row' = [row EXCEPT ![t].ra = DUE]
-    /\ UNCHANGED <<wf, tm, tok, wk, cpc, lq, spc, sRead, sigSent, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, wk, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 (* A store error after the workflow row committed: scheduling a timer task, or the      *)
 (* workflow task from the timer handler, throws. Both are handled as retryable.         *)
@@ -401,39 +467,38 @@ StoreError(p) ==
     /\ \/ wk[p].pc = "wf_timers" /\ wk[p].pend # {}
        \/ wk[p].pc = "tm_sched"
     /\ Fault("store_error")
-    /\ \E ra \in {SOON, LATER} :
+    /\ \E ra \in {DUE, SOON, LATER} :
          SetW(p, [wk[p] EXCEPT !.pc = "finish", !.pend = {}, !.fop = "retry", !.fra = ra])
-    /\ UNCHANGED <<wf, tm, row, tok, cpc, lq, spc, sRead, sigSent, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 (* startWorkflow throws after the row exists; the caller is expected to retry.          *)
 StartFail ==
     /\ cpc \in {"sched", "done"} /\ wf.ex /\ Fault("caller_fail")
     /\ cpc' = "ready"
-    /\ UNCHANGED <<wf, tm, row, tok, wk, lq, spc, sRead, sigSent, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, row, wk, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 SignalFail ==
     /\ spc = "sched" /\ Fault("signal_fail")
     /\ spc' = "idle"
-    /\ UNCHANGED <<wf, tm, row, tok, wk, cpc, lq, sRead, sigSent, renewals, requeues>>
+    /\ UNCHANGED <<wf, tm, row, wk, cpc, lq, sRead, sigSent, renewals, requeues, starts>>
 
 -----------------------------------------------------------------------------------------
 Init ==
     /\ wf = [ex |-> FALSE, st |-> "CREATED", ver |-> 0, sig |-> 0]
     /\ tm = [k \in Timers |-> "NONE"]
     /\ row = [t \in TaskIds |-> NoRow]
-    /\ tok = FirstLease
     /\ wk = [p \in Workers |-> IdleW]
     /\ cpc = "ready" /\ lq = {} /\ spc = "idle" /\ sRead = 0
-    /\ sigSent = 0 /\ faults = 0 /\ renewals = 0 /\ requeues = 0
+    /\ sigSent = 0 /\ faults = 0 /\ renewals = 0 /\ requeues = 0 /\ starts = 1
 
 WorkerStep(p) ==
-    \/ Fetch(p) \/ Take(p) \/ MarkFailed(p) \/ WfExec(p) \/ WfPersist(p) \/ WfTimers(p)
+    \/ Fetch(p) \/ Take(p) \/ MarkFailed(p) \/ WfRead(p) \/ WfRun(p) \/ WfPersist(p) \/ WfTimers(p)
     \/ TmExec(p) \/ TmSched(p) \/ Finish(p)
 
 Next ==
     \/ \E p \in Workers : WorkerStep(p) \/ Renew(p) \/ Crash(p) \/ HandlerTimeout(p) \/ StoreError(p)
     \/ \E t \in TaskIds : ExpireFree(t) \/ Tick(t) \/ ExpireEarly(t) \/ Requeue(t)
-    \/ StartCreate \/ StartSched \/ StartFail
+    \/ StartCreate \/ StartSched \/ StartFail \/ StartAgain
     \/ SignalStart \/ SignalPersist \/ SignalSched \/ SignalFail
     \/ LoseLocalQueue
 
