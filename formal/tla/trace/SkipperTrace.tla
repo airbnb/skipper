@@ -72,7 +72,17 @@ LoggedRead ==
     \/ \E p \in Workers : wk[p].pc = "wf_run" /\ wk'[p].pc # "wf_run"
     \/ spc = "idle" /\ spc' = "exec"
 
-Silent == Next /\ DurableSame /\ ~LoggedRead /\ UNCHANGED l
+(* Time moves a row's run_after only when the next event needs it: the row that event    *)
+(* writes, or a row whose recorded class the model has not reached yet. Letting every    *)
+(* pending timer drift through LATER, SOON and DUE between events would multiply states  *)
+(* that the next event prunes anyway.                                                    *)
+TimeNeeded ==
+    \A t \in TaskIds :
+        row'[t].ra # row[t].ra =>
+            /\ l <= Len(TraceLog)
+            /\ t = TraceLog[l].task \/ TraceLog[l].row[t].cls # Cls(row[t].ra)
+
+Silent == Next /\ DurableSame /\ ~LoggedRead /\ TimeNeeded /\ UNCHANGED l
 
 (* A logged read is its model step. A write that changed nothing the model tracks (a    *)
 (* lost optimistic lock, an entity that already existed, a no-op honour of a lease) is   *)
@@ -91,8 +101,9 @@ Consume ==
 (* The workflow body is free in trace mode (FreeResults), which leaves TLC guessing a    *)
 (* run's outcome long before the write that reveals it. Keep only outcomes one of the    *)
 (* next two recorded persists could show. Narrowing the model's choices can only make a  *)
-(* trace harder to accept, never accept a wrong one; a persist that changed nothing (a   *)
-(* lost lock) reveals nothing, so then every outcome stays.                             *)
+(* trace harder to accept, never accept a wrong one. A persist that changed nothing (a   *)
+(* lost lock) reveals nothing, and a run whose persist the trace never got to (the test *)
+(* ended first) has nothing to match, so then every outcome stays.                      *)
 UpcomingPersists ==
     LET idx == {j \in l..Len(TraceLog) : TraceLog[j].act = "WfPersist"}
         first == IF idx = {} THEN {} ELSE {CHOOSE j \in idx : \A i \in idx : j <= i}
@@ -105,7 +116,7 @@ Reveals(r, e) ==
     /\ e.tm = [k \in Timers |-> IF TimerMoves(tm[k], r.d[k]) THEN r.d[k] ELSE tm[k]]
 
 TraceResults ==
-    IF \E e \in UpcomingPersists : e.noop THEN FreeResults
+    IF UpcomingPersists = {} \/ \E e \in UpcomingPersists : e.noop THEN FreeResults
     ELSE {r \in FreeResults : \E e \in UpcomingPersists : Reveals(r, e)}
 
 NoFaultCount == FALSE

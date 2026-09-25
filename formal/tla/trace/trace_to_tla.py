@@ -71,6 +71,7 @@ OUT_OF_SCOPE = [
 ]
 
 WORKERS = 3
+NO_TASK = 1000  # an event about no task row; never a model task id (0..NWaits)
 EARLY_EXPIRIES = 5
 
 
@@ -90,6 +91,8 @@ def action_for(event):
             raise OutOfScope(feature)
     if event["op"] == "schedule" and event["args"]["type"] in ("EXECUTION_TIMEOUT", "COMPENSATION"):
         raise OutOfScope(event["args"]["type"].lower().replace("_", " "))
+    if site and "Test" in site[0]:
+        raise OutOfScope("the test writes to the store directly")
     raise OutOfScope(f"unmapped write {event['op']} from {site[:3]}")
 
 
@@ -154,6 +157,7 @@ def normalise(workflow, event, header, action):
         "act": action,
         "seq": event["seq"],
         "hv": event["args"].get("heldVersion") or 0,
+        "task": workflow.task_index(task) if task else NO_TASK,
         "wf": {"ex": wf is not None, "st": wf["st"] if wf else "NONE", "ver": wf["ver"] if wf else 0},
         "timers": {workflow.timer_index(k): v for k, v in state["timers"].items()},
         "rows": rows,
@@ -180,6 +184,7 @@ def tla_event(e, n_waits):
     wf = e["wf"]
     return (f'[act |-> "{e["act"]}", noop |-> {"TRUE" if e["noop"] else "FALSE"}, '
             f'read |-> {"TRUE" if e["act"] in READS else "FALSE"}, seq |-> {e["seq"]}, hv |-> {e["hv"]}, '
+            f'task |-> {e["task"]}, '
             f'wf |-> [ex |-> {"TRUE" if wf["ex"] else "FALSE"}, st |-> "{wf["st"]}", ver |-> {wf["ver"]}], '
             f'tm |-> <<{timers}>>, row |-> ({" @@ ".join(rows)})]')
 

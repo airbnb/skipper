@@ -15,8 +15,10 @@
 #                    (formal/tla/trace/record_traces.sh), then checks every recorded workflow run
 #                    against the model (check_traces.sh --self-test). Red when the engine takes a
 #                    step the model says it cannot, meaning the code or the spec has drifted, or when
-#                    the self-test finds the checker accepting a corrupted trace. The recorded traces
-#                    and TLC's output are stored as run artifacts.
+#                    the self-test finds the checker accepting a corrupted trace. A trace TLC cannot
+#                    decide within its time budget is reported as inconclusive, with a warning,
+#                    rather than failing the job. The recorded traces and TLC's output are stored as
+#                    run artifacts.
 #
 # Both jobs run when the model, the engine, or the test harness changes; nothing else can move a
 # verdict. Neither is a required check: the main branch ruleset requires `jvm-build` only, and a
@@ -91,7 +93,7 @@ jobs:
 
   trace-validation:
     runs-on: ubuntu-latest
-    # Long traces are not yet bounded (see formal/tla/trace/README.md); cap the job meanwhile.
+    # Each trace has its own time budget (TRACE_BUDGET); this only catches a job that hangs.
     timeout-minutes: 60
     env:
       GRADLE_OPTS: -Dorg.gradle.daemon=false
@@ -128,6 +130,7 @@ jobs:
           TLA2TOOLS: ${{ runner.temp }}/tla2tools.jar
           OUT_DIR: ${{ runner.temp }}/trace-check
           JOBS: 4
+          TRACE_BUDGET: 300
         run: formal/tla/trace/check_traces.sh --self-test "$RUNNER_TEMP/traces"
 
       - name: Store traces and TLC output

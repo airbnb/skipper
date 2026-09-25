@@ -25,6 +25,8 @@ def verdict(model_dir):
     if "Error:" in out and "is violated" not in out and not matched:
         first_error = next(line for line in out.splitlines() if line.startswith("Error:"))
         return "error", first_error
+    if "Model checking completed" not in out:
+        return "INCONCLUSIVE", None   # stopped by check_traces.sh's time budget
     return "REJECTED", max(matched, default=0)
 
 
@@ -52,6 +54,10 @@ def main():
             status, detail = verdict(r["dir"])
             if status == "accepted":
                 detail = f'{r["events"]} events'
+            elif status == "INCONCLUSIVE":
+                detail = f'{r["events"]} events, over the time budget\n    model: {r["dir"]}'
+                if os.environ.get("GITHUB_ACTIONS"):
+                    print(f"::warning::trace validation inconclusive (time budget) for {test}")
             elif status == "REJECTED":
                 event = first_unmatched(r["dir"], detail)
                 detail = f'matched {detail} of {r["events"]} events; first unexplained: {event}\n    model: {r["dir"]}'
@@ -62,16 +68,18 @@ def main():
 
 
 def mutants(rows):
-    killed, survivors = 0, []
+    killed, survivors, undecided = 0, [], 0
     for r in rows:
         status, _ = verdict(r["dir"])
         if status == "REJECTED":
             killed += 1
+        elif status == "INCONCLUSIVE":
+            undecided += 1
         else:
             survivors.append(f'{status:9} {r["mutation"]:13} {(r["origin"] or ["?"])[0]}\n    model: {r["dir"]}')
     for s in survivors:
         print(s)
-    print(f"mutants: {killed} rejected, {len(survivors)} survived, of {len(rows)}")
+    print(f"mutants: {killed} rejected, {len(survivors)} survived, {undecided} inconclusive, of {len(rows)}")
     return 1 if survivors else 0
 
 

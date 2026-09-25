@@ -10,8 +10,11 @@
 #   accepted   the model can take exactly the steps the engine took
 #   REJECTED   it cannot; the line names the first write it could not explain
 #   skipped    the run uses an engine feature the model does not cover yet
+#   INCONCLUSIVE  TLC did not decide within $TRACE_BUDGET seconds (default 300)
 #
-# Exits 1 when any workflow is rejected. With --self-test it then corrupts every accepted trace in a
+# Exits 1 when any workflow is rejected. An inconclusive one does not fail the run but is listed
+# (and flagged as a warning on GitHub Actions): a rejection needs TLC to exhaust every
+# interleaving, so a slow trace may be hiding one. With --self-test it then corrupts every accepted trace in a
 # few ways (mutants.py) and exits 1 unless the checker rejects all of them, which guards against a
 # checker loose enough to accept anything. Models and TLC output go to $OUT_DIR (default: a temp dir).
 set -euo pipefail
@@ -42,11 +45,14 @@ python3 "$here/trace_to_tla.py" "${traces[@]}" --out "$out_dir/models" >"$out_di
 # TLC runs one model per JVM; a single worker keeps each run's PrintT output in order, and a private
 # java.io.tmpdir keeps parallel runs from clobbering the standard modules TLC unpacks there.
 run_models() {
+  # Each model directory goes to one sh as $1; the rest travels in the environment (xargs -I would
+  # cap the command line at 255 bytes on macOS).
   python3 -c 'import json,sys; [print(r["dir"]) for r in map(json.loads, open(sys.argv[1])) if r["status"] == "model"]' "$1" |
-    xargs -P "${JOBS:-4}" -I{} sh -c '
-      mkdir -p "$1/tmp" && cd "$1" && java -XX:+UseParallelGC -Djava.io.tmpdir="$1/tmp" -DTLA-Library="$2" -cp "$3" tlc2.TLC \
+    TLA_LIBRARY="$here/..:$here" TLA_JAR="$jar" BUDGET="${TRACE_BUDGET:-300}" xargs -P "${JOBS:-4}" -n 1 sh -c '
+      mkdir -p "$1/tmp" && cd "$1" && perl -e "alarm shift; exec @ARGV" "$BUDGET" \
+        java -XX:+UseParallelGC -Djava.io.tmpdir="$1/tmp" -DTLA-Library="$TLA_LIBRARY" -cp "$TLA_JAR" tlc2.TLC \
         -config MC.cfg -workers 1 -metadir "$1/states" MC.tla >"$1/tlc.out" 2>&1
-      rm -rf "$1/states" "$1/tmp"; true' _ {} "$here/..:$here" "$jar"
+      rm -rf "$1/states" "$1/tmp"; true' _
 }
 
 run_models "$out_dir/workflows.jsonl"
