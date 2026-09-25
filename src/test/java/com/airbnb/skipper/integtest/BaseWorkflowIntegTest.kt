@@ -48,6 +48,8 @@ import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.LockSupport
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -223,6 +225,13 @@ abstract class BaseWorkflowIntegTest {
         fun syncWaitingWorkflow(a: String): String {
             waitUntil { shouldProceed }
             return "Waiting workflow executed"
+        }
+
+        @WorkflowMethod(returnType = String::class)
+        fun workflowWithBlockingAction(): CompletableFuture<String> {
+            val result = actions.blockingAction()
+            actions.executeMethod()
+            return CompletableFuture.completedFuture(result)
         }
 
         @WorkflowMethod
@@ -438,6 +447,13 @@ abstract class BaseWorkflowIntegTest {
         fun executeMethod(): String {
             testClient.action("executeMethod")
             return "Execute method executed"
+        }
+
+        @Execute
+        fun blockingAction(): String {
+            testClient.action("blockingAction")
+            Thread.sleep(20_000)
+            return "unblocked"
         }
 
         @Execute(returnType = String::class)
@@ -1663,6 +1679,36 @@ abstract class BaseWorkflowIntegTest {
             helper.waitForWorkflowToComplete()
             helper.waitForExecutionFlowToFinish()
             verify(testClient, times(11)).action("failingActionWithCustomRetryStrategy")
+        }
+    }
+
+    @Nested
+    inner class TestInflightInterrupt : SuiteBase() {
+        override fun customizeDeps(deps: TestRuntime) {
+            deps.clock = Clock.systemUTC()
+        }
+
+        @Test
+        fun testCancelInterruptsTheRunningAction() {
+            // Cancelling while an action blocks interrupts it: the workflow settles CANCELLED long
+            // before the action would have finished, the caller sees CancelledWorkflow, and the next
+            // action never starts.
+            val started = CountDownLatch(1)
+            doAnswer {
+                started.countDown()
+                null
+            }.whenever(testClient).action("blockingAction")
+            val workflow = workflowFactory<SampleWorkflow>(workflowId)
+            val future = workflow.workflowWithBlockingAction()
+            assertThat(started.await(10, TimeUnit.SECONDS)).isTrue()
+
+            skipperEngine.cancelWorkflow(workflowId, "cancelled while blocked")
+
+            val thrown = assertThrows<Throwable> { future.get(10, TimeUnit.SECONDS) }
+            val cause = if (thrown is java.util.concurrent.ExecutionException) thrown.cause else thrown
+            assertThat(cause).isInstanceOf(CancelledWorkflow::class.java)
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.CANCELLED)
+            verify(testClient, never()).action("executeMethod")
         }
     }
 
