@@ -1,0 +1,76 @@
+# GitHub Actions configuration for airbnb/skipper: model-checks the TLA+ specifications under
+# formal/. See formal/tla/README.md for what the models cover.
+#
+#   tla-model-check  Runs formal/tla/check.sh, which model-checks every config in
+#                    formal/tla/models/ with TLC and compares each verdict with the one the
+#                    config records on its `\* expect:` line. Some models record a known engine
+#                    bug as their expected violation, so the job is green while nothing changes
+#                    and red when a verdict moves: a model edit that breaks a property, or a fix
+#                    whose model now passes but still expects the violation (update its expect:
+#                    line in the same change). TLC's full output, counterexample traces included,
+#                    is stored as a run artifact.
+#
+# The models are independent of the Kotlin sources, so the job only runs when formal/ or this
+# file changes. It is not a required check: the main branch ruleset requires `jvm-build` only,
+# and a path-filtered check cannot be required without leaving other pull requests waiting on it.
+#
+# TLC is pinned to a release and its checksum verified, so a new TLA+ release cannot change a
+# verdict without a change here.
+
+name: formal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "formal/**"
+      - ".github/workflows/formal.yml"
+  pull_request:
+    paths:
+      - "formal/**"
+      - ".github/workflows/formal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formal-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  TLA_TOOLS_VERSION: v1.7.4
+  TLA_TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+
+jobs:
+  tla-model-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # TLC needs Java 11 or newer; 17 matches the other jobs.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Download TLC ${{ env.TLA_TOOLS_VERSION }}
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/tla2tools.jar" \
+            "https://github.com/tlaplus/tlaplus/releases/download/$TLA_TOOLS_VERSION/tla2tools.jar"
+          echo "$TLA_TOOLS_SHA256  $RUNNER_TEMP/tla2tools.jar" | sha256sum --check -
+
+      - name: Model-check formal/tla
+        env:
+          TLA2TOOLS: ${{ runner.temp }}/tla2tools.jar
+          OUT_DIR: ${{ runner.temp }}/tlc
+        run: formal/tla/check.sh
+
+      - name: Store TLC output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tlc-output
+          path: |
+            ${{ runner.temp }}/tlc/*.out
+          if-no-files-found: ignore
