@@ -50,6 +50,7 @@ for model in "$@"; do
   java -XX:+UseParallelGC -cp "$jar" tlc2.TLC \
     -config "$cfg" -workers auto -metadir "$out_dir/states/$model" \
     SkipperWorkflowLiveness.tla >"$out" 2>&1 || true
+  rm -rf "$out_dir/states/$model" # TLC's on-disk state queue; only the .out is kept
   actual="$(verdict_of "$out")"
   if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then
     status="as expected"

@@ -162,6 +162,12 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    // Trace validation (formal/tla/trace): -PskipperTraceDir=<dir> makes the test harness record every
+    // store and scheduler write of each runtime there. Unset, tests run exactly as before.
+    providers.gradleProperty("skipperTraceDir").orNull?.let { dir ->
+        systemProperty("skipper.trace.dir", dir)
+        outputs.upToDateWhen { false }
+    }
 }
 
 // Apply the Kotlin AllOpen compiler plugin (bound to @SkipperOpen) to the TEST compilation only.

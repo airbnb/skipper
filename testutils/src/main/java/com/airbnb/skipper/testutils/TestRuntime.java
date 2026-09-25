@@ -18,6 +18,7 @@ import com.airbnb.skipper.internal.scheduler.SchedulerExecutionQueue;
 import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler;
 import com.airbnb.skipper.internal.storage.WorkflowStore;
 import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore;
+import com.airbnb.skipper.testutils.trace.Tracing;
 import com.airbnb.skipper.util.SkipperInternalDeps;
 import java.time.Clock;
 
@@ -117,6 +118,7 @@ public class TestRuntime {
 
   public SkipperRuntime getRuntime() {
     if (runtime == null) {
+      Tracing.installIfRequested(config);
       runtime = new SkipperRuntime(config);
       // Register IWorkflowFactory for user code that @Inject-s it.
       // Some code uses @Named("SkipperWorkflowFactory") IWorkflowFactory, some uses unqualified.

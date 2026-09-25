@@ -7,6 +7,7 @@ import com.airbnb.skipper.SkipperConfig
 import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.factory.SkipperRuntime
+import com.airbnb.skipper.testutils.trace.Tracing
 import java.lang.reflect.Modifier
 import java.time.Clock
 import java.time.Duration
@@ -83,6 +84,7 @@ abstract class WorkflowTest {
         config.gracefulShutdownTimeout = Duration.ofSeconds(1)
         config.injector = injectorFromBoundFields()
         configure(config)
+        Tracing.installIfRequested(config)
         this.config = config
         runtime = SkipperRuntime(config)
         workflowFactory = runtime.workflowFactory.get()

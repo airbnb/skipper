@@ -54,7 +54,7 @@ replay, task partitioning, several workflows sharing workers.
 | `StartCreate`, `StartSched` | `SkipperEngine.startWorkflow`, `scheduleExecution`, `SchedulerExecutionQueue.schedule` |
 | `Fetch`, `MarkFailed`, `Finish` | `SqliteScheduler.fetch`, `SkipperSchedulerManager.handleTask` / `finishTask` / `scheduleRerunNow` |
 | `Take` | `SkipperSchedulerManager.startTakingTasks` on the in-memory queue |
-| `WfExec`, `WfPersist`, `WfTimers` | `WorkflowExecutionTaskHandler.handle` / `persistExecutionResult`, `Workflow.waitUntil` |
+| `WfRead`, `WfRun`, `WfPersist`, `WfTimers` | `WorkflowExecutionTaskHandler.handle` (its instance read, then its timer read and the run) / `persistExecutionResult`, `Workflow.waitUntil` |
 | `TmExec`, `TmSched` | `TimerTaskHandler.handle` |
 | `Renew` | `LeaseRenewalManager.attemptToRenewOneTask` |
 | `SignalStart`, `SignalPersist`, `SignalSched` | `SkipperEngine.runSignal` |
@@ -103,7 +103,8 @@ check.
 
 The findings behind these results:
 
-1. **A retried `startWorkflow` can leave a `CREATED` workflow with no task.**
+1. **A retried `startWorkflow` can leave a new workflow `RUNNING` with no task.** (`createWorkflow` inserts
+   the row as `RUNNING`, not `CREATED`; trace validation caught the model's earlier `CREATED`.)
    - `createWorkflow` (`SkipperEngine.kt:102`) and `scheduleExecution` (`:143`) are separate
      transactions.
    - If the call fails between them, the caller's retry hits `EntityAlreadyExists`.
