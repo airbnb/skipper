@@ -33,6 +33,13 @@ spotless = "8.10.2"
 ktlint = "1.2.1"
 googleJavaFormat = "1.26.0"
 
+# Test quality gates (see build.gradle.kts). Kover measures line coverage; PIT (through the
+# gradle-pitest-plugin) measures whether the tests notice the code changing.
+kover = "0.9.1"
+pitestPlugin = "1.19.0"
+pitest = "1.30.0"
+pitestJunit5Plugin = "1.2.2"
+
 # Test-only pins (OSS test subset). junit-jupiter/vintage share one version; junit4 is the
 # legacy engine the `util` suite still targets. kotlin-test tracks the Kotlin version;
 # coroutines-test tracks kotlinxCoroutines; opentracing-mock tracks opentracing.
@@ -113,6 +120,9 @@ dropwizard-views-freemarker = { module = "io.dropwizard:dropwizard-views-freemar
 mockk-jvm = { module = "io.mockk:mockk-jvm", version.ref = "mockk" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 
+# The PIT plugin API, for tools/pitest-filters.
+pitest-entry = { module = "org.pitest:pitest-entry", version.ref = "pitest" }
+
 # plugins/ metrics backends.
 prometheus-metrics-core = { module = "io.prometheus:prometheus-metrics-core", version.ref = "prometheus" }
 
@@ -125,3 +135,5 @@ kotlin-allopen = { id = "org.jetbrains.kotlin.plugin.allopen", version.ref = "ko
 dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
 vanniktech-maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "vanniktechMavenPublish" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
+pitest = { id = "info.solidsoft.pitest", version.ref = "pitestPlugin" }

@@ -1,7 +1,7 @@
 # GitHub Actions configuration for airbnb/skipper: the build workflow. The release workflow
 # is release.yml; both share the JVM build in jvm-build.yml.
 #
-# Runs on every pull request and on every push to main. Four checks gate a merge:
+# Runs on every pull request and on every push to main. Six checks gate a merge:
 #
 #   jvm-build-jackson-<version>  The JVM build in jvm-build.yml, once per listed Jackson
 #                 version with that Jackson forced onto the runtime classpath
@@ -15,6 +15,23 @@
 #                 request; the JVM build skips spotlessCheck so one slip does not turn two
 #                 checks red.
 #
+#   coverage      Runs the suite under Kover. On a pull request, fails when fewer than 90% of
+#                 the executable main-source lines it adds or modifies are covered (diff-cover
+#                 over Kover's report; the job summary lists the uncovered lines). On every
+#                 event, fails when the merged total drops below the floor in build.gradle.kts.
+#                 The bar is on changed lines, not the total, because the total is below 90%
+#                 today: a total gate would fail every pull request until someone wrote the
+#                 missing tests, and the changed-lines gate is what gets the total there.
+#
+#   mutation      Coverage only says a line ran. On a pull request this job checks that the tests
+#                 would notice the line being wrong: PIT mutates the classes the pull request
+#                 changes and reruns the covering tests against each mutant, and the job fails
+#                 when they detect fewer than 80% of the mutants on covered changed lines (PIT's
+#                 "test strength"; uncovered lines are the coverage job's). Surviving mutants are
+#                 listed in the job summary, each one a change to the code that no test noticed.
+#                 80 rather than 100 because some mutants are equivalent: they change nothing
+#                 observable, so no test can kill them. A no-op on push to main.
+#
 #   examples      Builds, tests and runs every project under examples/ against the artifacts this
 #                 very run produced: jvm-build-jackson-2.9.10 publishes them to ~/.m2 as
 #                 0.0.0-CI and hands that tree over as a run artifact, and each example is
@@ -27,9 +44,9 @@
 #                 against a MySQL container.
 #
 #   jvm-build     Fan-in. The main branch ruleset requires the status check `jvm-build`, and this
-#                 job succeeds only when every matrix entry, format-check and examples have. One
-#                 required check keeps the whole matrix merge-gating without listing each entry
-#                 in the repository rules.
+#                 job succeeds only when every matrix entry, format-check, coverage, mutation and
+#                 examples have. One required check keeps the whole matrix merge-gating without
+#                 listing each entry in the repository rules.
 #
 #   web-build     Builds the Astro documentation site in web/ and stores it as a run artifact.
 #                 Nothing else in the build compiles the site, so without this a broken doc
@@ -114,6 +131,152 @@ jobs:
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false
         run: ./gradlew --stacktrace spotlessCheck
+
+  coverage:
+    # Runs the suite again rather than reusing a jvm-build-jackson run, so the check is its own
+    # signal and starts at once instead of waiting on the matrix. Coverage instrumentation stays
+    # out of the builds that the release and the Jackson matrix rely on.
+    runs-on: ubuntu-22.04
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # diff-cover diffs against the merge base with the target branch.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Restore Gradle caches
+        # Same keys as jvm-build.yml, read-only: the JVM build saves them.
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('gradle/libs.versions.toml', 'build.gradle.kts', 'skipper-state-machine/build.gradle.kts', 'testutils/build.gradle.kts', 'plugins/prometheus/build.gradle.kts') }}
+          restore-keys: |
+            gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-
+
+      - name: Install embedded MariaDB native dependencies
+        # The MySQL tests are the only ones that cover the MySQL store and scheduler. See
+        # jvm-build.yml for why each library is needed.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libaio1 libncurses5 libnsl2
+
+      - name: Run the tests with coverage
+        run: ./gradlew --stacktrace koverXmlReport koverHtmlReport -x spotlessCheck
+
+      - name: Check coverage of the lines this pull request changes
+        # diff-cover maps Kover's JaCoCo-format report back to files through the source roots,
+        # found here rather than listed so a new project is covered without a change to this job.
+        # Lines diff-cover finds no coverage data for (tests, build scripts, docs) do not count.
+        id: changed-lines
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          mapfile -t roots < <(git ls-files | grep -oE '^([^/]+/)*src/main/(java|kotlin)/' \
+            | grep -v '^examples/' | sed 's#/$##' | sort -u)
+          status=0
+          pipx run --spec diff-cover==10.6.0 diff-cover build/reports/kover/report.xml \
+            --compare-branch "origin/$BASE_REF" --fail-under 90 --src-roots "${roots[@]}" \
+            --format "markdown:$RUNNER_TEMP/diff-cover.md" || status=$?
+          cat "$RUNNER_TEMP/diff-cover.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Check the merged total stays above its floor
+        # After the changed-lines check, and on every event, so a pull request that fails both
+        # reports both.
+        if: success() || steps.changed-lines.outcome == 'failure'
+        run: ./gradlew --stacktrace koverVerify koverLog -x spotlessCheck
+
+      - name: Store the coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: build/reports/kover
+          if-no-files-found: ignore
+
+  mutation:
+    # Mutation-tests only the lines a pull request changes: the whole engine takes hours. On a
+    # push to main every step is skipped, which still satisfies the jvm-build fan-in.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Restore Gradle caches
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('gradle/libs.versions.toml', 'build.gradle.kts', 'skipper-state-machine/build.gradle.kts', 'testutils/build.gradle.kts', 'plugins/prometheus/build.gradle.kts') }}
+          restore-keys: |
+            gradle-v1-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties') }}-
+
+      - name: Install embedded MariaDB native dependencies
+        # Without them the MySQL tests are skipped and every MySQL mutant survives.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libaio1 libncurses5 libnsl2
+
+      - name: Mutation-test the lines this pull request changes
+        # tools/pitest-filters' CHANGED_LINES reads the diff and drops every mutant off its added
+        # and modified lines before PIT plans any, which is what keeps this job in minutes: a
+        # surviving mutant in the engine's core reruns hundreds of end-to-end tests. A project the
+        # diff does not touch has nothing left to mutate, and PIT skips it in about a second.
+        # --continue so every project with changes reports, not just the first one under 80%.
+        if: github.event_name == 'pull_request'
+        run: |
+          git diff --unified=0 --no-color --src-prefix=a/ --dst-prefix=b/ "origin/$BASE_REF...HEAD" \
+            > "$RUNNER_TEMP/changes.diff"
+          ./gradlew --stacktrace --continue pitest \
+            -PpitestDiff="$RUNNER_TEMP/changes.diff" -PpitestMinTestStrength=80
+
+      - name: List the mutants no test detected
+        # PIT's console output gives the score only. Each line here is a change to the code that
+        # no test noticed: an assertion is missing, or the code it mutated does not matter.
+        if: always() && github.event_name == 'pull_request'
+        shell: python3 {0}
+        run: |
+          import glob, os, xml.etree.ElementTree as ET
+          rows = []
+          for report in sorted(glob.glob("**/build/reports/pitest/mutations.xml", recursive=True)):
+              for m in ET.parse(report).getroot().iter("mutation"):
+                  if m.get("status") == "SURVIVED":
+                      rows.append(f"| `{m.findtext('mutatedClass')}` | {m.findtext('lineNumber')} | {m.findtext('description')} |")
+          summary = ["### Surviving mutants", ""]
+          summary += ["| Class | Line | Mutation |", "|---|---|---|", *rows] if rows else ["None."]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("\n".join(summary) + "\n")
+
+      - name: Store the mutation reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation
+          path: |
+            build/reports/pitest
+            */build/reports/pitest
+            */*/build/reports/pitest
+          if-no-files-found: ignore
 
   examples:
     # Only jvm-build-jackson-2.9.10 produces the artifact this consumes, but a job can only
@@ -256,11 +419,11 @@ jobs:
           if-no-files-found: ignore
 
   jvm-build:
-    needs: [jvm-build-jackson, format-check, examples]
+    needs: [jvm-build-jackson, format-check, coverage, mutation, examples]
     runs-on: ubuntu-latest
     steps:
       - name: All gating jobs passed
-        run: echo "jvm-build matrix, format-check and examples passed"
+        run: echo "jvm-build matrix, format-check, coverage, mutation and examples passed"
 
   web-build:
     runs-on: ubuntu-latest

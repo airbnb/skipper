@@ -1,0 +1,2 @@
+com.airbnb.skipper.pitest.ChangedLinesFilterFactory
+com.airbnb.skipper.pitest.KotlinNullCheckFilterFactory

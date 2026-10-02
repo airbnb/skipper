@@ -38,3 +38,8 @@ project(":skipper-testutils").projectDir = file("testutils")
 // adopters pull exactly the backend client they already run and core stays dependency-free.
 include("skipper-metrics-prometheus")
 project(":skipper-metrics-prometheus").projectDir = file("plugins/prometheus")
+
+// tools/ holds build tooling that runs inside this build only and is never published:
+// pitest-filters is the PIT plugin the mutation CI job loads (see build.gradle.kts).
+include("pitest-filters")
+project(":pitest-filters").projectDir = file("tools/pitest-filters")

@@ -14,6 +14,8 @@ plugins {
     alias(libs.plugins.vanniktech.maven.publish)
     `maven-publish`
     signing
+    alias(libs.plugins.kover)
+    alias(libs.plugins.pitest)
 }
 
 group = "com.airbnb.skipper"
