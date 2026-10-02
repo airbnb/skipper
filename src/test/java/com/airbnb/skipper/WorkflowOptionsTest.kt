@@ -14,7 +14,8 @@ class WorkflowOptionsTest {
         val override = WorkflowOptions(
             executionTimeout = Duration.ofMinutes(10),
             refreshRequestContextForLongRunningWorkflows = true,
-            allowQueryOnNonExistentWorkflow = true
+            allowQueryOnNonExistentWorkflow = true,
+            createExistingWorkflowIsNoop = true
         )
 
         val result = base.mergeWith(override)
@@ -22,6 +23,7 @@ class WorkflowOptionsTest {
         assertEquals(Duration.ofMinutes(10), result.executionTimeout)
         assertTrue(result.refreshRequestContextForLongRunningWorkflows)
         assertTrue(result.allowQueryOnNonExistentWorkflow)
+        assertTrue(result.createExistingWorkflowIsNoop)
     }
 
     @Test
@@ -38,6 +40,7 @@ class WorkflowOptionsTest {
         assertEquals(Duration.ofMinutes(5), result.executionTimeout)
         assertFalse(result.refreshRequestContextForLongRunningWorkflows)
         assertFalse(result.allowQueryOnNonExistentWorkflow)
+        assertFalse(result.createExistingWorkflowIsNoop)
     }
 
     @Test
@@ -58,6 +61,7 @@ class WorkflowOptionsTest {
         assertEquals(Duration.ofMinutes(15), result.executionTimeout)
         assertFalse(result.refreshRequestContextForLongRunningWorkflows)
         assertFalse(result.allowQueryOnNonExistentWorkflow)
+        assertFalse(result.createExistingWorkflowIsNoop)
     }
 
     @Test
@@ -159,6 +163,17 @@ class WorkflowOptionsTest {
         assertEquals(Duration.ofMinutes(10), options.executionTimeout)
         assertTrue(options.refreshRequestContextForLongRunningWorkflows)
         assertFalse(options.allowQueryOnNonExistentWorkflow)
+        assertFalse(options.createExistingWorkflowIsNoop)
+    }
+
+    @Test
+    fun testExistingThreeArgumentConstructor() {
+        val options = WorkflowOptions(Duration.ofMinutes(10), true, true)
+
+        assertEquals(Duration.ofMinutes(10), options.executionTimeout)
+        assertTrue(options.refreshRequestContextForLongRunningWorkflows)
+        assertTrue(options.allowQueryOnNonExistentWorkflow)
+        assertFalse(options.createExistingWorkflowIsNoop)
     }
 
     @Test

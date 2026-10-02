@@ -125,7 +125,8 @@ open class SkipperEngine
                     // If the workflow already exists, and its already completed, we will just return the
                     // existing workflow instance with its result, no need to schedule execution.
                     val noopExistingWorkflow =
-                        featureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP)
+                        request.createExistingWorkflowIsNoop ||
+                            featureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP)
                     var shouldByPassExecution =
                         workflowInstance.status.isTerminal() ||
                             workflowInstance.status.isCompensationInProgress() ||

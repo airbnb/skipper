@@ -18,12 +18,42 @@ class RunRequest(
     val executionTimeout: Duration?,
     @get:JvmName("isFailOnDuplicate") val failOnDuplicate: Boolean,
     @get:JvmName("isAllowQueryOnNonExistentWorkflow") val allowQueryOnNonExistentWorkflow: Boolean,
+    @get:JvmName("isCreateExistingWorkflowIsNoop") val createExistingWorkflowIsNoop: Boolean,
     // Named `isRunAsync` (not `runAsync` + @JvmName) so Kotlin consumers keep property access
     // `request.isRunAsync` (the synthetic name they used against the Java getter). JVM getter is
     // still `isRunAsync()` (Kotlin `is`-prefix convention), so Java callers + ABI are unchanged.
     val isRunAsync: Boolean,
     val parentWorkflowId: String?,
 ) {
+    constructor(
+        workflowId: String,
+        workflowClass: Class<out Workflow>,
+        workflowMethod: String,
+        input: Any?,
+        requestContext: Any?,
+        extraRequestData: ExtraRequestData,
+        callbackHandler: Class<out WorkflowCallbackHandler>?,
+        executionTimeout: Duration?,
+        failOnDuplicate: Boolean,
+        allowQueryOnNonExistentWorkflow: Boolean,
+        isRunAsync: Boolean,
+        parentWorkflowId: String?,
+    ) : this(
+        workflowId,
+        workflowClass,
+        workflowMethod,
+        input,
+        requestContext,
+        extraRequestData,
+        callbackHandler,
+        executionTimeout,
+        failOnDuplicate,
+        allowQueryOnNonExistentWorkflow,
+        false,
+        isRunAsync,
+        parentWorkflowId,
+    )
+
     constructor(
         workflowId: String,
         workflowClass: Class<out Workflow>,
@@ -113,6 +143,7 @@ class RunRequest(
         private var executionTimeout: Duration? = null
         private var failOnDuplicate = false
         private var allowQueryOnNonExistentWorkflow = false
+        private var createExistingWorkflowIsNoop = false
         private var runAsync = false
         private var parentWorkflowId: String? = null
 
@@ -166,6 +197,11 @@ class RunRequest(
             return this
         }
 
+        fun createExistingWorkflowIsNoop(createExistingWorkflowIsNoop: Boolean): RunRequestBuilder {
+            this.createExistingWorkflowIsNoop = createExistingWorkflowIsNoop
+            return this
+        }
+
         fun runAsync(runAsync: Boolean): RunRequestBuilder {
             this.runAsync = runAsync
             return this
@@ -200,6 +236,7 @@ class RunRequest(
                 executionTimeout,
                 failOnDuplicate,
                 allowQueryOnNonExistentWorkflow,
+                createExistingWorkflowIsNoop,
                 runAsync,
                 parentWorkflowId,
             )
@@ -215,6 +252,7 @@ class RunRequest(
                 ", executionTimeout=$executionTimeout" +
                 ", failOnDuplicate=$failOnDuplicate" +
                 ", allowQueryOnNonExistentWorkflow=$allowQueryOnNonExistentWorkflow" +
+                ", createExistingWorkflowIsNoop=$createExistingWorkflowIsNoop" +
                 ", runAsync=$runAsync" +
                 ", parentWorkflowId=$parentWorkflowId)"
     }
@@ -224,6 +262,7 @@ class RunRequest(
         if (other !is RunRequest) return false
         return failOnDuplicate == other.failOnDuplicate &&
             allowQueryOnNonExistentWorkflow == other.allowQueryOnNonExistentWorkflow &&
+            createExistingWorkflowIsNoop == other.createExistingWorkflowIsNoop &&
             isRunAsync == other.isRunAsync &&
             workflowId == other.workflowId &&
             workflowClass == other.workflowClass &&
@@ -240,6 +279,7 @@ class RunRequest(
         Objects.hash(
             failOnDuplicate,
             allowQueryOnNonExistentWorkflow,
+            createExistingWorkflowIsNoop,
             isRunAsync,
             workflowId,
             workflowClass,
@@ -263,6 +303,7 @@ class RunRequest(
             ", executionTimeout=$executionTimeout" +
             ", failOnDuplicate=$failOnDuplicate" +
             ", allowQueryOnNonExistentWorkflow=$allowQueryOnNonExistentWorkflow" +
+            ", createExistingWorkflowIsNoop=$createExistingWorkflowIsNoop" +
             ", runAsync=$isRunAsync" +
             ", parentWorkflowId=$parentWorkflowId)"
 

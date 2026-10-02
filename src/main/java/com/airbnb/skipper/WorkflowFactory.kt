@@ -156,6 +156,7 @@ open class WorkflowFactory
                             effectiveOptions.executionTimeout,
                             false,
                             effectiveOptions.allowQueryOnNonExistentWorkflow,
+                            effectiveOptions.createExistingWorkflowIsNoop,
                             runAsync,
                             parentWorkflowId,
                         )
