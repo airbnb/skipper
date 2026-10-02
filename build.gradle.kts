@@ -334,20 +334,28 @@ spotless {
 // Test quality
 // ---------------------------------------------------------------------------------------
 // Two measures of how well the tests guard the code, both run by the coverage and mutation CI
-// jobs (.github/workflows/build.yml) and gated there on the lines a pull request changes, through
-// scripts/diff-quality.py. Neither runs as part of `build`.
+// jobs (.github/workflows/build.yml) and gated there on the lines a pull request changes. Neither
+// runs as part of `build`.
 //
 //   Coverage   Kover, which understands Kotlin's inline functions and coroutines where plain
 //              JaCoCo misattributes them. `./gradlew koverHtmlReport` writes
 //              build/reports/kover/html for every project merged, since the engine's tests cover
-//              testutils and testutils' extensions run the engine. koverVerify holds the merged
-//              total to a floor so it cannot slide one uncovered pull request at a time.
+//              testutils and testutils' extensions run the engine. CI hands its XML report to
+//              diff-cover for the changed-lines check; koverVerify holds the merged total to a
+//              floor so it cannot slide one uncovered pull request at a time.
 //
 //   Mutation   PIT changes the compiled code one small edit at a time (a flipped condition, a
 //              dropped call, a constant return) and reruns the tests that cover the edited line. A
 //              mutant no test fails on is code the tests run but do not check: coverage counts it,
-//              mutation testing does not. `./gradlew pitest` mutates a whole project, which takes
-//              a while; -PpitestTargets=<class globs> narrows it, which is what CI does.
+//              mutation testing does not. `./gradlew pitest` mutates every line, which takes a long
+//              while on the engine. CI narrows it to a change:
+//
+//                git diff --unified=0 origin/main... > changes.diff
+//                ./gradlew pitest -PpitestDiff=changes.diff -PpitestMinTestStrength=80
+//
+//              mutates only the lines the diff adds or modifies (tools/pitest-filters), skips the
+//              projects it does not touch, and fails a project whose tests detect fewer than 80% of
+//              the mutants on covered lines.
 dependencies {
     kover(project(":skipper-state-machine"))
     kover(project(":skipper-testutils"))
@@ -380,10 +388,13 @@ allprojects {
         configure<info.solidsoft.gradle.pitest.PitestPluginExtension> {
             pitestVersion.set(libs.versions.pitest)
             junit5PluginVersion.set(libs.versions.pitestJunit5Plugin)
-            providers.gradleProperty("pitestTargets").orNull?.let { targetClasses.set(it.split(",")) }
-            // -PpitestChangedLines=<file> mutates only the lines it lists (tools/pitest-filters).
-            providers.gradleProperty("pitestChangedLines").orNull?.let {
-                features.add("+CHANGED_LINES(file[${file(it).absolutePath}])")
+            providers.gradleProperty("pitestDiff").orNull?.let {
+                features.add("+CHANGED_LINES(diff[${rootProject.file(it).absolutePath}])")
+            }
+            // PIT's "test strength": detected mutants over covered ones. Uncovered lines are the
+            // coverage gate's to report.
+            providers.gradleProperty("pitestMinTestStrength").orNull?.let {
+                testStrengthThreshold.set(it.toInt())
             }
             // Any test may kill a mutant, not only the one named after the class: PIT runs each
             // mutant against the tests its coverage pass saw reach that line.

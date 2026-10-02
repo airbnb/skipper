@@ -30,35 +30,75 @@ class FiltersTest {
   @TempDir Path dir;
 
   @Test
-  void changedLinesKeepsOnlyListedLinesOfListedFiles() throws IOException {
+  void changedLinesKeepsOnlyAddedOrModifiedLinesOfChangedFiles() throws IOException {
     MutationInterceptor filter =
-        changedLinesFilter("com/airbnb/skipper/internal WorkflowExecutor.kt 41 42\n");
+        changedLinesFilter(
+            "diff --git a/src/main/java/com/airbnb/skipper/internal/WorkflowExecutor.kt"
+                + " b/src/main/java/com/airbnb/skipper/internal/WorkflowExecutor.kt\n"
+                + "--- a/src/main/java/com/airbnb/skipper/internal/WorkflowExecutor.kt\n"
+                + "+++ b/src/main/java/com/airbnb/skipper/internal/WorkflowExecutor.kt\n"
+                + "@@ -40,0 +41,2 @@ class WorkflowExecutor\n"
+                + "+        val a = 1\n"
+                + "+        val b = 2\n"
+                + "@@ -90 +97 @@\n"
+                + "-        old()\n"
+                + "+        new()\n"
+                + "@@ -120,3 +126,0 @@\n"
+                + "-        gone()\n");
 
-    MutationDetails onChangedLine =
+    MutationDetails added =
         mutant("com.airbnb.skipper.internal.WorkflowExecutor", "WorkflowExecutor.kt", 41);
-    MutationDetails onNestedClass =
+    MutationDetails lastAdded =
         mutant("com.airbnb.skipper.internal.WorkflowExecutor$Run", "WorkflowExecutor.kt", 42);
-    MutationDetails otherLine =
+    MutationDetails modified =
+        mutant("com.airbnb.skipper.internal.WorkflowExecutor", "WorkflowExecutor.kt", 97);
+    MutationDetails pastTheHunk =
         mutant("com.airbnb.skipper.internal.WorkflowExecutor", "WorkflowExecutor.kt", 43);
+    MutationDetails atADeletion =
+        mutant("com.airbnb.skipper.internal.WorkflowExecutor", "WorkflowExecutor.kt", 126);
     MutationDetails otherFile =
         mutant("com.airbnb.skipper.internal.ActionExecutor", "ActionExecutor.kt", 41);
     MutationDetails otherPackage =
         mutant("com.airbnb.skipper.WorkflowExecutor", "WorkflowExecutor.kt", 41);
 
     assertThat(filter.type()).isEqualTo(InterceptorType.PRE_SCAN_FILTER);
-    assertThat(intercept(filter, onChangedLine, onNestedClass, otherLine, otherFile, otherPackage))
-        .containsExactly(onChangedLine, onNestedClass);
+    assertThat(
+            intercept(
+                filter,
+                added,
+                lastAdded,
+                modified,
+                pastTheHunk,
+                atADeletion,
+                otherFile,
+                otherPackage))
+        .containsExactly(added, lastAdded, modified);
   }
 
   @Test
-  void changedLinesSkipsRowsWithoutLineNumbers() throws IOException {
+  void changedLinesIgnoresDeletedFiles() throws IOException {
     MutationInterceptor filter =
-        changedLinesFilter("com/airbnb/skipper Foo.kt\n\ncom/airbnb/skipper Bar.kt 7\n");
+        changedLinesFilter(
+            "--- a/src/main/java/com/airbnb/skipper/Foo.kt\n"
+                + "+++ /dev/null\n"
+                + "@@ -1,3 +0,0 @@\n"
+                + "--- a/src/main/java/com/airbnb/skipper/Bar.kt\n"
+                + "+++ b/src/main/java/com/airbnb/skipper/Bar.kt\n"
+                + "@@ -6,0 +7 @@\n");
 
-    MutationDetails foo = mutant("com.airbnb.skipper.Foo", "Foo.kt", 7);
+    MutationDetails foo = mutant("com.airbnb.skipper.Foo", "Foo.kt", 1);
     MutationDetails bar = mutant("com.airbnb.skipper.Bar", "Bar.kt", 7);
 
     assertThat(intercept(filter, foo, bar)).containsExactly(bar);
+  }
+
+  @Test
+  void changedLinesMatchesTheDefaultPackage() throws IOException {
+    MutationInterceptor filter = changedLinesFilter("+++ b/Top.java\n@@ -1 +1 @@\n");
+
+    MutationDetails top = mutant("Top", "Top.java", 1);
+
+    assertThat(intercept(filter, top)).containsExactly(top);
   }
 
   @Test
@@ -80,7 +120,7 @@ class FiltersTest {
         new FeatureSetting(
             "CHANGED_LINES",
             ToggleStatus.ACTIVATE,
-            Map.of("file", List.of(dir.resolve("missing").toString())));
+            Map.of("diff", List.of(dir.resolve("missing").toString())));
 
     assertThatThrownBy(() -> new ChangedLinesFilterFactory().createInterceptor(params(setting)))
         .isInstanceOf(UncheckedIOException.class);
@@ -115,12 +155,12 @@ class FiltersTest {
     assertThat(factory.description()).isNotBlank();
   }
 
-  private MutationInterceptor changedLinesFilter(String contents) throws IOException {
-    Path file = dir.resolve("changed-lines");
-    Files.write(file, contents.getBytes(StandardCharsets.UTF_8));
+  private MutationInterceptor changedLinesFilter(String diff) throws IOException {
+    Path file = dir.resolve("changes.diff");
+    Files.write(file, diff.getBytes(StandardCharsets.UTF_8));
     FeatureSetting setting =
         new FeatureSetting(
-            "CHANGED_LINES", ToggleStatus.ACTIVATE, Map.of("file", List.of(file.toString())));
+            "CHANGED_LINES", ToggleStatus.ACTIVATE, Map.of("diff", List.of(file.toString())));
     return new ChangedLinesFilterFactory().createInterceptor(params(setting));
   }
 

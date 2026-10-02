@@ -8,44 +8,74 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * The lines a change touches, per source file. A source file is named the way PIT names it: its
- * package in internal form plus its file name, so a Kotlin file whose directory does not match its
- * package still lines up.
+ * The lines a change adds or modifies, read from {@code git diff --unified=0}: each hunk header
+ * {@code @@ -a,b +c,d @@} names the new file's lines c to c+d-1.
  *
- * <p>The file scripts/diff-quality.py writes has one source file per line, fields separated by
- * spaces: {@code com/airbnb/skipper/internal WorkflowExecutor.kt 41 42 97}.
+ * <p>PIT names a mutant's source by package and file name, not path, so a path matches when it ends
+ * in {@code <package directories>/<file name>}. That holds as long as each source file sits in the
+ * directory its package names, which every main source here does (diff-cover, in the coverage job,
+ * relies on the same thing). A file that broke it would have its mutants dropped rather than
+ * misattributed.
  */
 final class ChangedLines {
 
-  private final Map<String, Set<Integer>> lines;
+  private static final Pattern HUNK =
+      Pattern.compile("^@@ -\\d+(?:,\\d+)? \\+(\\d+)(?:,(\\d+))? @@");
 
-  private ChangedLines(Map<String, Set<Integer>> lines) {
-    this.lines = lines;
+  /** File name -> (path -> changed line numbers). */
+  private final Map<String, Map<String, Set<Integer>>> byFileName;
+
+  private ChangedLines(Map<String, Map<String, Set<Integer>>> byFileName) {
+    this.byFileName = byFileName;
   }
 
-  static ChangedLines read(Path file) throws IOException {
-    Map<String, Set<Integer>> lines = new HashMap<>();
-    for (String row : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-      String[] fields = row.trim().split("\\s+");
-      if (fields.length < 3) {
+  static ChangedLines read(Path diff) throws IOException {
+    Map<String, Map<String, Set<Integer>>> byFileName = new HashMap<>();
+    Set<Integer> current = null;
+    for (String line : Files.readAllLines(diff, StandardCharsets.UTF_8)) {
+      if (line.startsWith("+++ ")) {
+        // "+++ /dev/null" is a deleted file: its hunks add nothing.
+        String path = line.startsWith("+++ b/") ? line.substring("+++ b/".length()) : null;
+        current =
+            path == null
+                ? null
+                : byFileName
+                    .computeIfAbsent(fileName(path), k -> new HashMap<>())
+                    .computeIfAbsent(path, k -> new HashSet<>());
         continue;
       }
-      Set<Integer> numbers = lines.computeIfAbsent(key(fields[0], fields[1]), k -> new HashSet<>());
-      for (int i = 2; i < fields.length; i++) {
-        numbers.add(Integer.parseInt(fields[i]));
+      Matcher hunk = HUNK.matcher(line);
+      if (current != null && hunk.find()) {
+        int first = Integer.parseInt(hunk.group(1));
+        int count = hunk.group(2) == null ? 1 : Integer.parseInt(hunk.group(2));
+        for (int n = first; n < first + count; n++) {
+          current.add(n);
+        }
       }
     }
-    return new ChangedLines(lines);
+    return new ChangedLines(byFileName);
   }
 
+  /**
+   * @param packageName the package in internal form, {@code com/airbnb/skipper}
+   */
   boolean contains(String packageName, String fileName, int line) {
-    Set<Integer> numbers = lines.get(key(packageName, fileName));
-    return numbers != null && numbers.contains(line);
+    String suffix = packageName.isEmpty() ? fileName : packageName + "/" + fileName;
+    for (Map.Entry<String, Set<Integer>> file :
+        byFileName.getOrDefault(fileName, Map.of()).entrySet()) {
+      String path = file.getKey();
+      if ((path.equals(suffix) || path.endsWith("/" + suffix)) && file.getValue().contains(line)) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  private static String key(String packageName, String fileName) {
-    return packageName + "/" + fileName;
+  private static String fileName(String path) {
+    return path.substring(path.lastIndexOf('/') + 1);
   }
 }

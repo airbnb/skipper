@@ -16,8 +16,8 @@
 #                 checks red.
 #
 #   coverage      Runs the suite under Kover. On a pull request, fails when fewer than 90% of
-#                 the executable main-source lines it adds or modifies are covered
-#                 (scripts/diff-quality.py lists the uncovered ones in the job summary). On every
+#                 the executable main-source lines it adds or modifies are covered (diff-cover
+#                 over Kover's report; the job summary lists the uncovered lines). On every
 #                 event, fails when the merged total drops below the floor in build.gradle.kts.
 #                 The bar is on changed lines, not the total, because the total is below 90%
 #                 today: a total gate would fail every pull request until someone wrote the
@@ -142,7 +142,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # diff-quality.py diffs against the merge base with the target branch.
+          # diff-cover diffs against the merge base with the target branch.
           fetch-depth: 0
 
       - uses: actions/setup-java@v6
@@ -172,11 +172,22 @@ jobs:
         run: ./gradlew --stacktrace koverXmlReport koverHtmlReport -x spotlessCheck
 
       - name: Check coverage of the lines this pull request changes
+        # diff-cover maps Kover's JaCoCo-format report back to files through the source roots,
+        # found here rather than listed so a new project is covered without a change to this job.
+        # Lines diff-cover finds no coverage data for (tests, build scripts, docs) do not count.
         id: changed-lines
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: scripts/diff-quality.py --base "origin/$BASE_REF" coverage --min 90 build/reports/kover/report.xml
+        run: |
+          mapfile -t roots < <(git ls-files | grep -oE '^([^/]+/)*src/main/(java|kotlin)/' \
+            | grep -v '^examples/' | sed 's#/$##' | sort -u)
+          status=0
+          pipx run --spec diff-cover==10.6.0 diff-cover build/reports/kover/report.xml \
+            --compare-branch "origin/$BASE_REF" --fail-under 90 --src-roots "${roots[@]}" \
+            --format "markdown:$RUNNER_TEMP/diff-cover.md" || status=$?
+          cat "$RUNNER_TEMP/diff-cover.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Check the merged total stays above its floor
         # After the changed-lines check, and on every event, so a pull request that fails both
@@ -193,9 +204,8 @@ jobs:
           if-no-files-found: ignore
 
   mutation:
-    # Mutation-tests only the classes a pull request changes, and gates only on mutants planted on
-    # the lines it changes: the whole engine takes hours. On a push to main every step is
-    # skipped, which still satisfies the jvm-build fan-in.
+    # Mutation-tests only the lines a pull request changes: the whole engine takes hours. On a
+    # push to main every step is skipped, which still satisfies the jvm-build fan-in.
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     env:
@@ -227,35 +237,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libaio1 libncurses5 libnsl2
 
-      - name: Find the classes this pull request changes
+      - name: Mutation-test the lines this pull request changes
+        # tools/pitest-filters' CHANGED_LINES reads the diff and drops every mutant off its added
+        # and modified lines before PIT plans any, which is what keeps this job in minutes: a
+        # surviving mutant in the engine's core reruns hundreds of end-to-end tests. A project the
+        # diff does not touch has nothing left to mutate, and PIT skips it in about a second.
+        # --continue so every project with changes reports, not just the first one under 80%.
         if: github.event_name == 'pull_request'
         run: |
-          scripts/diff-quality.py --base "origin/$BASE_REF" targets "$RUNNER_TEMP/changed-lines" \
-            > "$RUNNER_TEMP/pit-targets"
-          cat "$RUNNER_TEMP/pit-targets"
+          git diff --unified=0 --no-color --src-prefix=a/ --dst-prefix=b/ "origin/$BASE_REF...HEAD" \
+            > "$RUNNER_TEMP/changes.diff"
+          ./gradlew --stacktrace --continue pitest \
+            -PpitestDiff="$RUNNER_TEMP/changes.diff" -PpitestMinTestStrength=80
 
-      - name: Mutation-test the lines it changes
-        # One PIT run per project with changes (-p selects the project by directory, and task
-        # names then resolve against that project alone, so no -x for root-only tasks). The globs
-        # pick the classes; CHANGED_LINES then drops every mutant off the changed lines before it
-        # runs, which is what keeps this job in minutes: a surviving mutant in the engine's core
-        # reruns hundreds of end-to-end tests.
-        if: github.event_name == 'pull_request'
+      - name: List the mutants no test detected
+        # PIT's console output gives the score only. Each line here is a change to the code that
+        # no test noticed: an assertion is missing, or the code it mutated does not matter.
+        if: always() && github.event_name == 'pull_request'
+        shell: python3 {0}
         run: |
-          while read -r dir globs; do
-            ./gradlew --stacktrace -p "$dir" pitest \
-              -PpitestTargets="$globs" -PpitestChangedLines="$RUNNER_TEMP/changed-lines"
-          done < "$RUNNER_TEMP/pit-targets"
-
-      - name: Check the tests detect the mutants on the lines this pull request changes
-        if: github.event_name == 'pull_request'
-        run: |
-          mapfile -t reports < <(find . -path '*/build/reports/pitest/mutations.xml')
-          if [ ${#reports[@]} -eq 0 ]; then
-            echo "No main source changed; nothing to mutate."
-            exit 0
-          fi
-          scripts/diff-quality.py --base "origin/$BASE_REF" mutation --min 80 "${reports[@]}"
+          import glob, os, xml.etree.ElementTree as ET
+          rows = []
+          for report in sorted(glob.glob("**/build/reports/pitest/mutations.xml", recursive=True)):
+              for m in ET.parse(report).getroot().iter("mutation"):
+                  if m.get("status") == "SURVIVED":
+                      rows.append(f"| `{m.findtext('mutatedClass')}` | {m.findtext('lineNumber')} | {m.findtext('description')} |")
+          summary = ["### Surviving mutants", ""]
+          summary += ["| Class | Line | Mutation |", "|---|---|---|", *rows] if rows else ["None."]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("\n".join(summary) + "\n")
 
       - name: Store the mutation reports
         if: always()
