@@ -4,6 +4,9 @@
 // PIT tool classpath. Not published: nothing outside this build runs it.
 plugins {
     `java-library`
+    // The sources are Java, but Kover only measures projects with a Kotlin plugin applied: without
+    // it the classes drop out of the merged report and the coverage job sees nothing changed.
+    alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kover)
     alias(libs.plugins.pitest)
 }

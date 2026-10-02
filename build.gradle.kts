@@ -366,9 +366,10 @@ kover {
         }
         verify {
             rule("Merged line coverage floor") {
-                // The measured total, rounded down. Raise it as coverage grows; the
-                // changed-lines gate in CI is what moves it.
-                minBound(80)
+                // CI measured 83.2% when this gate landed (2026-10-02), rounded down. Raise it as
+                // coverage grows; the changed-lines gate in CI is what moves it. A local run
+                // reads lower: the MySQL tests need MariaDB4j, which not every machine can start.
+                minBound(83)
             }
         }
     }
