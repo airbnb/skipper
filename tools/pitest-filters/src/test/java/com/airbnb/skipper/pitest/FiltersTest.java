@@ -99,7 +99,11 @@ class FiltersTest {
             .withDescription("removed call to com/airbnb/skipper/Store::save");
 
     assertThat(filter.type()).isEqualTo(InterceptorType.PRE_SCAN_FILTER);
-    assertThat(intercept(filter, nullCheck, realCall)).containsExactly(realCall);
+    // MutationDetails equality is by mutant id alone, and these two share one: compare what each
+    // mutant does instead.
+    assertThat(intercept(filter, nullCheck, realCall))
+        .extracting(MutationDetails::getDescription)
+        .containsExactly("removed call to com/airbnb/skipper/Store::save");
   }
 
   @Test

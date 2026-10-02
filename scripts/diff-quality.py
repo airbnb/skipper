@@ -26,8 +26,8 @@ are not what a pull request can be asked to close. The whole-project coverage fl
 build.gradle.kts) is what keeps the total from sliding.
 
 KOVER_XML is Kover's JaCoCo-format report; PIT_XML is PIT's mutations.xml. Both identify a source
-file by its package and file name, which is how changed paths are matched to them, so a Kotlin file
-whose directory does not match its package (common under src/main/java here) still lines up.
+file by its package and file name, which is how changed paths are matched to them: the package is
+read from the file itself, so a Kotlin file need not sit in the directory its package names.
 
 When GITHUB_STEP_SUMMARY is set, a Markdown report is appended to it as well.
 """

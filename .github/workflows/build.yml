@@ -235,14 +235,15 @@ jobs:
           cat "$RUNNER_TEMP/pit-targets"
 
       - name: Mutation-test the lines it changes
-        # One PIT run per project with changes (-p selects the project by directory). The globs
+        # One PIT run per project with changes (-p selects the project by directory, and task
+        # names then resolve against that project alone, so no -x for root-only tasks). The globs
         # pick the classes; CHANGED_LINES then drops every mutant off the changed lines before it
         # runs, which is what keeps this job in minutes: a surviving mutant in the engine's core
         # reruns hundreds of end-to-end tests.
         if: github.event_name == 'pull_request'
         run: |
           while read -r dir globs; do
-            ./gradlew --stacktrace -x spotlessCheck -p "$dir" pitest \
+            ./gradlew --stacktrace -p "$dir" pitest \
               -PpitestTargets="$globs" -PpitestChangedLines="$RUNNER_TEMP/changed-lines"
           done < "$RUNNER_TEMP/pit-targets"
 
