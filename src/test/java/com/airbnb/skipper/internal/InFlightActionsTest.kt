@@ -72,8 +72,8 @@ class InFlightActionsTest {
 
     @Test
     fun anInterruptRacingTheExitNeverLeaksOntoTheThread() {
-        // Whichever wins, the thread leaves the bracket with a clear flag, and interrupt() reports
-        // delivery exactly when that thread's exit() does.
+        // Whether the interrupt or the exit comes first, the thread ends with a clear flag, and
+        // interrupt() and exit() agree on whether it was delivered.
         val leaked = AtomicInteger()
         val disagreed = AtomicInteger()
         repeat(2_000) {
@@ -124,6 +124,36 @@ class InFlightActionsTest {
         assertFalse(interruptedOf.containsKey("healthy"))
         assertTrue(registry.interrupt("healthy"))
         threads[1].join(5_000)
+    }
+
+    @Test
+    fun oneRegistrationLeavingKeepsTheOthersReachable() {
+        val entered = CountDownLatch(2)
+        val leave = CountDownLatch(1)
+        val interruptedOf = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+        val threads =
+            listOf("leaver", "stayer").map { role ->
+                Thread {
+                    val registration = registry.enter("wf")
+                    entered.countDown()
+                    try {
+                        if (role == "leaver") leave.await() else Thread.sleep(20_000)
+                    } catch (e: InterruptedException) {
+                        interruptedOf[role] = true
+                    }
+                    registry.exit(registration)
+                }.also { it.start() }
+            }
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        leave.countDown()
+        threads[0].join(5_000)
+
+        assertTrue(registry.interrupt("wf"))
+
+        threads[1].join(5_000)
+        assertTrue(interruptedOf["stayer"] == true)
+        assertFalse(interruptedOf.containsKey("leaver"))
+        assertFalse(registry.interrupt("wf"))
     }
 
     @Test

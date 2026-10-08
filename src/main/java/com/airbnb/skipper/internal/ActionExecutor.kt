@@ -227,8 +227,7 @@ open class ActionExecutor
                                     *userArgs,
                                 )
                         } else {
-                            // Registered so a cancel can interrupt this thread while the action runs;
-                            // skipped entirely for embedders that have not opted in.
+                            // Lets a cancel interrupt this thread while the action runs.
                             val registration =
                                 if (featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT) == true) {
                                     inFlightActions.enter(request.executionContext.workflow.workflowId)
@@ -246,7 +245,7 @@ open class ActionExecutor
                                     interruptedByCancel = registration != null && inFlightActions.exit(registration)
                                 }
                             if (interruptedByCancel) {
-                                // Delivered, but the action ran to completion anyway.
+                                // The cancel's interrupt arrived, but the action completed anyway.
                                 metrics
                                     .counter(
                                         ImmutableMap.of(ACTION_CLASS_TAG, request.baseActionClass.simpleName),
@@ -403,8 +402,8 @@ open class ActionExecutor
                 }
             } catch (e: Throwable) {
                 if (interruptedByCancel) {
-                    // The failure is the cancel's interrupt landing: end as cancelled, not as an
-                    // action error to retry; nothing to checkpoint.
+                    // A cancel interrupted this action, so end as cancelled rather than as a
+                    // retryable error, with no checkpoint.
                     shouldAddCheckpoint = false
                     shouldIncrementIteration = false
                     metrics

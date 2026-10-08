@@ -4,8 +4,6 @@ import com.airbnb.skipper.CancelledWorkflow
 import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.FeatureGate
-import com.airbnb.skipper.Metrics
-import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.ResultUnavailable
 import com.airbnb.skipper.SignalMethod
 import com.airbnb.skipper.SkipperError
@@ -30,6 +28,7 @@ import com.airbnb.skipper.internal.storage.EntityAlreadyExists
 import com.airbnb.skipper.internal.storage.WorkflowCreationRequest
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.internal.storage.WorkflowUpdateRequest
+import com.airbnb.skipper.internal.testutils.RecordingMetrics
 import com.airbnb.skipper.testutils.TestRequestContext
 import com.airbnb.skipper.util.ExtraRequestData
 import io.vavr.Tuple2
@@ -75,7 +74,7 @@ class SkipperEngineTest {
     private lateinit var mockPersistentScheduler: Scheduler
     private lateinit var mockFeatureGate: FeatureGate
     private lateinit var mockEventPublisher: EventPublisher
-    private val mockMetrics: Metrics = NoOpMetrics.INSTANCE
+    private val mockMetrics = RecordingMetrics()
     private lateinit var mockCallbackHandlerInjector: SkipperInjector
     private val inFlightActions = InFlightActions()
 
@@ -648,6 +647,7 @@ class SkipperEngineTest {
 
         running.join(5_000)
         assertTrue(interrupted.get())
+        assertTrue(mockMetrics.incremented.contains("tempoEngine.cancelInterrupts"))
     }
 
     @Test
@@ -665,6 +665,7 @@ class SkipperEngineTest {
         running.join(1_000)
         assertTrue(running.isAlive)
         assertFalse(interrupted.get())
+        assertFalse(mockMetrics.incremented.contains("tempoEngine.cancelInterrupts"))
         running.interrupt()
         running.join(5_000)
     }
@@ -684,6 +685,7 @@ class SkipperEngineTest {
         running.join(1_000)
         assertTrue(running.isAlive)
         assertFalse(interrupted.get())
+        assertFalse(mockMetrics.incremented.contains("tempoEngine.cancelInterrupts"))
         running.interrupt()
         running.join(5_000)
     }

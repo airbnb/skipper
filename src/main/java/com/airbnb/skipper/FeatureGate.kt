@@ -82,15 +82,12 @@ interface FeatureGate {
         INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints", enabledByDefault = false),
 
         /**
-         * Interrupt the thread running an action when its workflow is cancelled, so the action stops
-         * instead of running to completion. Reaches only a synchronous action already running in the
-         * process that took the cancel: not suspend or future-returning actions, not another
-         * process, and not an action that starts afterwards (the boundary check stops that one).
-         * Best effort; an action that swallows the interrupt completes. The interrupt reaches
-         * arbitrary action code: an NIO channel the action is blocked on is closed by the JVM, and a
-         * library not written for interrupts may return a broken connection to a pool shared with
-         * other workflows. Check what actions block on before opting in. Requires
-         * [INFLIGHT_CANCELLATION_CHECKPOINTS]. Off by default.
+         * Interrupt the thread running an action when its workflow is cancelled. Reaches only a
+         * synchronous action running in the process that took the cancel; an action that ignores the
+         * interrupt still completes. The interrupt can close an NIO channel the action is blocked on, and
+         * a library not written for interrupts can put a broken connection back in a pool other workflows
+         * share, so check what your actions block on before opting in. Requires
+         * [INFLIGHT_CANCELLATION_CHECKPOINTS], which stops actions that start after the cancel.
          */
         INFLIGHT_CANCELLATION_INTERRUPT("inflight_cancellation_interrupt", enabledByDefault = false),
     }

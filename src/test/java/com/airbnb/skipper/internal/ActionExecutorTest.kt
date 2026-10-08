@@ -189,8 +189,8 @@ class ActionExecutorTest {
 
     @Test
     fun testInterruptedActionEndsAsCancelled() {
-        // A cancel interrupting the running action ends the action as cancelled, not as a retryable
-        // action error: nothing is checkpointed and the thread's interrupt flag does not leak.
+        // A cancel interrupting the running action ends it as cancelled, not as a retryable error:
+        // nothing is checkpointed and the thread leaves with a clear interrupt flag.
         val executionContext = newExecContext()
         whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
         blockStarted = CountDownLatch(1)
@@ -203,11 +203,12 @@ class ActionExecutorTest {
                 .executionContext(executionContext)
                 .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
                 .build()
+        val recording = RecordingMetrics()
         val interruptingExecutor =
             ActionExecutor(
                 mockWorkflowStore,
                 CheckpointMode.EVENTUAL_CHECKPOINT,
-                metrics,
+                recording,
                 errorMapper,
                 mockEventPublisher,
                 mockExecutionMetricsCollector,
@@ -216,22 +217,24 @@ class ActionExecutorTest {
                 InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT to true)),
                 inFlightActions,
             )
-        val outcome = CompletableFuture<Throwable?>()
+        val outcome = CompletableFuture<Pair<Throwable?, Boolean>>()
         val worker =
             Thread {
                 try {
                     interruptingExecutor.executeAction(req)
-                    outcome.complete(null)
+                    outcome.complete(null to Thread.currentThread().isInterrupted)
                 } catch (e: Throwable) {
-                    outcome.complete(e)
+                    outcome.complete(e to Thread.currentThread().isInterrupted)
                 }
             }
         worker.start()
         assertTrue(blockStarted.await(5, TimeUnit.SECONDS))
         assertTrue(inFlightActions.interrupt(executionContext.workflow.workflowId))
-        val thrown = outcome.get(5, TimeUnit.SECONDS)
+        val (thrown, flagAfter) = outcome.get(5, TimeUnit.SECONDS)
         assertTrue(thrown is WorkflowCancelledException, "was: $thrown")
+        assertFalse(flagAfter)
         assertEquals(0, executionContext.dirtyCheckpoints.size())
+        assertTrue(recording.incremented.contains("actionExecutor.inflightCancellationInterrupted"))
         assertFalse(inFlightActions.interrupt(executionContext.workflow.workflowId))
     }
 
@@ -276,7 +279,48 @@ class ActionExecutorTest {
         assertEquals("survived", result)
         assertFalse(flagAfter)
         assertEquals(1, executionContext.dirtyCheckpoints.size())
-        assertTrue(recording.counters.contains("actionExecutor.inflightCancellationIgnored"))
+        assertTrue(recording.incremented.contains("actionExecutor.inflightCancellationIgnored"))
+    }
+
+    @Test
+    fun testActionThatReturnsWithTheFlagStillSetLeavesTheThreadClear() {
+        // An action that never blocks never consumes the interrupt itself; the registry must clear it
+        // so the pooled thread does not carry it into the next action.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val executor =
+            ActionExecutor(
+                mockWorkflowStore,
+                CheckpointMode.EVENTUAL_CHECKPOINT,
+                metrics,
+                errorMapper,
+                mockEventPublisher,
+                mockExecutionMetricsCollector,
+                mockTracer,
+                ContextPropagator.NOOP,
+                InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT to true)),
+                inFlightActions,
+            )
+        blockStarted = CountDownLatch(1)
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "spinUntilInterrupted" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actionMap[DemoActions::class.java]!!)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val outcome = CompletableFuture<Pair<Any?, Boolean>>()
+        Thread {
+            val result = executor.executeAction(req)
+            outcome.complete(result to Thread.currentThread().isInterrupted)
+        }.start()
+        assertTrue(blockStarted.await(5, TimeUnit.SECONDS))
+        assertTrue(inFlightActions.interrupt(executionContext.workflow.workflowId))
+        val (result, flagAfter) = outcome.get(5, TimeUnit.SECONDS)
+        assertEquals("noticed", result)
+        assertFalse(flagAfter)
     }
 
     @Test
@@ -1443,6 +1487,14 @@ class ActionExecutorTest {
             blockStarted.countDown()
             Thread.sleep(20_000)
             return "unblocked"
+        }
+
+        fun spinUntilInterrupted(): String {
+            blockStarted.countDown()
+            while (!Thread.currentThread().isInterrupted) {
+                Thread.onSpinWait()
+            }
+            return "noticed"
         }
 
         fun swallow(): String {

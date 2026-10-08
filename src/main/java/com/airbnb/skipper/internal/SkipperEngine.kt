@@ -655,8 +655,8 @@ open class SkipperEngine
             if (task.isDefined) {
                 persistentScheduler.remove(task.get())
             }
-            // Inert without the boundary check: that is what settles the interrupted execution
-            // without a stale-version write, and what stops an action starting after this scan.
+            // Needs the checkpoints gate too: it ends the interrupted execution as CANCELLED without a
+            // status write, and stops any action that starts after this interrupt.
             if (featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT) &&
                 featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)
             ) {
@@ -664,9 +664,7 @@ open class SkipperEngine
                 metrics
                     .counter(mapOf("interrupted" to interrupted.toString()), METRICS_COMPONENT, "cancelInterrupts")
                     .inc()
-                if (interrupted) {
-                    log.info("interrupted the action running for cancelled workflowId={}", workflowId)
-                }
+                log.info("cancelled workflowId={}: running action interrupted={}", workflowId, interrupted)
             }
             try {
                 if (instance.callbackHandler != null) {
