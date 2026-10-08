@@ -59,6 +59,7 @@ open class SkipperEngine
         private val eventPublisher: EventPublisher,
         private val metrics: Metrics,
         private val callbackHandlerInjector: SkipperInjector,
+        private val inFlightActions: InFlightActions,
     ) {
         /**
          * Creates and starts the execution of a new workflow instance.
@@ -653,6 +654,17 @@ open class SkipperEngine
             val task = persistentScheduler.getTask<Any>(instance.workflowId)
             if (task.isDefined) {
                 persistentScheduler.remove(task.get())
+            }
+            // Needs the checkpoints gate too: it ends the interrupted execution as CANCELLED without a
+            // status write, and stops any action that starts after this interrupt.
+            if (featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT) &&
+                featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)
+            ) {
+                val interrupted = inFlightActions.interrupt(workflowId)
+                metrics
+                    .counter(mapOf("interrupted" to interrupted.toString()), METRICS_COMPONENT, "cancelInterrupts")
+                    .inc()
+                log.info("cancelled workflowId={}: running action interrupted={}", workflowId, interrupted)
             }
             try {
                 if (instance.callbackHandler != null) {

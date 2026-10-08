@@ -80,5 +80,15 @@ interface FeatureGate {
          * only at the next scheduling boundary. Off by default.
          */
         INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints", enabledByDefault = false),
+
+        /**
+         * Interrupt the thread running an action when its workflow is cancelled. Reaches only a
+         * synchronous action running in the process that took the cancel; an action that ignores the
+         * interrupt still completes. The interrupt can close an NIO channel the action is blocked on, and
+         * a library not written for interrupts can put a broken connection back in a pool other workflows
+         * share, so check what your actions block on before opting in. Requires
+         * [INFLIGHT_CANCELLATION_CHECKPOINTS], which stops actions that start after the cancel.
+         */
+        INFLIGHT_CANCELLATION_INTERRUPT("inflight_cancellation_interrupt", enabledByDefault = false),
     }
 }

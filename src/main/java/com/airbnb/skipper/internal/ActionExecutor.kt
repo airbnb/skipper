@@ -52,6 +52,7 @@ open class ActionExecutor
         private val tracer: Tracer,
         private val contextPropagator: ContextPropagator,
         private val featureGate: FeatureGate?,
+        private val inFlightActions: InFlightActions,
     ) {
         /**
          * Executes an action method.
@@ -179,6 +180,7 @@ open class ActionExecutor
                     "actionExecutionTime",
                 )
             val span = executionMetricsCollector.createActionSpan(request)
+            var interruptedByCancel = false
             try {
                 timer.time().use { _ ->
                     tracer.activateSpan(span).use { _ ->
@@ -225,12 +227,39 @@ open class ActionExecutor
                                     *userArgs,
                                 )
                         } else {
-                            result =
-                                if (request.arg != null) {
-                                    request.proxyMethod.invoke(request.actionObject, *request.arg)
+                            // Lets a cancel interrupt this thread while the action runs.
+                            val registration =
+                                if (featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT) == true) {
+                                    inFlightActions.enter(request.executionContext.workflow.workflowId)
                                 } else {
-                                    request.proxyMethod.invoke(request.actionObject)
+                                    null
                                 }
+                            result =
+                                try {
+                                    if (request.arg != null) {
+                                        request.proxyMethod.invoke(request.actionObject, *request.arg)
+                                    } else {
+                                        request.proxyMethod.invoke(request.actionObject)
+                                    }
+                                } finally {
+                                    interruptedByCancel = registration != null && inFlightActions.exit(registration)
+                                }
+                            if (interruptedByCancel) {
+                                // The cancel's interrupt arrived, but the action completed anyway.
+                                metrics
+                                    .counter(
+                                        ImmutableMap.of(ACTION_CLASS_TAG, request.baseActionClass.simpleName),
+                                        METRIC_COMPONENT_NAME,
+                                        "inflightCancellationIgnored",
+                                    )
+                                    .inc()
+                                log.warn(
+                                    "action {}#{} of cancelled workflow {} completed despite the interrupt",
+                                    request.baseActionClass.simpleName,
+                                    request.actionMethodName,
+                                    request.executionContext.workflow.workflowId,
+                                )
+                            }
                         }
                         if (result is CompletableFuture<*>) {
                             shouldIncrementIteration = false
@@ -372,6 +401,24 @@ open class ActionExecutor
                     }
                 }
             } catch (e: Throwable) {
+                if (interruptedByCancel) {
+                    // A cancel interrupted this action, so end as cancelled rather than as a
+                    // retryable error, with no checkpoint.
+                    shouldAddCheckpoint = false
+                    shouldIncrementIteration = false
+                    metrics
+                        .counter(
+                            ImmutableMap.of(ACTION_CLASS_TAG, request.baseActionClass.simpleName),
+                            METRIC_COMPONENT_NAME,
+                            "inflightCancellationInterrupted",
+                        )
+                        .inc()
+                    throw WorkflowCancelledException(
+                        "workflow " + request.executionContext.workflow.workflowId +
+                            " was CANCELLED; interrupted action " + request.baseActionClass.simpleName +
+                            "#" + request.actionMethodName,
+                    )
+                }
                 // All errors thrown by the action method are considered retryable unless explicitly
                 // marked
                 // as NonRetryable errors.
