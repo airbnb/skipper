@@ -11,6 +11,7 @@ import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
 import com.airbnb.skipper.internal.scheduler.TaskHandler
+import com.airbnb.skipper.internal.testutils.inactiveCancelWatcher
 import com.airbnb.skipper.testutils.TestRuntime
 import io.vavr.collection.HashMap
 import io.vavr.control.Option
@@ -70,6 +71,7 @@ class SkipperSchedulerManagerFinishTaskTest {
                 SingleMemberClusterMembershipManager(),
                 BucketPartitioner(),
                 Duration.ofSeconds(5),
+                inactiveCancelWatcher(),
             )
         whenever(handler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Option.none()))
     }

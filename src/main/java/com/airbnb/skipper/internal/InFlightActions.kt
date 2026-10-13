@@ -39,13 +39,25 @@ class InFlightActions {
         return registration.interruptRequested
     }
 
-    /** Interrupts every thread running an action for [workflowId] here. Returns whether there was one. */
-    fun interrupt(workflowId: String): Boolean =
+    /** The workflows with an action running here right now. */
+    fun workflowIds(): Set<String> = entries.keys.toSet()
+
+    /**
+     * Interrupts each thread running an action for [workflowId] here, skipping any already interrupted,
+     * so an action is interrupted at most once. Returns whether this call interrupted any.
+     */
+    fun interrupt(workflowId: String): Boolean {
+        var delivered = false
         entries.computeIfPresent(workflowId) { _, list ->
             for (registration in list) {
-                registration.interruptRequested = true
-                registration.thread.interrupt()
+                if (!registration.interruptRequested) {
+                    registration.interruptRequested = true
+                    registration.thread.interrupt()
+                    delivered = true
+                }
             }
             list
-        } != null
+        }
+        return delivered
+    }
 }

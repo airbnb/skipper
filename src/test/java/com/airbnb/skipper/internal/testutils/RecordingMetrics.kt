@@ -7,12 +7,15 @@ import com.airbnb.skipper.metrics.SkipperCounter
 class RecordingMetrics : NoOpMetrics() {
     val incremented = mutableListOf<String>()
 
+    override fun counter(vararg names: String): SkipperCounter = recording(names.joinToString("."))
+
     override fun counter(
         tags: Map<String, String>,
         vararg names: String
-    ): SkipperCounter {
-        val name = names.joinToString(".")
-        return object : SkipperCounter {
+    ): SkipperCounter = recording(names.joinToString("."))
+
+    private fun recording(name: String) =
+        object : SkipperCounter {
             override fun inc() {
                 incremented.add(name)
             }
@@ -21,5 +24,4 @@ class RecordingMetrics : NoOpMetrics() {
                 incremented.add(name)
             }
         }
-    }
 }

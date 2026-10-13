@@ -15,6 +15,7 @@ import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.SchedulerExecutionQueue
 import com.airbnb.skipper.internal.scheduler.Task
 import com.airbnb.skipper.internal.scheduler.TaskHandler
+import com.airbnb.skipper.internal.testutils.inactiveCancelWatcher
 import com.airbnb.skipper.testutils.TestRuntime
 import io.vavr.collection.HashMap
 import io.vavr.collection.Map
@@ -100,6 +101,7 @@ class SkipperSchedulerManagerTest {
                 SingleMemberClusterMembershipManager(),
                 BucketPartitioner(),
                 TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+                inactiveCancelWatcher(),
             )
 
         skipperSchedulerManager.start()
@@ -137,6 +139,7 @@ class SkipperSchedulerManagerTest {
                 SingleMemberClusterMembershipManager(),
                 BucketPartitioner(),
                 Duration.ofSeconds(30),
+                inactiveCancelWatcher(),
             )
         manager.start()
         val started = System.nanoTime()
@@ -167,6 +170,7 @@ class SkipperSchedulerManagerTest {
                 SingleMemberClusterMembershipManager(),
                 BucketPartitioner(),
                 TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+                inactiveCancelWatcher(),
             )
         whenever(mockTaskHandler.handle(any(), any()))
             .thenReturn(CompletableFuture.completedFuture(Option.none()))
@@ -200,6 +204,7 @@ class SkipperSchedulerManagerTest {
                 SingleMemberClusterMembershipManager(),
                 BucketPartitioner(),
                 TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+                inactiveCancelWatcher(),
             )
         val retryTime = Instant.EPOCH.plusSeconds(1)
         whenever(mockTaskHandler.handle(any(), any()))
@@ -233,6 +238,7 @@ class SkipperSchedulerManagerTest {
                 SingleMemberClusterMembershipManager(),
                 BucketPartitioner(),
                 TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+                inactiveCancelWatcher(),
             )
         whenever(mockTaskHandler.handle(any(), any()))
             .thenReturn(
@@ -265,6 +271,7 @@ class SkipperSchedulerManagerTest {
                 SingleMemberClusterMembershipManager(),
                 BucketPartitioner(),
                 TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+                inactiveCancelWatcher(),
             )
         whenever(mockTaskHandler.handle(any(), any()))
             .thenReturn(
@@ -298,6 +305,7 @@ class SkipperSchedulerManagerTest {
                 SingleMemberClusterMembershipManager(),
                 BucketPartitioner(),
                 TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+                inactiveCancelWatcher(),
             )
         val task = getTestTask(getWorkflowInstance()).toBuilder().retryCount(maxRetries + 1).build()
         manager.handleTask(task)
@@ -368,6 +376,7 @@ class SkipperSchedulerManagerTest {
             SingleMemberClusterMembershipManager(),
             BucketPartitioner(),
             TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+            inactiveCancelWatcher(),
         )
 
     @Test
@@ -397,6 +406,7 @@ class SkipperSchedulerManagerTest {
                 mockClusterMembership,
                 BucketPartitioner(),
                 Duration.ofSeconds(5),
+                inactiveCancelWatcher(),
             )
 
         manager.stop()
@@ -444,6 +454,7 @@ class SkipperSchedulerManagerTest {
                 mockClusterMembership,
                 BucketPartitioner(),
                 Duration.ofSeconds(5),
+                inactiveCancelWatcher(),
             )
 
         manager.stop()
@@ -489,6 +500,7 @@ class SkipperSchedulerManagerTest {
                 mockClusterMembership,
                 BucketPartitioner(),
                 Duration.ofSeconds(5),
+                inactiveCancelWatcher(),
             )
 
         manager.stop()
@@ -525,6 +537,7 @@ class SkipperSchedulerManagerTest {
                 mockClusterMembership,
                 BucketPartitioner(),
                 Duration.ofSeconds(5),
+                inactiveCancelWatcher(),
             )
 
         manager.stop()
@@ -568,6 +581,7 @@ class SkipperSchedulerManagerTest {
                 mockClusterMembership,
                 BucketPartitioner(),
                 Duration.ofSeconds(5),
+                inactiveCancelWatcher(),
             )
 
         // Should not throw exception - should handle gracefully

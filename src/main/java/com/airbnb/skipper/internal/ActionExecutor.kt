@@ -261,6 +261,8 @@ open class ActionExecutor
                                 )
                             }
                         }
+                        // TODO: a cancel cannot interrupt the work behind a returned future, because the
+                        //  action leaves InFlightActions when its method returns. Cancel the future instead.
                         if (result is CompletableFuture<*>) {
                             shouldIncrementIteration = false
                             shouldAddCheckpoint = false

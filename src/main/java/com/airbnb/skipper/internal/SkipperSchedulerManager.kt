@@ -68,6 +68,7 @@ class SkipperSchedulerManager
         private val clusterMembershipManager: ClusterMembershipManager,
         private val partitioner: BucketPartitioner,
         @param:Named(GRACEFUL_SHUTDOWN_TIMEOUT) private val gracefulShutdownTimeout: Duration,
+        private val cancelWatcher: InFlightCancelWatcher,
     ) {
         private val stop = AtomicBoolean(false)
 
@@ -91,6 +92,7 @@ class SkipperSchedulerManager
             }
             loopFutures.add(executor.submit { startFetchingTasks() })
             loopFutures.add(executor.submit { renewExpiringLeases() })
+            loopFutures.add(executor.submit { watchForCancels() })
             clusterMembershipManager.start()
             registerQueueMonitoring()
             started.set(true)
@@ -363,6 +365,24 @@ class SkipperSchedulerManager
                 }
             } catch (ex: Throwable) {
                 throw SneakyThrow.sneakyThrow(ex)
+            }
+        }
+
+        @Suppress("TooGenericExceptionCaught")
+        private fun watchForCancels() {
+            log.info("starting skipper scheduler manager.watchForCancels")
+            while (!stop.get() && !Thread.currentThread().isInterrupted) {
+                try {
+                    Thread.sleep(cancelWatcher.pollInterval.toMillis())
+                    cancelWatcher.pollOnce()
+                } catch (e: Exception) {
+                    if (stop.get()) {
+                        log.info("stopping skipper scheduler manager.watchForCancels")
+                        break
+                    }
+                    log.error("unexpected error while watching for cancels", e)
+                    metrics.counter(METRICS_COMPONENT, "watchForCancelsErrors").inc()
+                }
             }
         }
 

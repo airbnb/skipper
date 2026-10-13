@@ -16,6 +16,7 @@ import com.airbnb.skipper.internal.ActionErrorMapper
 import com.airbnb.skipper.internal.ActionExecutor
 import com.airbnb.skipper.internal.CompensationExecutor
 import com.airbnb.skipper.internal.InFlightActions
+import com.airbnb.skipper.internal.InFlightCancelWatcher
 import com.airbnb.skipper.internal.NoOpEventPublisher
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.SkipperSchedulerManager
@@ -177,6 +178,16 @@ class SkipperRuntime
         }
 
         val inFlightActions: Provider<InFlightActions> = singleton { InFlightActions() }
+
+        val inFlightCancelWatcher: Provider<InFlightCancelWatcher> = singleton {
+            InFlightCancelWatcher(
+                inFlightActions.get(),
+                workflowStore.get(),
+                featureGate.get(),
+                metrics.get(),
+                config.inflightCancellationPollInterval,
+            )
+        }
 
         val actionExecutor: Provider<ActionExecutor> = singleton {
             ActionExecutor(
@@ -381,7 +392,8 @@ class SkipperRuntime
                 knobs.get(),
                 clusterMembershipManager.get(),
                 BucketPartitioner(),
-                config.gracefulShutdownTimeout
+                config.gracefulShutdownTimeout,
+                inFlightCancelWatcher.get(),
             )
         }
     }
