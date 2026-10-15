@@ -189,8 +189,8 @@ class ActionExecutorTest {
 
     @Test
     fun testCompensatingActionRunsWhileTheWorkflowIsCancelled() {
-        // Compensation of a cancelled workflow runs under a CANCELLED row, so the boundary check
-        // must let a compensating action through.
+        // A cancelled workflow's compensation runs while the workflow is CANCELLED, so the boundary
+        // check must let a compensating action through.
         val executionContext = newExecContext()
         whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
         val cancelledExecutor =

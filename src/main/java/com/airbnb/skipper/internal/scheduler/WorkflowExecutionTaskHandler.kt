@@ -26,9 +26,9 @@ import com.airbnb.skipper.api.WorkflowInstanceView
 import com.airbnb.skipper.internal.ExecutionContext
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.WorkflowExecutor
+import com.airbnb.skipper.internal.WorkflowInspector
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.api.WaitSignal
-import com.airbnb.skipper.internal.compensatesOnCancel
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.internal.storage.WorkflowUpdateRequest
 import com.google.common.collect.ImmutableMap
@@ -328,28 +328,40 @@ class WorkflowExecutionTaskHandler
             return Option.some(now.instant().plus(unexpectedErrorRetryDelay))
         }
 
-        /** The cancellation cancelWorkflow recorded, as loaded from the store. */
+        /**
+         * Schedules the compensation task when a completed action has a compensation method.
+         * Checkpoints are re-read from the store: IMMEDIATE ones are written by ActionExecutor and
+         * are missing from the context. Returns whether a task was scheduled.
+         */
+        private fun scheduleCompensationIfNeeded(
+            workflowInstance: WorkflowInstance,
+            executionContext: ExecutionContext,
+        ): Boolean {
+            val checkpoints: List<ActionCheckpoint> =
+                workflowStore.getActionCheckpoints(workflowInstance.workflowId)
+            val context = executionContext.toBuilder().actionCheckpoints(checkpoints).build()
+            if (!context.hasCompensationFlow()) {
+                return false
+            }
+            skipperEngine.scheduleCompensationTask(workflowInstance)
+            return true
+        }
 
         /**
-         * Runs the cancelled workflow's completed compensable actions through the same chain as
-         * ERROR. Reads the checkpoints back from the store so ones written by this execution count.
-         * An action the cancel interrupted has no checkpoint and is only named in the event.
+         * Schedules compensation for a cancelled workflow, the same task a failed workflow gets.
+         * An action the cancel interrupted has no checkpoint, so it is not compensated; the event
+         * names it.
          */
         private fun scheduleCancelCompensation(
             workflowInstance: WorkflowInstance,
             executionContext: ExecutionContext,
             result: WorkflowExecutor.ExecutionResult,
         ) {
-            val checkpoints: List<ActionCheckpoint> =
-                workflowStore.getActionCheckpoints(workflowInstance.workflowId)
-            val context = executionContext.toBuilder().actionCheckpoints(checkpoints).build()
-            if (!context.hasCompensationFlow()) {
+            if (!scheduleCompensationIfNeeded(workflowInstance, executionContext)) {
                 return
             }
             val error = result.result?.takeIf { it.isLeft }?.left
             val interruptedAction = (error as? WorkflowCancelledException)?.interruptedAction
-            skipperEngine.scheduleCompensationTask(workflowInstance)
-            metrics.counter(METRICS_COMPONENT, "cancelCompensationScheduled").inc()
             log.info(
                 "workflow instance with id={} was cancelled; compensating its completed actions. " +
                     "interruptedActionNotCompensated={}",
@@ -365,6 +377,7 @@ class WorkflowExecutionTaskHandler
             )
         }
 
+        /** The cancellation cancelWorkflow recorded, as loaded from the store. */
         private fun storedCancellation(stored: WorkflowInstance): SkipperError {
             if (stored.result.isCompletedExceptionally) {
                 try {
@@ -479,7 +492,7 @@ class WorkflowExecutionTaskHandler
         ): WorkflowExecutor.ExecutionResult {
             // TODO: skip persisting if there was no change in the workflow instance
             var currentWorkflowInstance = workflowInstance
-            var context = executionContext
+            val context = executionContext
             // With in-flight cancellation on: if cancelWorkflow already wrote CANCELLED, a status write
             // here would only lose the optimistic lock and reschedule a dead workflow, so keep the
             // checkpoints, skip the write and hand the caller the recorded cancellation. Not keyed on
@@ -500,7 +513,7 @@ class WorkflowExecutionTaskHandler
                         workflowInstance.workflowId,
                         result.newStatus,
                     )
-                    if (workflowInstance.compensatesOnCancel()) {
+                    if (WorkflowInspector.isCompensateOnCancel(workflowInstance.workflowClass, workflowInstance.workflowMethod)) {
                         scheduleCancelCompensation(workflowInstance, context, result)
                     }
                     return WorkflowExecutor.ExecutionResult.builder()
@@ -562,19 +575,9 @@ class WorkflowExecutionTaskHandler
                     timers,
                 )
             }
-            // Check if we're transitioning to ERROR status and need compensation
             if (result.newStatus == WorkflowInstance.Status.ERROR) {
-                // We need to reload the action checkpoints because action checkpoints might have been
-                // created due to CheckpointMode.IMMEDIATE, which would cause the checkpoint to be
-                // created at the ActionExecutor layer and wouldn't be present in the execution context.
-                // We need all the latest checkpoints in order to verify if compensation is needed.
-                val checkpoints: List<ActionCheckpoint> =
-                    workflowStore.getActionCheckpoints(workflowInstance.workflowId)
-                context = context.toBuilder().actionCheckpoints(checkpoints).build()
-                if (context.hasCompensationFlow()) {
-                    // Schedule compensation task BEFORE persisting ERROR status
-                    skipperEngine.scheduleCompensationTask(currentWorkflowInstance)
-                }
+                // Schedule compensation BEFORE persisting ERROR status
+                scheduleCompensationIfNeeded(currentWorkflowInstance, context)
             }
             val updateResult: io.vavr.Tuple3<WorkflowInstance, List<ActionCheckpoint>, List<Timer>> =
                 workflowStore.updateWorkflowAndStoreCheckpointsAndTimers(

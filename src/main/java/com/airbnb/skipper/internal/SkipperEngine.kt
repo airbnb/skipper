@@ -625,7 +625,9 @@ open class SkipperEngine
          *
          * <p>This will set the workflow status to CANCELLED and remove it from the scheduler - no further
          * actions will be scheduled or executed. The callback handler's onCancelled method will be
-         * invoked if one is registered.
+         * invoked if one is registered. A workflow whose method declares
+         * `@WorkflowMethod(compensateOnCancel = true)` keeps an execution task instead, so its
+         * completed actions are compensated once the execution has settled.
          *
          * @param workflowId The id of the workflow to cancel
          * @param reason The reason for cancelling the workflow
@@ -652,12 +654,13 @@ open class SkipperEngine
                     .build()
             val updatedInstance = workflowStore.updateWorkflow(request)
             if (featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) &&
-                instance.compensatesOnCancel()
+                WorkflowInspector.isCompensateOnCancel(instance.workflowClass, instance.workflowMethod)
             ) {
-                // Compensation starts where the execution settles (WorkflowExecutionTaskHandler),
-                // because only there are the completed actions' checkpoints all stored. So keep an
-                // execution task: a run in flight keeps its lease and settles on its own; an idle
-                // workflow gets a run that stops at the cancelled check and settles the same way.
+                // Keep an execution task instead of removing it. Compensation is scheduled when the
+                // execution finishes (WorkflowExecutionTaskHandler), the first point where every
+                // completed action's checkpoint is stored. A running execution finishes on its own.
+                // An idle workflow gets a new run that sees CANCELLED at the start and finishes the
+                // same way.
                 scheduleExecution(updatedInstance, false)
             } else {
                 val task = persistentScheduler.getTask<Any>(instance.workflowId)

@@ -8,6 +8,7 @@ import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowMethod
 import io.vavr.collection.Map
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
@@ -125,6 +126,21 @@ class WorkflowInspectorTest {
         inspector.setState(stateWithUnknownKeys)
         // Known fields should be unaffected
         assertEquals("defaultValue", instance.stateField)
+    }
+
+    class CompensateOnCancelWorkflow : Workflow() {
+        @WorkflowMethod(compensateOnCancel = true)
+        fun optedIn() {}
+
+        @WorkflowMethod
+        fun notOptedIn() {}
+    }
+
+    @Test
+    fun testIsCompensateOnCancel() {
+        assertTrue(WorkflowInspector.isCompensateOnCancel(CompensateOnCancelWorkflow::class.java, "optedIn"))
+        assertFalse(WorkflowInspector.isCompensateOnCancel(CompensateOnCancelWorkflow::class.java, "notOptedIn"))
+        assertFalse(WorkflowInspector.isCompensateOnCancel(CompensateOnCancelWorkflow::class.java, "missing"))
     }
 
     @Test

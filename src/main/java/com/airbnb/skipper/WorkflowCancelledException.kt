@@ -12,5 +12,5 @@ class WorkflowCancelledException
     @JvmOverloads
     constructor(
         message: String?,
-        val interruptedAction: String? = null,
+        internal val interruptedAction: String? = null,
     ) : NonRetryableError(message)

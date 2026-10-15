@@ -13,7 +13,7 @@ import com.airbnb.skipper.WorkflowCallbackHandler
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.internal.CompensationExecutor
 import com.airbnb.skipper.internal.ExecutionContext
-import com.airbnb.skipper.internal.compensatesOnCancel
+import com.airbnb.skipper.internal.WorkflowInspector
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.internal.storage.WorkflowUpdateRequest
 import com.google.common.collect.ImmutableMap
@@ -173,7 +173,11 @@ class CompensationFlowTaskHandler
             if (status == WorkflowInstance.Status.ERROR || status.isCompensationInProgress()) {
                 return StatusValidationResult.PROCEED
             }
-            if (status == WorkflowInstance.Status.CANCELLED && workflow.compensatesOnCancel()) {
+            if (status == WorkflowInstance.Status.CANCELLED && WorkflowInspector.isCompensateOnCancel(
+                    workflow.workflowClass,
+                    workflow.workflowMethod
+                )
+            ) {
                 return StatusValidationResult.PROCEED
             }
             if (status.isTerminal()) {

@@ -395,7 +395,7 @@ class WorkflowExecutionTaskHandlerTest {
                     description == "interrupted action not compensated: CompensableActions#blocking"
             },
         )
-        // The stored CANCELLED row is left for the compensation chain to move on from.
+        // The handler does not overwrite the stored CANCELLED status; the compensation task changes it.
         verify(mockWorkflowStore, never()).updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
     }
 

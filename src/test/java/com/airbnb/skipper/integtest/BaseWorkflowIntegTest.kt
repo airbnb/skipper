@@ -1554,7 +1554,7 @@ abstract class BaseWorkflowIntegTest {
             order.verify(testClient).action("compensateNoCheckpoint")
             order.verify(testClient).action("compensateEventualCheckpoint")
             verify(testClient, never()).action("compensateBlocking")
-            // The cancel reason is kept as the instance's result through compensation.
+            // The instance's result stays an error through compensation.
             val stored = workflowStore.getWorkflow(workflowId).get()
             assertThat(stored.status).isEqualTo(WorkflowInstance.Status.COMPENSATION_COMPLETED)
             assertThat(stored.flattenResult()?.isError()).isTrue()
