@@ -15,6 +15,8 @@ import com.airbnb.skipper.admin.AdminResource
 import com.airbnb.skipper.internal.ActionErrorMapper
 import com.airbnb.skipper.internal.ActionExecutor
 import com.airbnb.skipper.internal.CompensationExecutor
+import com.airbnb.skipper.internal.InFlightActions
+import com.airbnb.skipper.internal.InFlightCancelWatcher
 import com.airbnb.skipper.internal.NoOpEventPublisher
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.SkipperSchedulerManager
@@ -175,6 +177,18 @@ class SkipperRuntime
             config.requestContextMiddleware.create(config)
         }
 
+        val inFlightActions: Provider<InFlightActions> = singleton { InFlightActions() }
+
+        val inFlightCancelWatcher: Provider<InFlightCancelWatcher> = singleton {
+            InFlightCancelWatcher(
+                inFlightActions.get(),
+                workflowStore.get(),
+                featureGate.get(),
+                metrics.get(),
+                config.inflightCancellationPollInterval,
+            )
+        }
+
         val actionExecutor: Provider<ActionExecutor> = singleton {
             ActionExecutor(
                 workflowStore.get(),
@@ -185,7 +199,8 @@ class SkipperRuntime
                 executionMetricsCollector.get(),
                 GlobalTracer.get(),
                 config.contextPropagator,
-                featureGate.get()
+                featureGate.get(),
+                inFlightActions.get(),
             )
         }
 
@@ -261,7 +276,8 @@ class SkipperRuntime
                 featureGate.get(),
                 NoOpEventPublisher(),
                 metrics.get(),
-                injector
+                injector,
+                inFlightActions.get(),
             )
         }
 
@@ -376,7 +392,8 @@ class SkipperRuntime
                 knobs.get(),
                 clusterMembershipManager.get(),
                 BucketPartitioner(),
-                config.gracefulShutdownTimeout
+                config.gracefulShutdownTimeout,
+                inFlightCancelWatcher.get(),
             )
         }
     }

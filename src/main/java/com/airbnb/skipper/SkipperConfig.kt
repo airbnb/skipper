@@ -120,6 +120,12 @@ class SkipperConfig(
      */
     var leaseRenewalGracePeriod: Duration = Duration.ofSeconds(5),
     /**
+     * How often this process checks whether another process cancelled a workflow it is running an action
+     * for, so it can interrupt that action. Used only when
+     * [FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT] is on.
+     */
+    var inflightCancellationPollInterval: Duration = Duration.ofSeconds(5),
+    /**
      * Legacy dev-mode isolation flag. The open-source core does not act on this field directly; it
      * is retained for backward compatibility and is consulted only by integration layers that
      * install a dev-mode [shouldIsolateTenant] policy (e.g. Airbnb's `AirbnbSkipperConfig`, which

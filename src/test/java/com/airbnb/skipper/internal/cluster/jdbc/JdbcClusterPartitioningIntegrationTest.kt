@@ -12,6 +12,7 @@ import com.airbnb.skipper.internal.scheduler.Task
 import com.airbnb.skipper.internal.scheduler.TaskHandler
 import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
 import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore
+import com.airbnb.skipper.internal.testutils.inactiveCancelWatcher
 import com.airbnb.skipper.metrics.SkipperCounter
 import com.airbnb.skipper.testutils.SqliteTestSetupExtension
 import com.airbnb.skipper.testutils.TestRuntime
@@ -168,6 +169,7 @@ class JdbcClusterPartitioningIntegrationTest {
                 membership,
                 BucketPartitioner(),
                 Duration.ofSeconds(5),
+                inactiveCancelWatcher(),
             )
         manager.start()
         val instance = Instance(memberName, deps.scheduler, membership, manager, executor, handlerExecutor)
