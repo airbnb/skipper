@@ -13,6 +13,7 @@ import com.airbnb.skipper.WorkflowCallbackHandler
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.internal.CompensationExecutor
 import com.airbnb.skipper.internal.ExecutionContext
+import com.airbnb.skipper.internal.compensatesOnCancel
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.internal.storage.WorkflowUpdateRequest
 import com.google.common.collect.ImmutableMap
@@ -70,7 +71,7 @@ class CompensationFlowTaskHandler
                         String.format("retries: %d", task.retryCount),
                     ),
                 )
-                val validationResult = validateWorkflowStatus(workflow.status)
+                val validationResult = validateWorkflowStatus(workflow)
                 executeCompensation(validationResult, workflow, executorService)
             } catch (
                 @Suppress("TooGenericExceptionCaught") e: Exception
@@ -166,9 +167,13 @@ class CompensationFlowTaskHandler
             }
         }
 
-        private fun validateWorkflowStatus(status: WorkflowInstance.Status): StatusValidationResult {
+        private fun validateWorkflowStatus(workflow: WorkflowInstance): StatusValidationResult {
+            val status = workflow.status
             // Proceed with compensation if workflow is in compensable states
             if (status == WorkflowInstance.Status.ERROR || status.isCompensationInProgress()) {
+                return StatusValidationResult.PROCEED
+            }
+            if (status == WorkflowInstance.Status.CANCELLED && workflow.compensatesOnCancel()) {
                 return StatusValidationResult.PROCEED
             }
             if (status.isTerminal()) {

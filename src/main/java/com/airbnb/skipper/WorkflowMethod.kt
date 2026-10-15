@@ -34,9 +34,15 @@ import kotlin.reflect.KClass
  * other parts of the system.
  *
  * @see ElementType.METHOD Indicates that this annotation can only be applied to method declarations.
+ * @property compensateOnCancel When `true`, cancelling an instance of this workflow runs the
+ * `@Compensate` methods of its completed actions, in reverse order, the same way a failure does;
+ * the instance then ends as `COMPENSATION_COMPLETED` (or `COMPENSATION_ERROR`) instead of staying
+ * `CANCELLED`. An action that was interrupted mid-flight is not compensated. Takes effect only with
+ * the `INFLIGHT_CANCELLATION_CHECKPOINTS` feature gate on. Default `false`: cancel is terminal.
  */
 @Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.FUNCTION)
 annotation class WorkflowMethod(
-    val returnType: KClass<*> = Void::class
+    val returnType: KClass<*> = Void::class,
+    val compensateOnCancel: Boolean = false
 )

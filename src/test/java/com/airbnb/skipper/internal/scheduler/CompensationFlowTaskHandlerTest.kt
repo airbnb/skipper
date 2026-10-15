@@ -13,6 +13,7 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowCallbackHandler
 import com.airbnb.skipper.WorkflowInstance
+import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.api.WorkflowInstanceView
 import com.airbnb.skipper.internal.CompensationExecutor
 import com.airbnb.skipper.internal.ExecutionContext
@@ -80,6 +81,39 @@ class CompensationFlowTaskHandlerTest {
                 mockInjector,
                 RawRequestContextMiddleware.NOOP
             )
+    }
+
+    class OptedInWorkflow : Workflow() {
+        @WorkflowMethod(compensateOnCancel = true)
+        fun run() {}
+    }
+
+    @Test
+    fun testCancelledOptedInWorkflowIsCompensated() {
+        val workflowInstance =
+            createTestWorkflowInstance(WorkflowInstance.Status.CANCELLED).toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .build()
+        whenever(mockWorkflowStore.getWorkflow(WORKFLOW_ID)).thenReturn(Option.of(workflowInstance))
+        whenever(mockCompensationExecutor.executeCompensationFlow(any(), any(), any()))
+            .thenReturn(CompletableFuture.completedFuture(CompensationExecutor.CompensationResult.success()))
+
+        val result = taskHandler.handle(createCompensationTask(WORKFLOW_ID), mockExecutorService).join()
+
+        assertTrue(result.isEmpty)
+        verify(mockCompensationExecutor).executeCompensationFlow(any(), any(), any())
+    }
+
+    @Test
+    fun testCancelledWorkflowWithoutOptInIsNotCompensated() {
+        val workflowInstance = createTestWorkflowInstance(WorkflowInstance.Status.CANCELLED)
+        whenever(mockWorkflowStore.getWorkflow(WORKFLOW_ID)).thenReturn(Option.of(workflowInstance))
+
+        val result = taskHandler.handle(createCompensationTask(WORKFLOW_ID), mockExecutorService).join()
+
+        assertTrue(result.isEmpty)
+        verify(mockCompensationExecutor, never()).executeCompensationFlow(any(), any(), any())
     }
 
     // Tests for ready-for-processing states

@@ -101,8 +101,11 @@ open class ActionExecutor
                 return checkpoint.get().generateResult()
             }
             // Re-read the current status (not the start-of-execution snapshot) before starting an
-            // unchecked action, so a cancel written while this execution ran stops it here.
-            if (featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) == true) {
+            // unchecked action, so a cancel written while this execution ran stops it here. A
+            // compensation is exempt: it may run for a workflow that is CANCELLED.
+            if (!request.isCompensatingAction &&
+                featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) == true
+            ) {
                 val workflowId = request.executionContext.workflow.workflowId
                 val current: Option<WorkflowInstance> = workflowStore.getWorkflow(workflowId)
                 if (current.isDefined && current.get().status == WorkflowInstance.Status.CANCELLED) {
@@ -227,9 +230,12 @@ open class ActionExecutor
                                     *userArgs,
                                 )
                         } else {
-                            // Lets a cancel interrupt this thread while the action runs.
+                            // Lets a cancel interrupt this thread while the action runs. Not for a
+                            // compensation: it runs while the workflow is CANCELLED and must finish.
                             val registration =
-                                if (featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT) == true) {
+                                if (!request.isCompensatingAction &&
+                                    featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT) == true
+                                ) {
                                     inFlightActions.enter(request.executionContext.workflow.workflowId)
                                 } else {
                                     null
@@ -415,10 +421,11 @@ open class ActionExecutor
                             "inflightCancellationInterrupted",
                         )
                         .inc()
+                    val interruptedAction = request.baseActionClass.simpleName + "#" + request.actionMethodName
                     throw WorkflowCancelledException(
                         "workflow " + request.executionContext.workflow.workflowId +
-                            " was CANCELLED; interrupted action " + request.baseActionClass.simpleName +
-                            "#" + request.actionMethodName,
+                            " was CANCELLED; interrupted action " + interruptedAction,
+                        interruptedAction,
                     )
                 }
                 // All errors thrown by the action method are considered retryable unless explicitly

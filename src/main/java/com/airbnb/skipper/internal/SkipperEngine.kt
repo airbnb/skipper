@@ -651,9 +651,19 @@ open class SkipperEngine
                     .resultIsAsync(false)
                     .build()
             val updatedInstance = workflowStore.updateWorkflow(request)
-            val task = persistentScheduler.getTask<Any>(instance.workflowId)
-            if (task.isDefined) {
-                persistentScheduler.remove(task.get())
+            if (featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) &&
+                instance.compensatesOnCancel()
+            ) {
+                // Compensation starts where the execution settles (WorkflowExecutionTaskHandler),
+                // because only there are the completed actions' checkpoints all stored. So keep an
+                // execution task: a run in flight keeps its lease and settles on its own; an idle
+                // workflow gets a run that stops at the cancelled check and settles the same way.
+                scheduleExecution(updatedInstance, false)
+            } else {
+                val task = persistentScheduler.getTask<Any>(instance.workflowId)
+                if (task.isDefined) {
+                    persistentScheduler.remove(task.get())
+                }
             }
             // Needs the checkpoints gate too: it ends the interrupted execution as CANCELLED without a
             // status write, and stops any action that starts after this interrupt.

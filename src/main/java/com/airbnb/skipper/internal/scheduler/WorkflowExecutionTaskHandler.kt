@@ -28,6 +28,7 @@ import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.WorkflowExecutor
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.api.WaitSignal
+import com.airbnb.skipper.internal.compensatesOnCancel
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.internal.storage.WorkflowUpdateRequest
 import com.google.common.collect.ImmutableMap
@@ -328,6 +329,42 @@ class WorkflowExecutionTaskHandler
         }
 
         /** The cancellation cancelWorkflow recorded, as loaded from the store. */
+
+        /**
+         * Runs the cancelled workflow's completed compensable actions through the same chain as
+         * ERROR. Reads the checkpoints back from the store so ones written by this execution count.
+         * An action the cancel interrupted has no checkpoint and is only named in the event.
+         */
+        private fun scheduleCancelCompensation(
+            workflowInstance: WorkflowInstance,
+            executionContext: ExecutionContext,
+            result: WorkflowExecutor.ExecutionResult,
+        ) {
+            val checkpoints: List<ActionCheckpoint> =
+                workflowStore.getActionCheckpoints(workflowInstance.workflowId)
+            val context = executionContext.toBuilder().actionCheckpoints(checkpoints).build()
+            if (!context.hasCompensationFlow()) {
+                return
+            }
+            val error = result.result?.takeIf { it.isLeft }?.left
+            val interruptedAction = (error as? WorkflowCancelledException)?.interruptedAction
+            skipperEngine.scheduleCompensationTask(workflowInstance)
+            metrics.counter(METRICS_COMPONENT, "cancelCompensationScheduled").inc()
+            log.info(
+                "workflow instance with id={} was cancelled; compensating its completed actions. " +
+                    "interruptedActionNotCompensated={}",
+                workflowInstance.workflowId,
+                interruptedAction,
+            )
+            eventPublisher.publishEvent(
+                Event.create(
+                    Event.Type.CANCEL_COMPENSATION_SCHEDULED,
+                    workflowInstance.workflowId,
+                    if (interruptedAction == null) null else "interrupted action not compensated: $interruptedAction",
+                ),
+            )
+        }
+
         private fun storedCancellation(stored: WorkflowInstance): SkipperError {
             if (stored.result.isCompletedExceptionally) {
                 try {
@@ -463,6 +500,9 @@ class WorkflowExecutionTaskHandler
                         workflowInstance.workflowId,
                         result.newStatus,
                     )
+                    if (workflowInstance.compensatesOnCancel()) {
+                        scheduleCancelCompensation(workflowInstance, context, result)
+                    }
                     return WorkflowExecutor.ExecutionResult.builder()
                         .newStatus(WorkflowInstance.Status.CANCELLED)
                         .result(Either.left(storedCancellation(stored.get())))

@@ -690,6 +690,58 @@ class SkipperEngineTest {
         running.join(5_000)
     }
 
+    class OptedInWorkflow : Workflow() {
+        @WorkflowMethod(compensateOnCancel = true)
+        fun run() {}
+    }
+
+    private fun cancelWithTaskPresent(instance: WorkflowInstance): Task<WorkflowInstance> {
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+        whenever(mockWorkflowStore.updateWorkflow(any()))
+            .thenReturn(instance.toBuilder().status(WorkflowInstance.Status.CANCELLED).build())
+        val task = getTestTask(instance)
+        whenever(mockPersistentScheduler.getTask<Any>(any())).thenReturn(Option.of(task as Task<Any>))
+        skipperEngine.cancelWorkflow(instance.workflowId, "cancelled")
+        return task
+    }
+
+    @Test
+    fun testCancelWorkflow_keepsAnExecutionTaskForAnOptedInWorkflow() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder().workflowClass(OptedInWorkflow::class.java).workflowMethod("run").build()
+
+        cancelWithTaskPresent(instance)
+
+        verify(mockPersistentScheduler, never()).remove(any<Task<Any>>())
+        verify(mockScheduler).schedule(
+            argThat<ScheduleRequest<WorkflowInstance>> {
+                id == instance.workflowId && type == Task.Type.WORKFLOW && !inMemoryExecutionEnabled
+            },
+        )
+    }
+
+    @Test
+    fun testCancelWorkflow_removesTheTaskWithoutOptIn() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+
+        val task = cancelWithTaskPresent(TestUtils.getWorkflowInstance())
+
+        verify(mockPersistentScheduler).remove(task)
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
+    @Test
+    fun testCancelWorkflow_removesTheTaskWhenTheCheckpointGateIsOff() {
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder().workflowClass(OptedInWorkflow::class.java).workflowMethod("run").build()
+
+        val task = cancelWithTaskPresent(instance)
+
+        verify(mockPersistentScheduler).remove(task)
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
     /** A thread registered as running an action for [workflowId], blocked until interrupted. */
     private fun blockedActionThread(workflowId: String): Pair<Thread, AtomicBoolean> {
         val entered = CountDownLatch(1)

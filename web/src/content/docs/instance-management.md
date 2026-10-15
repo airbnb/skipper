@@ -33,7 +33,9 @@ workflow.cancelWorkflowInstance("User cancelled");
 ```
 
 Cancellation won't kill a workflow that is actively executing, but it prevents further
-retries and cancels a workflow that is in a waiting state.
+retries and cancels a workflow that is in a waiting state. With the `INFLIGHT_CANCELLATION_CHECKPOINTS`
+gate on, a running workflow stops at its next action boundary; a workflow method declared with
+`compensateOnCancel = true` also [undoes its completed actions](/docs/compensation/#compensating-a-cancelled-workflow).
 
 ## Bulk operations
 

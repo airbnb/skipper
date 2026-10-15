@@ -432,6 +432,39 @@ abstract class BaseWorkflowIntegTest {
             testClient.action("failingAction")
             throw NonRetryableError("Intentional failure to trigger compensation")
         }
+
+        @Execute
+        fun blockingCompensableAction(data: String): String {
+            testClient.action("blockingCompensableAction")
+            Thread.sleep(20_000)
+            return "unblocked"
+        }
+
+        @Compensate(forExecute = "blockingCompensableAction")
+        fun compensateBlocking(
+            data: String,
+            result: String
+        ) {
+            testClient.action("compensateBlocking")
+        }
+    }
+
+    class CompensateOnCancelWorkflow : Workflow() {
+        private val actions = actions<CompensationActions>()
+
+        @WorkflowMethod(compensateOnCancel = true)
+        fun twoStepsThenBlock(): String {
+            actions.executeActionWithEventualCompensation("first")
+            actions.executeActionWithNoCheckpointCompensation("second")
+            return actions.blockingCompensableAction("third")
+        }
+
+        @WorkflowMethod(returnType = String::class, compensateOnCancel = true)
+        fun oneStepThenWait(): CompletableFuture<String> {
+            actions.executeActionWithEventualCompensation("first")
+            waitUntil({ false }, Duration.ofSeconds(30))
+            return CompletableFuture.completedFuture("done")
+        }
     }
 
     open class SampleActions : Actions() {
@@ -1489,6 +1522,54 @@ abstract class BaseWorkflowIntegTest {
                 .find { it.actionMethod == "compensateNoCheckpoint" }
             assertThat(compensateCheckpoint).isNotNull()
             assertThat(compensateCheckpoint!!.result.isSuccess).isTrue()
+        }
+    }
+
+    @Nested
+    inner class TestCompensateOnCancel : SuiteBase() {
+        override fun customizeDeps(deps: TestRuntime) {
+            deps.clock = Clock.systemUTC()
+            deps.config.defaultCheckpointMode = CheckpointMode.EVENTUAL_CHECKPOINT
+        }
+
+        @Test
+        fun testCancelMidFlightCompensatesCompletedActionsInReverseAndNotTheInterruptedOne() {
+            // Gates are on via SuiteBase's blanket stub, so the cancel interrupts the blocking action.
+            val started = CountDownLatch(1)
+            doAnswer {
+                started.countDown()
+                null
+            }.whenever(testClient).action("blockingCompensableAction")
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
+            val call = CompletableFuture.supplyAsync { workflow.twoStepsThenBlock() }
+            assertThat(started.await(10, TimeUnit.SECONDS)).isTrue()
+
+            skipperEngine.cancelWorkflow(workflowId, "cancelled while blocked")
+
+            val thrown = assertThrows<Throwable> { call.get(10, TimeUnit.SECONDS) }
+            assertThat(generateSequence(thrown) { it.cause }.any { it is CancelledWorkflow }).isTrue()
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+
+            val order = org.mockito.Mockito.inOrder(testClient)
+            order.verify(testClient).action("compensateNoCheckpoint")
+            order.verify(testClient).action("compensateEventualCheckpoint")
+            verify(testClient, never()).action("compensateBlocking")
+            // The cancel reason is kept as the instance's result through compensation.
+            val stored = workflowStore.getWorkflow(workflowId).get()
+            assertThat(stored.status).isEqualTo(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            assertThat(stored.flattenResult()?.isError()).isTrue()
+        }
+
+        @Test
+        fun testCancelWhileWaitingCompensatesTheCompletedAction() {
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
+            workflow.oneStepThenWait()
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.WAITING)
+
+            skipperEngine.cancelWorkflow(workflowId, "cancelled while waiting")
+
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            verify(testClient).action("compensateEventualCheckpoint")
         }
     }
 
