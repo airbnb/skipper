@@ -107,9 +107,12 @@ public CompletableFuture<Void> processOrder(OrderRequest req) { /* ... */ }
 
 Cancelling such an instance runs the compensations of its completed actions in reverse order and
 ends it as `COMPENSATION_COMPLETED` (or `COMPENSATION_ERROR` if a compensation fails), so the cancel
-is no longer instantaneous. An action that an
-[in-flight cancel](/docs/instance-management/#a-single-instance) interrupted has no checkpoint and is not
-compensated; the engine names it in a `CANCEL_COMPENSATION_SCHEDULED` event. This needs the
+is no longer instantaneous. `onCancelled` and `onCompensationCompleted` both fire, in no guaranteed
+order. An action that an [in-flight cancel](/docs/instance-management/#a-single-instance) interrupted
+has no checkpoint and is not compensated; the engine names it in a `CANCEL_COMPENSATION` event. Also
+not compensated: actions whose checkpoints had not been written yet (`EVENTUAL_CHECKPOINT`) when the
+worker died between the cancel and the end of the run, since a cancelled instance is not replayed.
+Use `IMMEDIATE_CHECKPOINT` on compensable actions where that matters. This needs the
 `INFLIGHT_CANCELLATION_CHECKPOINTS` feature gate on.
 
 ## Reacting to compensation

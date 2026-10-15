@@ -36,8 +36,9 @@ import kotlin.reflect.KClass
  * @see ElementType.METHOD Indicates that this annotation can only be applied to method declarations.
  * @property compensateOnCancel When `true`, cancelling an instance runs the `@Compensate` methods
  * of its completed actions in reverse order, as a failure does. The instance then ends as
- * `COMPENSATION_COMPLETED` (or `COMPENSATION_ERROR`), not `CANCELLED`. An action interrupted
- * mid-flight is not compensated. Needs the `INFLIGHT_CANCELLATION_CHECKPOINTS` feature gate.
+ * `COMPENSATION_COMPLETED` (or `COMPENSATION_ERROR`), not `CANCELLED`. Not compensated: an action
+ * interrupted mid-flight, and actions whose checkpoints were still unwritten when the worker died
+ * between the cancel and the end of the run. Needs the `INFLIGHT_CANCELLATION_CHECKPOINTS` gate.
  * Default `false`: cancel is terminal.
  */
 @Retention(AnnotationRetention.RUNTIME)

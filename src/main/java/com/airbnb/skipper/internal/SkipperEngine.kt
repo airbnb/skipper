@@ -653,16 +653,10 @@ open class SkipperEngine
                     .resultIsAsync(false)
                     .build()
             val updatedInstance = workflowStore.updateWorkflow(request)
-            if (featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) &&
-                WorkflowInspector.isCompensateOnCancel(instance.workflowClass, instance.workflowMethod)
-            ) {
-                // Keep an execution task instead of removing it. Compensation is scheduled when the
-                // execution finishes (WorkflowExecutionTaskHandler), the first point where every
-                // completed action's checkpoint is stored. A running execution finishes on its own.
-                // An idle workflow gets a new run that sees CANCELLED at the start and finishes the
-                // same way.
-                scheduleExecution(updatedInstance, false)
-            } else {
+            val compensate =
+                featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) &&
+                    WorkflowInspector.isCompensateOnCancel(instance.workflowClass, instance.workflowMethod)
+            if (!compensate) {
                 val task = persistentScheduler.getTask<Any>(instance.workflowId)
                 if (task.isDefined) {
                     persistentScheduler.remove(task.get())
@@ -697,6 +691,24 @@ open class SkipperEngine
                 )
             }
             eventPublisher.publishEvent(Event.create(Event.Type.WORKFLOW_CANCELLED, workflowId))
+            if (compensate) {
+                // Keep an execution task instead of removing it. Compensation is scheduled when the
+                // execution finishes (WorkflowExecutionTaskHandler), the first point where every
+                // completed action's checkpoint is stored. A running execution keeps its lease and
+                // finishes on its own; no rerun is requested, so it settles exactly once. An idle
+                // workflow gets a new run that sees CANCELLED at the start and finishes the same way.
+                scheduler.schedule(
+                    ScheduleRequest.builder<WorkflowInstance>()
+                        .id(workflowId)
+                        .dedupToken(workflowId)
+                        .payload(updatedInstance)
+                        .type(Task.Type.WORKFLOW)
+                        .honorActiveLeaseWhenOverwriting(true)
+                        .bumpVersionWhenHonoringLease(false)
+                        .inMemoryExecutionEnabled(false)
+                        .build()
+                )
+            }
             return updatedInstance
         }
 

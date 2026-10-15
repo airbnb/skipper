@@ -716,7 +716,8 @@ class SkipperEngineTest {
         verify(mockPersistentScheduler, never()).remove(any<Task<Any>>())
         verify(mockScheduler).schedule(
             argThat<ScheduleRequest<WorkflowInstance>> {
-                id == instance.workflowId && type == Task.Type.WORKFLOW && !inMemoryExecutionEnabled
+                id == instance.workflowId && type == Task.Type.WORKFLOW && !inMemoryExecutionEnabled &&
+                    isHonorActiveLeaseWhenOverwriting && !isBumpVersionWhenHonoringLease
             },
         )
     }

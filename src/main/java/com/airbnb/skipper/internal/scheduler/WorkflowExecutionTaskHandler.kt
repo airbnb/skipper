@@ -350,29 +350,28 @@ class WorkflowExecutionTaskHandler
         /**
          * Schedules compensation for a cancelled workflow, the same task a failed workflow gets.
          * An action the cancel interrupted has no checkpoint, so it is not compensated; the event
-         * names it.
+         * and the log name it either way.
          */
         private fun scheduleCancelCompensation(
             workflowInstance: WorkflowInstance,
             executionContext: ExecutionContext,
             result: WorkflowExecutor.ExecutionResult,
         ) {
-            if (!scheduleCompensationIfNeeded(workflowInstance, executionContext)) {
-                return
-            }
+            val scheduled = scheduleCompensationIfNeeded(workflowInstance, executionContext)
             val error = result.result?.takeIf { it.isLeft }?.left
-            val interruptedAction = (error as? WorkflowCancelledException)?.interruptedAction
+            val interruptedAction = (error as? WorkflowCancelledException)?.interruptedAction ?: "none"
             log.info(
-                "workflow instance with id={} was cancelled; compensating its completed actions. " +
+                "workflow instance with id={} was cancelled. compensationScheduled={} " +
                     "interruptedActionNotCompensated={}",
                 workflowInstance.workflowId,
+                scheduled,
                 interruptedAction,
             )
             eventPublisher.publishEvent(
                 Event.create(
-                    Event.Type.CANCEL_COMPENSATION_SCHEDULED,
+                    Event.Type.CANCEL_COMPENSATION,
                     workflowInstance.workflowId,
-                    if (interruptedAction == null) null else "interrupted action not compensated: $interruptedAction",
+                    "compensation scheduled: $scheduled, interrupted action not compensated: $interruptedAction",
                 ),
             )
         }

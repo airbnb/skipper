@@ -70,6 +70,7 @@ import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
 import org.mockito.kotlin.any
+import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -447,6 +448,21 @@ abstract class BaseWorkflowIntegTest {
         ) {
             testClient.action("compensateBlocking")
         }
+
+        @Execute
+        fun slowlyCompensatedAction(data: String): String {
+            testClient.action("slowlyCompensatedAction")
+            return "Executed $data"
+        }
+
+        @Compensate(forExecute = "slowlyCompensatedAction")
+        fun compensateSlowly(
+            data: String,
+            result: String
+        ) {
+            testClient.action("compensateSlowly")
+            Thread.sleep(1_500)
+        }
     }
 
     class CompensateOnCancelWorkflow : Workflow() {
@@ -457,6 +473,12 @@ abstract class BaseWorkflowIntegTest {
             actions.executeActionWithEventualCompensation("first")
             actions.executeActionWithNoCheckpointCompensation("second")
             return actions.blockingCompensableAction("third")
+        }
+
+        @WorkflowMethod(compensateOnCancel = true)
+        fun slowStepThenBlock(): String {
+            actions.slowlyCompensatedAction("first")
+            return actions.blockingCompensableAction("second")
         }
 
         @WorkflowMethod(returnType = String::class, compensateOnCancel = true)
@@ -1530,6 +1552,68 @@ abstract class BaseWorkflowIntegTest {
         override fun customizeDeps(deps: TestRuntime) {
             deps.clock = Clock.systemUTC()
             deps.config.defaultCheckpointMode = CheckpointMode.EVENTUAL_CHECKPOINT
+            deps.config.compensationRetryStrategy = FixedRetryStrategy(Duration.ZERO, 1)
+            deps.config.taskUnexpectedErrorRetryDelay = Duration.ofMillis(200)
+        }
+
+        /** Starts [block] on another thread, waits for [actionName] to begin, then cancels. */
+        private fun cancelOnceActionStarts(
+            actionName: String,
+            block: () -> Any,
+        ): CompletableFuture<Any> {
+            val started = CountDownLatch(1)
+            doAnswer {
+                started.countDown()
+                null
+            }.whenever(testClient).action(actionName)
+            val call = CompletableFuture.supplyAsync { block() }
+            assertThat(started.await(10, TimeUnit.SECONDS)).isTrue()
+            skipperEngine.cancelWorkflow(workflowId, "cancelled while blocked")
+            return call
+        }
+
+        @Test
+        fun testCancelMidFlightCompensatesOnceAndNotifiesOnce() {
+            // The compensation outlasts the cancelled run's settle, so a rerun of the execution,
+            // if one were requested, would overlap it. Each compensation and the completion
+            // callback must still happen exactly once.
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(
+                workflowId = workflowId,
+                requestContext = TestRequestContext.getCurrentRequestContext(),
+                callbackHandler = DemoCallbackHandler::class.java
+            )
+            cancelOnceActionStarts("blockingCompensableAction") { workflow.slowStepThenBlock() }
+
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            helper.waitForExecutionFlowToFinish()
+            helper.waitForCondition { scheduler.getTask<Any>("$workflowId-compensation").isEmpty }
+            Thread.sleep(1_000)
+
+            verify(testClient, times(1)).action("compensateSlowly")
+            verify(callbackHandler, times(1)).onCompensationCompleted(any())
+            verify(callbackHandler, times(1)).onCancelled(any(), any())
+            assertThat(scheduler.getTask<Any>(workflowId).isEmpty).isTrue()
+        }
+
+        @Test
+        fun testCancelCompensationThatFailsIsReenteredAndFinishes() {
+            // A compensation that fails leaves the instance COMPENSATION_ERROR. Re-executing it
+            // re-enters the same chain from the cancel edge and finishes once the failure is gone.
+            doAnswer { throw RetryableError("compensation unavailable") }
+                .whenever(testClient).action("compensateNoCheckpoint")
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
+            cancelOnceActionStarts("blockingCompensableAction") { workflow.twoStepsThenBlock() }
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_ERROR)
+            helper.waitForCondition { scheduler.getTask<Any>("$workflowId-compensation").isEmpty }
+
+            doAnswer { null }.whenever(testClient).action("compensateNoCheckpoint")
+            deps.runtime.workflowsService.get().reExecuteWorkflows(listOf(workflowId))
+
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            verify(testClient, atLeastOnce()).action("compensateNoCheckpoint")
+            verify(testClient, atLeastOnce()).action("compensateEventualCheckpoint")
+            verify(testClient, never()).action("compensateBlocking")
+            assertThat(workflowStore.getWorkflow(workflowId).get().flattenResult()?.isError()).isTrue()
         }
 
         @Test

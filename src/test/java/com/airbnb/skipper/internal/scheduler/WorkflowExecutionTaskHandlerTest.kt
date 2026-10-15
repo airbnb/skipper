@@ -391,8 +391,8 @@ class WorkflowExecutionTaskHandlerTest {
         verify(skipperEngine).scheduleCompensationTask(argThat { workflowId == workflowInstance.workflowId })
         verify(mockEventPublisher).publishEvent(
             argThat {
-                type == Event.Type.CANCEL_COMPENSATION_SCHEDULED &&
-                    description == "interrupted action not compensated: CompensableActions#blocking"
+                type == Event.Type.CANCEL_COMPENSATION &&
+                    description == "compensation scheduled: true, interrupted action not compensated: CompensableActions#blocking"
             },
         )
         // The handler does not overwrite the stored CANCELLED status; the compensation task changes it.
@@ -410,11 +410,11 @@ class WorkflowExecutionTaskHandlerTest {
         )
 
         verify(skipperEngine, never()).scheduleCompensationTask(any())
-        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.CANCEL_COMPENSATION_SCHEDULED })
+        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.CANCEL_COMPENSATION })
     }
 
     @Test
-    fun testCancelSettleDoesNotScheduleCompensationWhenNothingCompletedIsCompensable() {
+    fun testCancelSettleStillNamesTheInterruptedActionWhenNothingCompletedIsCompensable() {
         val workflowInstance =
             TestUtils.getWorkflowInstance().toBuilder()
                 .workflowClass(OptedInWorkflow::class.java)
@@ -424,7 +424,12 @@ class WorkflowExecutionTaskHandlerTest {
         settleCancelled(workflowInstance, WorkflowCancelledException("cancelled", "CompensableActions#step"), List.empty())
 
         verify(skipperEngine, never()).scheduleCompensationTask(any())
-        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.CANCEL_COMPENSATION_SCHEDULED })
+        verify(mockEventPublisher).publishEvent(
+            argThat {
+                type == Event.Type.CANCEL_COMPENSATION &&
+                    description == "compensation scheduled: false, interrupted action not compensated: CompensableActions#step"
+            },
+        )
     }
 
     @Test
