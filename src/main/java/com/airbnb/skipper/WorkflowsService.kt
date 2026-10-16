@@ -192,7 +192,9 @@ open class WorkflowsService
          * and will remove them from the scheduler. If the task is in DLQ it will be removed.
          *
          * @param workflowIds a list of workflow instance IDs to cancel. Their status must be a
-         *     non-terminal status otherwise it will fail.
+         *     non-terminal status otherwise it will fail. An instance that compensates on cancel
+         *     keeps its execution task instead, and cancelling it again succeeds (see
+         *     [com.airbnb.skipper.internal.SkipperEngine.cancelWorkflow]).
          * @param reason the reason for canceling the workflow instances. This will be recorded in
          *     the result.
          * @return a list of workflow instance IDs that were successfully canceled.

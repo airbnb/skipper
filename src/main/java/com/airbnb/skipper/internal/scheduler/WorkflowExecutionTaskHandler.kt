@@ -348,12 +348,11 @@ class WorkflowExecutionTaskHandler
         }
 
         /**
-         * Whether a compensation task for the workflow already exists, pending or running. A later
-         * run of a cancelled workflow (a timer firing, a signal) must not request a second one.
+         * Whether a compensation task for the workflow already exists, in any state. A later run of
+         * a cancelled workflow (a timer firing, a signal) must not request a second one.
          */
         private fun compensationPending(workflowId: String): Boolean {
-            val task: Option<Task<Any>>? = scheduler.getTask(SkipperEngine.compensationTaskId(workflowId))
-            return task != null && task.isDefined
+            return scheduler.getTask<Any>(SkipperEngine.compensationTaskId(workflowId)).isDefined
         }
 
         /**

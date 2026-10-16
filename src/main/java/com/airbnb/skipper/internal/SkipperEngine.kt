@@ -626,9 +626,9 @@ open class SkipperEngine
          * <p>This will set the workflow status to CANCELLED and remove it from the scheduler - no further
          * actions will be scheduled or executed. The callback handler's onCancelled method will be
          * invoked if one is registered. With the `INFLIGHT_CANCELLATION_CHECKPOINTS` gate on, a
-         * workflow whose method declares `@WorkflowMethod(compensateOnCancel = true)` keeps an
-         * execution task instead, so its completed actions are compensated once the execution has
-         * settled; cancelling it again only re-requests that run, so a failed cancel can be retried.
+         * workflow whose method declares `@WorkflowMethod(compensateOnCancel = true)` keeps its
+         * execution task, so its completed actions are compensated once the execution settles.
+         * Cancelling it again only re-requests that execution, so a failed cancel can be retried.
          *
          * @param workflowId The id of the workflow to cancel
          * @param reason The reason for cancelling the workflow
@@ -772,7 +772,7 @@ open class SkipperEngine
                     .runAfter(now.instant())
                     .inMemoryExecutionEnabled(false)
                     // A compensation already running keeps its lease, so a second request never
-                    // starts the same reversals on another worker.
+                    // starts the same compensation on another worker.
                     .honorActiveLeaseWhenOverwriting(true)
                     .build()
             val task: Task<*> = persistentScheduler.schedule(compensationRequest)

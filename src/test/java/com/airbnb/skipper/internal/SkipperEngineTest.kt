@@ -742,6 +742,34 @@ class SkipperEngineTest {
     }
 
     @Test
+    fun testCancelWorkflow_ofAnOptedInWorkflowPastCancellationStillThrows() {
+        // Only CANCELLED is re-requested; once compensation has run, the instance is terminal.
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        for (status in listOf(WorkflowInstance.Status.COMPENSATION_COMPLETED, WorkflowInstance.Status.COMPENSATION_ERROR)) {
+            val instance =
+                TestUtils.getWorkflowInstance().toBuilder()
+                    .workflowClass(OptedInWorkflow::class.java)
+                    .workflowMethod("run")
+                    .status(status)
+                    .build()
+            whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+            assertThrows(IllegalArgumentException::class.java) { skipperEngine.cancelWorkflow(instance.workflowId, "again") }
+        }
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
+    @Test
+    fun testCancelWorkflow_ofACancelledWorkflowWithoutOptInStillThrowsWithTheGateOn() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val instance = TestUtils.getWorkflowInstance().toBuilder().status(WorkflowInstance.Status.CANCELLED).build()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+
+        assertThrows(IllegalArgumentException::class.java) { skipperEngine.cancelWorkflow(instance.workflowId, "again") }
+
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
+    @Test
     fun testCancelWorkflow_failingToRequestTheSettleRunIsRetryable() {
         whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
         val instance =
