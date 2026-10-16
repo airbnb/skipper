@@ -625,7 +625,10 @@ open class SkipperEngine
          *
          * <p>This will set the workflow status to CANCELLED and remove it from the scheduler - no further
          * actions will be scheduled or executed. The callback handler's onCancelled method will be
-         * invoked if one is registered.
+         * invoked if one is registered. With the `INFLIGHT_CANCELLATION_CHECKPOINTS` gate on, a
+         * workflow whose method declares `@WorkflowMethod(compensateOnCancel = true)` keeps its
+         * execution task, so its completed actions are compensated once the execution settles.
+         * Cancelling it again only re-requests that execution, so a failed cancel can be retried.
          *
          * @param workflowId The id of the workflow to cancel
          * @param reason The reason for cancelling the workflow
@@ -640,6 +643,15 @@ open class SkipperEngine
                 workflowStore.getWorkflow(workflowId).getOrElseThrow {
                     IllegalArgumentException("Workflow not found")
                 }
+            val compensate =
+                featureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS) &&
+                    WorkflowInspector.isCompensateOnCancel(instance.workflowClass, instance.workflowMethod)
+            if (compensate && instance.status == WorkflowInstance.Status.CANCELLED) {
+                // An earlier cancel wrote CANCELLED but may have died before requesting the run that
+                // settles it (below). Request it again; the request is idempotent.
+                scheduleSettleRun(instance)
+                return instance
+            }
             if (instance.status.isTerminal() || instance.status.isCompensationInProgress()) {
                 throw IllegalArgumentException("Workflow is already in a terminal state")
             }
@@ -651,9 +663,11 @@ open class SkipperEngine
                     .resultIsAsync(false)
                     .build()
             val updatedInstance = workflowStore.updateWorkflow(request)
-            val task = persistentScheduler.getTask<Any>(instance.workflowId)
-            if (task.isDefined) {
-                persistentScheduler.remove(task.get())
+            if (!compensate) {
+                val task = persistentScheduler.getTask<Any>(instance.workflowId)
+                if (task.isDefined) {
+                    persistentScheduler.remove(task.get())
+                }
             }
             // Needs the checkpoints gate too: it ends the interrupted execution as CANCELLED without a
             // status write, and stops any action that starts after this interrupt.
@@ -684,7 +698,31 @@ open class SkipperEngine
                 )
             }
             eventPublisher.publishEvent(Event.create(Event.Type.WORKFLOW_CANCELLED, workflowId))
+            if (compensate) {
+                scheduleSettleRun(updatedInstance)
+            }
             return updatedInstance
+        }
+
+        /**
+         * Keeps an execution task for a cancelled workflow that compensates on cancel. Compensation
+         * is scheduled when the execution finishes (WorkflowExecutionTaskHandler), the first point
+         * where every completed action's checkpoint is stored. A running execution keeps its lease
+         * and is not rerun, so it settles once. An idle workflow gets a new run that sees CANCELLED
+         * at the start.
+         */
+        private fun scheduleSettleRun(instance: WorkflowInstance) {
+            scheduler.schedule(
+                ScheduleRequest.builder<WorkflowInstance>()
+                    .id(instance.workflowId)
+                    .dedupToken(instance.workflowId)
+                    .payload(instance)
+                    .type(Task.Type.WORKFLOW)
+                    .honorActiveLeaseWhenOverwriting(true)
+                    .bumpVersionWhenHonoringLease(false)
+                    .inMemoryExecutionEnabled(false)
+                    .build()
+            )
         }
 
         /**
@@ -724,7 +762,7 @@ open class SkipperEngine
          * @param workflowInstance the workflow instance that requires compensation
          */
         open fun scheduleCompensationTask(workflowInstance: WorkflowInstance) {
-            val taskId = workflowInstance.workflowId + "-compensation"
+            val taskId = compensationTaskId(workflowInstance.workflowId)
             val compensationRequest = // Send this to the persistent scheduler
                 ScheduleRequest.builder<String>()
                     .id(taskId)
@@ -733,6 +771,9 @@ open class SkipperEngine
                     .type(Task.Type.COMPENSATION)
                     .runAfter(now.instant())
                     .inMemoryExecutionEnabled(false)
+                    // A compensation already running keeps its lease, so a second request never
+                    // starts the same compensation on another worker.
+                    .honorActiveLeaseWhenOverwriting(true)
                     .build()
             val task: Task<*> = persistentScheduler.schedule(compensationRequest)
             log.info(
@@ -790,6 +831,9 @@ open class SkipperEngine
 
         companion object {
             private val log = LoggerFactory.getLogger(SkipperEngine::class.java)
+
+            /** Id of the compensation task of [workflowId]; one per workflow. */
+            fun compensationTaskId(workflowId: String): String = "$workflowId-compensation"
 
             private const val METRICS_COMPONENT =
                 "tempoEngine" // Legacy name kept for metric continuity
