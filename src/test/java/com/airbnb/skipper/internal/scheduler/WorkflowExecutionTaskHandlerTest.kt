@@ -95,6 +95,7 @@ class WorkflowExecutionTaskHandlerTest {
         mockWorkflowStore = mock()
         whenever(mockWorkflowStore.getActionCheckpoints(any())).thenReturn(List.empty())
         mockScheduler = mock()
+        whenever(mockScheduler.getTask<Any>(any())).thenReturn(Option.none())
         mockEventPublisher = mock()
         skipperEngine = mock()
         mockFeatureGate = mock()
@@ -397,6 +398,22 @@ class WorkflowExecutionTaskHandlerTest {
         )
         // The handler does not overwrite the stored CANCELLED status; the compensation task changes it.
         verify(mockWorkflowStore, never()).updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
+    }
+
+    @Test
+    fun testCancelSettleDoesNotRequestCompensationAgainWhileOneIsPending() {
+        val workflowInstance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .build()
+        whenever(mockScheduler.getTask<Any>(eq("${workflowInstance.workflowId}-compensation")))
+            .thenReturn(Option.of(TestUtils.getTestTask(workflowInstance) as Task<Any>))
+
+        settleCancelled(workflowInstance, WorkflowCancelledException("cancelled"), List.of(compensableCheckpoint(workflowInstance.workflowId)))
+
+        verify(skipperEngine, never()).scheduleCompensationTask(any())
+        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.CANCEL_COMPENSATION })
     }
 
     @Test

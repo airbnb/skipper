@@ -348,9 +348,18 @@ class WorkflowExecutionTaskHandler
         }
 
         /**
+         * Whether a compensation task for the workflow already exists, pending or running. A later
+         * run of a cancelled workflow (a timer firing, a signal) must not request a second one.
+         */
+        private fun compensationPending(workflowId: String): Boolean {
+            val task: Option<Task<Any>>? = scheduler.getTask(SkipperEngine.compensationTaskId(workflowId))
+            return task != null && task.isDefined
+        }
+
+        /**
          * Schedules compensation for a cancelled workflow, the same task a failed workflow gets.
-         * An action the cancel interrupted has no checkpoint, so it is not compensated; the event
-         * and the log name it either way.
+         * An action the cancel interrupted has no checkpoint, so it is not compensated. The
+         * CANCEL_COMPENSATION event and the log name it whether or not a task was scheduled.
          */
         private fun scheduleCancelCompensation(
             workflowInstance: WorkflowInstance,
@@ -359,21 +368,12 @@ class WorkflowExecutionTaskHandler
         ) {
             val scheduled = scheduleCompensationIfNeeded(workflowInstance, executionContext)
             val error = result.result?.takeIf { it.isLeft }?.left
-            val interruptedAction = (error as? WorkflowCancelledException)?.interruptedAction ?: "none"
-            log.info(
-                "workflow instance with id={} was cancelled. compensationScheduled={} " +
-                    "interruptedActionNotCompensated={}",
-                workflowInstance.workflowId,
-                scheduled,
-                interruptedAction,
-            )
-            eventPublisher.publishEvent(
-                Event.create(
-                    Event.Type.CANCEL_COMPENSATION,
-                    workflowInstance.workflowId,
-                    "compensation scheduled: $scheduled, interrupted action not compensated: $interruptedAction",
-                ),
-            )
+            val interruptedAction = (error as? WorkflowCancelledException)?.interruptedAction
+            val detail =
+                "compensation scheduled: $scheduled" +
+                    if (interruptedAction == null) "" else ", interrupted action not compensated: $interruptedAction"
+            log.info("workflow instance with id={} was cancelled. {}", workflowInstance.workflowId, detail)
+            eventPublisher.publishEvent(Event.create(Event.Type.CANCEL_COMPENSATION, workflowInstance.workflowId, detail))
         }
 
         /** The cancellation cancelWorkflow recorded, as loaded from the store. */
@@ -512,7 +512,9 @@ class WorkflowExecutionTaskHandler
                         workflowInstance.workflowId,
                         result.newStatus,
                     )
-                    if (WorkflowInspector.isCompensateOnCancel(workflowInstance.workflowClass, workflowInstance.workflowMethod)) {
+                    if (WorkflowInspector.isCompensateOnCancel(workflowInstance.workflowClass, workflowInstance.workflowMethod) &&
+                        !compensationPending(workflowInstance.workflowId)
+                    ) {
                         scheduleCancelCompensation(workflowInstance, context, result)
                     }
                     return WorkflowExecutor.ExecutionResult.builder()

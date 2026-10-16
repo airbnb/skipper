@@ -37,9 +37,8 @@ import kotlin.reflect.KClass
  * @property compensateOnCancel When `true`, cancelling an instance runs the `@Compensate` methods
  * of its completed actions in reverse order, as a failure does. The instance then ends as
  * `COMPENSATION_COMPLETED` (or `COMPENSATION_ERROR`), not `CANCELLED`. Not compensated: an action
- * interrupted mid-flight, and actions whose checkpoints were still unwritten when the worker died
- * between the cancel and the end of the run. Needs the `INFLIGHT_CANCELLATION_CHECKPOINTS` gate.
- * Default `false`: cancel is terminal.
+ * interrupted mid-flight, and actions whose checkpoints were still unwritten when the cancelled run
+ * could not finish normally. Needs the `INFLIGHT_CANCELLATION_CHECKPOINTS` gate.
  */
 @Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.FUNCTION)

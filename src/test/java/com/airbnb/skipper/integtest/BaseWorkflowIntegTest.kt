@@ -448,21 +448,6 @@ abstract class BaseWorkflowIntegTest {
         ) {
             testClient.action("compensateBlocking")
         }
-
-        @Execute
-        fun slowlyCompensatedAction(data: String): String {
-            testClient.action("slowlyCompensatedAction")
-            return "Executed $data"
-        }
-
-        @Compensate(forExecute = "slowlyCompensatedAction")
-        fun compensateSlowly(
-            data: String,
-            result: String
-        ) {
-            testClient.action("compensateSlowly")
-            Thread.sleep(1_500)
-        }
     }
 
     class CompensateOnCancelWorkflow : Workflow() {
@@ -475,10 +460,11 @@ abstract class BaseWorkflowIntegTest {
             return actions.blockingCompensableAction("third")
         }
 
-        @WorkflowMethod(compensateOnCancel = true)
-        fun slowStepThenBlock(): String {
-            actions.slowlyCompensatedAction("first")
-            return actions.blockingCompensableAction("second")
+        @WorkflowMethod(returnType = String::class, compensateOnCancel = true)
+        fun oneStepThenShortWait(): CompletableFuture<String> {
+            actions.executeActionWithEventualCompensation("first")
+            waitUntil({ false }, Duration.ofSeconds(2))
+            return CompletableFuture.completedFuture("done")
         }
 
         @WorkflowMethod(returnType = String::class, compensateOnCancel = true)
@@ -1572,33 +1558,61 @@ abstract class BaseWorkflowIntegTest {
             return call
         }
 
-        @Test
-        fun testCancelMidFlightCompensatesOnceAndNotifiesOnce() {
-            // The compensation outlasts the cancelled run's settle, so a rerun of the execution,
-            // if one were requested, would overlap it. Each compensation and the completion
-            // callback must still happen exactly once.
-            val workflow = workflowFactory<CompensateOnCancelWorkflow>(
-                workflowId = workflowId,
-                requestContext = TestRequestContext.getCurrentRequestContext(),
-                callbackHandler = DemoCallbackHandler::class.java
-            )
-            cancelOnceActionStarts("blockingCompensableAction") { workflow.slowStepThenBlock() }
-
+        /** Asserts, once the scheduler is quiet, that compensation and its callbacks happened once. */
+        private fun assertCompensatedOnce(compensation: String) {
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
             helper.waitForExecutionFlowToFinish()
             helper.waitForCondition { scheduler.getTask<Any>("$workflowId-compensation").isEmpty }
             Thread.sleep(1_000)
-
-            verify(testClient, times(1)).action("compensateSlowly")
+            verify(testClient, times(1)).action(compensation)
             verify(callbackHandler, times(1)).onCompensationCompleted(any())
             verify(callbackHandler, times(1)).onCancelled(any(), any())
             assertThat(scheduler.getTask<Any>(workflowId).isEmpty).isTrue()
         }
 
         @Test
+        fun testCancelMidFlightCompensatesOnceAndNotifiesOnce() {
+            // A slow compensation still runs once, and onCancelled and onCompensationCompleted each
+            // fire once.
+            doAnswer {
+                Thread.sleep(1_500)
+                null
+            }.whenever(testClient).action("compensateNoCheckpoint")
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(
+                workflowId = workflowId,
+                requestContext = TestRequestContext.getCurrentRequestContext(),
+                callbackHandler = DemoCallbackHandler::class.java
+            )
+            cancelOnceActionStarts("blockingCompensableAction") { workflow.twoStepsThenBlock() }
+
+            assertCompensatedOnce("compensateNoCheckpoint")
+        }
+
+        @Test
+        fun testTimerExpiringDuringCancelCompensationDoesNotRepeatIt() {
+            // The wait's timer fires while the compensation is still running. The run it starts
+            // sees CANCELLED and must not request a second compensation.
+            doAnswer {
+                Thread.sleep(3_000)
+                null
+            }.whenever(testClient).action("compensateEventualCheckpoint")
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(
+                workflowId = workflowId,
+                requestContext = TestRequestContext.getCurrentRequestContext(),
+                callbackHandler = DemoCallbackHandler::class.java
+            )
+            workflow.oneStepThenShortWait()
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.WAITING)
+
+            skipperEngine.cancelWorkflow(workflowId, "cancelled while waiting")
+
+            assertCompensatedOnce("compensateEventualCheckpoint")
+        }
+
+        @Test
         fun testCancelCompensationThatFailsIsReenteredAndFinishes() {
-            // A compensation that fails leaves the instance COMPENSATION_ERROR. Re-executing it
-            // re-enters the same chain from the cancel edge and finishes once the failure is gone.
+            // A compensation that fails leaves the instance COMPENSATION_ERROR. Re-executing the
+            // workflow runs the compensation again, and it finishes once the failure is gone.
             doAnswer { throw RetryableError("compensation unavailable") }
                 .whenever(testClient).action("compensateNoCheckpoint")
             val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
@@ -1619,16 +1633,8 @@ abstract class BaseWorkflowIntegTest {
         @Test
         fun testCancelMidFlightCompensatesCompletedActionsInReverseAndNotTheInterruptedOne() {
             // Gates are on via SuiteBase's blanket stub, so the cancel interrupts the blocking action.
-            val started = CountDownLatch(1)
-            doAnswer {
-                started.countDown()
-                null
-            }.whenever(testClient).action("blockingCompensableAction")
             val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
-            val call = CompletableFuture.supplyAsync { workflow.twoStepsThenBlock() }
-            assertThat(started.await(10, TimeUnit.SECONDS)).isTrue()
-
-            skipperEngine.cancelWorkflow(workflowId, "cancelled while blocked")
+            val call = cancelOnceActionStarts("blockingCompensableAction") { workflow.twoStepsThenBlock() }
 
             val thrown = assertThrows<Throwable> { call.get(10, TimeUnit.SECONDS) }
             assertThat(generateSequence(thrown) { it.cause }.any { it is CancelledWorkflow }).isTrue()

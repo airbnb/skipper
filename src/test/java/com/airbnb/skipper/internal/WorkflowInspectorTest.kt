@@ -134,12 +134,15 @@ class WorkflowInspectorTest {
 
         @WorkflowMethod
         fun notOptedIn() {}
+
+        fun plain() {}
     }
 
     @Test
     fun testIsCompensateOnCancel() {
         assertTrue(WorkflowInspector.isCompensateOnCancel(CompensateOnCancelWorkflow::class.java, "optedIn"))
         assertFalse(WorkflowInspector.isCompensateOnCancel(CompensateOnCancelWorkflow::class.java, "notOptedIn"))
+        assertFalse(WorkflowInspector.isCompensateOnCancel(CompensateOnCancelWorkflow::class.java, "plain"))
         assertFalse(WorkflowInspector.isCompensateOnCancel(CompensateOnCancelWorkflow::class.java, "missing"))
     }
 
