@@ -567,7 +567,9 @@ class WorkflowExecutionTaskHandler
          * fails after the commit, the execution is retried, and the retry finds the timer already ACTIVE,
          * so it creates no timer and schedules nothing. Without this the workflow waits forever on a timer
          * nothing will fire. A task that exists is left alone: scheduling again would replace it, and
-         * another worker may hold its lease.
+         * another worker may hold its lease. The check and the schedule are separate calls, and an
+         * overlapping execution of the same workflow can create and lease the task in between, so the
+         * schedule also honours an active lease, which the scheduler checks in the same write.
          */
         private fun rearmOrphanedTimers(context: ExecutionContext) {
             val touchedTimerIds = context.dirtyTimers.map { it.id }.toSet()
@@ -578,7 +580,7 @@ class WorkflowExecutionTaskHandler
                 if (scheduler.getTask<Timer>(timer.getUniqueId()).isEmpty) {
                     log.warn("timer {} is ACTIVE but has no TIMER task; scheduling it again", timer.getUniqueId())
                     // Counted once the task exists: a schedule that throws is retried, not a repair.
-                    scheduleTimerTask(timer)
+                    scheduleTimerTask(timer, honorActiveLease = true)
                     metrics
                         .counter(
                             ImmutableMap.of("workflowClass", context.workflow.workflowClass.simpleName),
@@ -589,7 +591,10 @@ class WorkflowExecutionTaskHandler
             }
         }
 
-        private fun scheduleTimerTask(timer: Timer) {
+        private fun scheduleTimerTask(
+            timer: Timer,
+            honorActiveLease: Boolean = false,
+        ) {
             val scheduledTask =
                 scheduler.schedule(
                     ScheduleRequest.builder<Timer>()
@@ -598,6 +603,7 @@ class WorkflowExecutionTaskHandler
                         .payload(timer)
                         .type(Task.Type.TIMER)
                         .runAfter(timer.expiresAt)
+                        .honorActiveLeaseWhenOverwriting(honorActiveLease)
                         .build(),
                 )
             log.debug("scheduled timer task {}", scheduledTask)

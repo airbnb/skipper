@@ -513,6 +513,7 @@ class WorkflowExecutionTaskHandlerTest {
         val requests = scheduleRequestCaptor.allValues
         assertEquals(Task.Type.TIMER, requests[0].type)
         assertEquals(timer, requests[0].payload)
+        assertFalse(requests[0].isHonorActiveLeaseWhenOverwriting, "a timer just created has no task to honour")
         assertEquals(Task.Type.TIMER, requests[1].type)
         assertEquals(timer2, requests[1].payload)
     }
@@ -606,6 +607,9 @@ class WorkflowExecutionTaskHandlerTest {
         assertEquals(orphaned.getUniqueId(), request.dedupToken)
         assertEquals(orphaned, request.payload)
         assertEquals(orphaned.expiresAt, request.runAfter)
+        // An overlapping execution may have created and leased the task since the check: leave it alone.
+        assertTrue(request.isHonorActiveLeaseWhenOverwriting)
+        assertFalse(request.isBumpVersionWhenHonoringLease)
         assertEquals(1, counters.count { it == orphanedTimerCounter })
     }
 

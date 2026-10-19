@@ -55,7 +55,7 @@ replay, task partitioning, several workflows sharing workers.
 | `Fetch`, `MarkFailed`, `Finish` | `SqliteScheduler.fetch`, `SkipperSchedulerManager.handleTask` / `finishTask` / `scheduleRerunNow` |
 | `Take` | `SkipperSchedulerManager.startTakingTasks` on the in-memory queue |
 | `WfRead`, `WfRun`, `WfPersist`, `WfTimers` | `WorkflowExecutionTaskHandler.handle` (its instance read, then its timer read and the run) / `persistExecutionResult`, `Workflow.waitUntil` |
-| `WfRearm` | `WorkflowExecutionTaskHandler.rearmOrphanedTimers` |
+| `WfRearmCheck`, `WfRearm` | `WorkflowExecutionTaskHandler.rearmOrphanedTimers` (its `getTask`, then its `schedule`) |
 | `TmExec`, `TmSched` | `TimerTaskHandler.handle` |
 | `Renew` | `LeaseRenewalManager.attemptToRenewOneTask` |
 | `SignalStart`, `SignalPersist`, `SignalSched` | `SkipperEngine.runSignal` |
@@ -101,6 +101,7 @@ check.
 | `inmem_start` | in-process start, no faults | **stuck forever** |
 | `lease_faults` | a lease lapses under a live holder, 2 workers | **stuck forever** |
 | `signal_schedule` | a signal call fails before scheduling | `RunningIsDriven` violated; liveness holds only through the wait timer |
+| `rearm_overlap` | a timer task goes missing and a lease lapses, so two executions re-arm the same timer; checks `RearmKeepsLeases` only | ok |
 
 The findings behind these results:
 
@@ -120,10 +121,16 @@ The findings behind these results:
    - On the rerun, `waitUntil` finds the timer row and does not create it again
      (`Workflow.kt:377`). Before the fix, no new `TIMER` task was scheduled, and the workflow task
      was removed.
-   - The repair (`WfRearm`, `:557`): after persisting a non-terminal execution, every timer the run
-     loaded as `ACTIVE` and left untouched gets its `TIMER` task scheduled again if that task is
-     missing (`:578`). A task that exists is left alone. With it, both `timer_arming_*` models pass,
-     and removing it brings back the `WaitingIsDriven` violation.
+   - The repair (`WfRearmCheck`, `WfRearm`, `:557`): after persisting a non-terminal execution,
+     every timer the run loaded as `ACTIVE` and left untouched gets its `TIMER` task scheduled again
+     if that task is missing (`:578`). With it, both `timer_arming_*` models pass, and removing it
+     brings back the `WaitingIsDriven` violation.
+   - The check and the schedule are separate calls. An overlapping execution can create the task in
+     between, and a worker can lease it. So the schedule honours an active lease and doesn't bump the
+     version; the scheduler checks the lease in the same write. `rearm_overlap` checks
+     `RearmKeepsLeases`: a re-arm never replaces a task under an active lease. Without the honour, TLC
+     finds the overwrite. That model leaves out `WaitingIsDriven`, because with early expiry on it
+     already fails through finding 3.
    - A workflow stranded before the fix has no task of either kind, so nothing runs it again on its
      own. Re-executing it (`WorkflowsService.reExecuteWorkflows`, the admin bulk-retry) runs it once,
      and that run re-arms the timer.

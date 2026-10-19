@@ -68,7 +68,7 @@ NoRow == [st |-> "NONE", ra |-> DUE, ver |-> 0, rc |-> 0]
 NoHeld == [id |-> WF, ver |-> 0, ra |-> DUE, rc |-> 0, rerun |-> FALSE, wv |-> 0]
 NoDirty == [k \in Timers |-> "NONE"]
 IdleW == [pc |-> "idle", held |-> NoHeld, att |-> FALSE, out |-> "none", rv |-> 0, rs |-> "NONE",
-          dirty |-> NoDirty, pend |-> {}, re |-> {}, fop |-> "remove", fra |-> DUE]
+          dirty |-> NoDirty, pend |-> {}, re |-> {}, miss |-> {}, fop |-> "remove", fra |-> DUE]
 
 Terminal == {"COMPLETED", "ERROR"}
 Settled == Terminal \cup {"RETRIES_EXHAUSTED"}
@@ -107,13 +107,17 @@ Queued(t) == row[t].st \in {"PENDING", "RUNNING", "FAILED"}   \* FAILED = in the
 ActiveLease(r) == r.st \in {"PENDING", "RUNNING"} /\ r.ra # LATER
 
 (* Scheduler.schedule for task t: insert, or overwrite resetting status and retry count;*)
-(* when honouring an active lease, leave the row alone or (gate on) bump only its       *)
-(* version so the holder's final versioned write fails and it reruns the task.          *)
-Sched(t, ra, honor) ==
+(* when honouring an active lease, leave the row alone or (bump) bump only its version  *)
+(* so the holder's final versioned write fails and it reruns the task. The lease check  *)
+(* and the write are one transaction (JDBC) or one versioned write (UDS).               *)
+SchedReq(t, ra, honor, bump) ==
     IF row[t].st = "NONE" THEN [st |-> "PENDING", ra |-> ra, ver |-> 1, rc |-> 0]
     ELSE IF honor /\ ActiveLease(row[t])
-         THEN IF BumpOnHonoredLease THEN [row[t] EXCEPT !.ver = @ + 1] ELSE row[t]
+         THEN IF bump THEN [row[t] EXCEPT !.ver = @ + 1] ELSE row[t]
          ELSE [st |-> "PENDING", ra |-> ra, ver |-> row[t].ver + 1, rc |-> 0]
+
+(* The engine's own requests bump when BUMP_TASK_VERSION_ON_HONORED_LEASE is on.         *)
+Sched(t, ra, honor) == SchedReq(t, ra, honor, BumpOnHonoredLease)
 
 (* A lease value nobody holds or sees: one past every run_after in a row, a worker's    *)
 (* hand or the in-memory queue. Only equality between leases matters, so this is as good *)
@@ -281,17 +285,26 @@ WfTimers(p) ==
 
 (* rearmOrphanedTimers, for a workflow left non-terminal: a timer the run loaded as      *)
 (* ACTIVE and did not touch gets its TIMER task scheduled again if the task is missing,  *)
-(* which is what a failure between WfPersist and WfTimers leaves behind. A task that is  *)
-(* present is left alone. The code's getTask and schedule are one step here: nothing     *)
-(* else creates this timer's task in between.                                           *)
+(* which is what a failure between WfPersist and WfTimers leaves behind. The check       *)
+(* (getTask) and the schedule are separate steps: an overlapping execution of the same   *)
+(* workflow (a lease that lapsed under its holder) can create, and a worker lease, the   *)
+(* task in between. The schedule honours an active lease, without a version bump, so a  *)
+(* leased task is left alone (RearmKeepsLeases).                                        *)
+WfRearmCheck(p) ==
+    /\ wk[p].pc = "wf_rearm" /\ wk[p].re # {}
+    /\ \E k \in wk[p].re :
+         SetW(p, [wk[p] EXCEPT !.re = @ \ {k},
+                               !.miss = IF row[k].st = "NONE" THEN @ \cup {k} ELSE @])
+    /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
+
 WfRearm(p) ==
     /\ wk[p].pc = "wf_rearm"
-    /\ IF wk[p].re = {}
+    /\ IF wk[p].re = {} /\ wk[p].miss = {}
        THEN /\ SetW(p, [wk[p] EXCEPT !.pc = "finish"])
             /\ UNCHANGED row
-       ELSE \E k \in wk[p].re, ra \in {DUE, SOON, LATER} :
-              /\ row' = IF row[k].st = "NONE" THEN [row EXCEPT ![k] = Sched(k, ra, FALSE)] ELSE row
-              /\ SetW(p, [wk[p] EXCEPT !.re = @ \ {k}])
+       ELSE \E k \in wk[p].miss, ra \in {DUE, SOON, LATER} :
+              /\ row' = [row EXCEPT ![k] = SchedReq(k, ra, TRUE, FALSE)]
+              /\ SetW(p, [wk[p] EXCEPT !.miss = @ \ {k}])
     /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* TimerTaskHandler: defer while the workflow task holds a lease, else expire the timer *)
@@ -484,11 +497,12 @@ ExpireEarly(t) ==
 (* retryable.                                                                            *)
 StoreError(p) ==
     /\ \/ wk[p].pc = "wf_timers" /\ wk[p].pend # {}
-       \/ wk[p].pc = "wf_rearm" /\ wk[p].re # {}
+       \/ wk[p].pc = "wf_rearm" /\ wk[p].miss # {}
        \/ wk[p].pc = "tm_sched"
     /\ Fault("store_error")
     /\ \E ra \in {DUE, SOON, LATER} :
-         SetW(p, [wk[p] EXCEPT !.pc = "finish", !.pend = {}, !.re = {}, !.fop = "retry", !.fra = ra])
+         SetW(p, [wk[p] EXCEPT !.pc = "finish", !.pend = {}, !.re = {}, !.miss = {}, !.fop = "retry",
+                               !.fra = ra])
     /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 (* startWorkflow throws after the row exists; the caller is expected to retry.          *)
@@ -513,7 +527,7 @@ Init ==
 
 WorkerStep(p) ==
     \/ Fetch(p) \/ Take(p) \/ MarkFailed(p) \/ WfRead(p) \/ WfRun(p) \/ WfPersist(p) \/ WfTimers(p)
-    \/ WfRearm(p) \/ TmExec(p) \/ TmSched(p) \/ Finish(p)
+    \/ WfRearmCheck(p) \/ WfRearm(p) \/ TmExec(p) \/ TmSched(p) \/ Finish(p)
 
 Next ==
     \/ \E p \in Workers : WorkerStep(p) \/ Renew(p) \/ Crash(p) \/ HandlerTimeout(p) \/ StoreError(p)
@@ -561,6 +575,14 @@ RunningIsDriven ==
 (* Every waiting workflow has a timer that will fire (or is already being re-run).      *)
 WaitingIsDriven ==
     wf.st = "WAITING" => (\E k \in Timers : TimerArmed(k)) \/ WfDriven
+
+(* A re-arm never replaces a TIMER task someone holds a lease on: the check that found it *)
+(* missing may be stale by the time the schedule runs.                                  *)
+RearmKeepsLeases ==
+    [][\A p \in Workers, k \in Timers :
+         (wk[p].pc = "wf_rearm" /\ k \in wk[p].miss /\ ActiveLease(row[k])
+          /\ wk'[p].pc = "wf_rearm" /\ k \notin wk'[p].miss)
+         => row'[k] = row[k]]_vars
 
 (* Terminal states are absorbing.                                                       *)
 TerminalIsStable == [][wf.st \in Terminal => wf'.st = wf.st]_vars
