@@ -68,7 +68,7 @@ NoRow == [st |-> "NONE", ra |-> DUE, ver |-> 0, rc |-> 0]
 NoHeld == [id |-> WF, ver |-> 0, ra |-> DUE, rc |-> 0, rerun |-> FALSE, wv |-> 0]
 NoDirty == [k \in Timers |-> "NONE"]
 IdleW == [pc |-> "idle", held |-> NoHeld, att |-> FALSE, out |-> "none", rv |-> 0, rs |-> "NONE",
-          dirty |-> NoDirty, pend |-> {}, fop |-> "remove", fra |-> DUE]
+          dirty |-> NoDirty, pend |-> {}, re |-> {}, fop |-> "remove", fra |-> DUE]
 
 Terminal == {"COMPLETED", "ERROR"}
 Settled == Terminal \cup {"RETRIES_EXHAUSTED"}
@@ -93,7 +93,7 @@ TypeOK ==
     /\ tm \in [Timers -> {"NONE", "ACTIVE", "EXPIRED", "CANCELLED"}]
     /\ row \in [TaskIds -> [st: {"NONE", "PENDING", "RUNNING", "FAILED"}, ra: Nat, ver: Nat, rc: Nat]]
     /\ \A p \in Workers : wk[p].pc \in {"idle", "dlq", "wf_exec", "wf_run", "wf_persist", "wf_timers",
-                                        "tm_exec", "tm_sched", "finish"}
+                                        "wf_rearm", "tm_exec", "tm_sched", "finish"}
     /\ cpc \in {"ready", "sched", "done"}
     /\ spc \in {"idle", "exec", "sched"}
 
@@ -228,7 +228,8 @@ MarkFailed(p) ==
 (* body. WfRead: load the instance, unless this is an in-memory copy, which runs on the  *)
 (* instance it was queued with (wv). WfRun: load the timers and run the body. A terminal *)
 (* workflow's body is not run again: WorkflowExecutor short-circuits to its current      *)
-(* status, which is then persisted as usual.                                            *)
+(* status, which is then persisted as usual. re: the timers the run loaded as ACTIVE and *)
+(* left untouched, which WfRearm checks for a missing task.                             *)
 WfRead(p) ==
     /\ wk[p].pc = "wf_exec"
     /\ IF ~wf.ex
@@ -243,7 +244,8 @@ WfRun(p) ==
        THEN SetW(p, [wk[p] EXCEPT !.pc = "wf_persist", !.dirty = NoDirty,
                                   !.out = IF wk[p].rs = "COMPLETED" THEN "COMPLETE" ELSE "NONRETRYABLE"])
        ELSE \E res \in Results :
-              SetW(p, [wk[p] EXCEPT !.pc = "wf_persist", !.out = res.o, !.dirty = res.d])
+              SetW(p, [wk[p] EXCEPT !.pc = "wf_persist", !.out = res.o, !.dirty = res.d,
+                                    !.re = {k \in Timers : tm[k] = "ACTIVE" /\ res.d[k] = "NONE"}])
     /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* updateWorkflowAndStoreCheckpointsAndTimers: status, state and dirty timers in one    *)
@@ -258,22 +260,38 @@ WfPersist(p) ==
             /\ \E ra \in {DUE, SOON, LATER} :
                  SetW(p, [w EXCEPT !.pc = "wf_timers",
                                    !.pend = {k \in Timers : w.dirty[k] = "ACTIVE" /\ tm[k] = "NONE"},
+                                   !.re = IF StatusOf(w.out) \in Terminal THEN {} ELSE w.re,
                                    !.fop = IF w.out = "TRANSIENT" THEN "retry" ELSE "remove",
                                    !.fra = ra])
        ELSE /\ UNCHANGED <<wf, tm>>
             /\ \E ra \in {DUE, SOON, LATER} :
-                 SetW(p, [w EXCEPT !.pc = "finish", !.fop = "retry", !.fra = ra])
+                 SetW(p, [w EXCEPT !.pc = "finish", !.re = {}, !.fop = "retry", !.fra = ra])
     /\ UNCHANGED <<row, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* After the transaction, one TIMER task is scheduled per timer the run created.        *)
 WfTimers(p) ==
     /\ wk[p].pc = "wf_timers"
     /\ IF wk[p].pend = {}
-       THEN /\ SetW(p, [wk[p] EXCEPT !.pc = "finish"])
+       THEN /\ SetW(p, [wk[p] EXCEPT !.pc = "wf_rearm"])
             /\ UNCHANGED row
        ELSE \E k \in wk[p].pend, ra \in {DUE, SOON, LATER} :
               /\ row' = [row EXCEPT ![k] = Sched(k, ra, FALSE)]
               /\ SetW(p, [wk[p] EXCEPT !.pend = @ \ {k}])
+    /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
+
+(* rearmOrphanedTimers, for a workflow left non-terminal: a timer the run loaded as      *)
+(* ACTIVE and did not touch gets its TIMER task scheduled again if the task is missing,  *)
+(* which is what a failure between WfPersist and WfTimers leaves behind. A task that is  *)
+(* present is left alone. The code's getTask and schedule are one step here: nothing     *)
+(* else creates this timer's task in between.                                           *)
+WfRearm(p) ==
+    /\ wk[p].pc = "wf_rearm"
+    /\ IF wk[p].re = {}
+       THEN /\ SetW(p, [wk[p] EXCEPT !.pc = "finish"])
+            /\ UNCHANGED row
+       ELSE \E k \in wk[p].re, ra \in {DUE, SOON, LATER} :
+              /\ row' = IF row[k].st = "NONE" THEN [row EXCEPT ![k] = Sched(k, ra, FALSE)] ELSE row
+              /\ SetW(p, [wk[p] EXCEPT !.re = @ \ {k}])
     /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* TimerTaskHandler: defer while the workflow task holds a lease, else expire the timer *)
@@ -461,14 +479,16 @@ ExpireEarly(t) ==
     /\ row' = [row EXCEPT ![t].ra = DUE]
     /\ UNCHANGED <<wf, tm, wk, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
-(* A store error after the workflow row committed: scheduling a timer task, or the      *)
-(* workflow task from the timer handler, throws. Both are handled as retryable.         *)
+(* A store error after the workflow row committed: scheduling a timer task (new or      *)
+(* re-armed), or the workflow task from the timer handler, throws. All are handled as   *)
+(* retryable.                                                                            *)
 StoreError(p) ==
     /\ \/ wk[p].pc = "wf_timers" /\ wk[p].pend # {}
+       \/ wk[p].pc = "wf_rearm" /\ wk[p].re # {}
        \/ wk[p].pc = "tm_sched"
     /\ Fault("store_error")
     /\ \E ra \in {DUE, SOON, LATER} :
-         SetW(p, [wk[p] EXCEPT !.pc = "finish", !.pend = {}, !.fop = "retry", !.fra = ra])
+         SetW(p, [wk[p] EXCEPT !.pc = "finish", !.pend = {}, !.re = {}, !.fop = "retry", !.fra = ra])
     /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 (* startWorkflow throws after the row exists; the caller is expected to retry.          *)
@@ -493,7 +513,7 @@ Init ==
 
 WorkerStep(p) ==
     \/ Fetch(p) \/ Take(p) \/ MarkFailed(p) \/ WfRead(p) \/ WfRun(p) \/ WfPersist(p) \/ WfTimers(p)
-    \/ TmExec(p) \/ TmSched(p) \/ Finish(p)
+    \/ WfRearm(p) \/ TmExec(p) \/ TmSched(p) \/ Finish(p)
 
 Next ==
     \/ \E p \in Workers : WorkerStep(p) \/ Renew(p) \/ Crash(p) \/ HandlerTimeout(p) \/ StoreError(p)

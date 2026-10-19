@@ -6,6 +6,7 @@ import com.airbnb.skipper.Timer
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowMethod
+import com.airbnb.skipper.WorkflowsService
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.SkipperSchedulerManager
 import com.airbnb.skipper.internal.api.RunRequest
@@ -23,6 +24,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
@@ -39,17 +41,22 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  *
  * The failure is injected by wrapping the scheduler so the first TIMER `schedule` throws, which is
  * what a transient store outage between the two writes does in production.
+ *
+ * Instances stranded before the fix have no task of either kind, so nothing runs them again on its
+ * own. The second test shows the remediation: re-executing them (`WorkflowsService.reExecuteWorkflows`,
+ * the admin bulk-retry) runs the workflow once, and that execution re-arms the timer.
  */
 @Execution(ExecutionMode.SAME_THREAD)
 class OrphanedTimerOnSchedulerFailureTest {
-    /** Throws on the first TIMER `schedule`. Everything else passes through. */
+    /** Throws on the first [failures] TIMER `schedule` calls. Everything else passes through. */
     class FailFirstTimerScheduleScheduler(
         private val delegate: Scheduler,
+        private val failures: Int,
     ) : Scheduler by delegate {
         val timerScheduleAttempts = AtomicInteger()
 
         override fun <T> schedule(request: ScheduleRequest<T>): Task<T> {
-            if (request.type == Task.Type.TIMER && timerScheduleAttempts.incrementAndGet() == 1) {
+            if (request.type == Task.Type.TIMER && timerScheduleAttempts.incrementAndGet() <= failures) {
                 throw IllegalStateException("injected scheduler outage while scheduling ${request.id}")
             }
             return delegate.schedule(request)
@@ -69,6 +76,7 @@ class OrphanedTimerOnSchedulerFailureTest {
     private lateinit var scheduler: FailFirstTimerScheduleScheduler
     private lateinit var engine: SkipperEngine
     private lateinit var store: WorkflowStore
+    private lateinit var workflowsService: WorkflowsService
     private lateinit var manager: SkipperSchedulerManager
 
     @AfterEach
@@ -76,19 +84,22 @@ class OrphanedTimerOnSchedulerFailureTest {
         if (::manager.isInitialized) manager.forceStop()
     }
 
-    @Test
-    fun timerTaskIsRearmedWhenSchedulingItFailsAfterTheTimerCommitted() {
+    private fun start(timerScheduleFailures: Int) {
         val deps = TestRuntime()
         deps.config.scheduler =
             ComponentFactory { config ->
-                FailFirstTimerScheduleScheduler(SqliteScheduler.Factory().create(config)).also { scheduler = it }
+                FailFirstTimerScheduleScheduler(SqliteScheduler.Factory().create(config), timerScheduleFailures)
+                    .also { scheduler = it }
             }
         val runtime = deps.runtime
         engine = runtime.skipperEngine.get()
         store = runtime.workflowStore.get()
+        workflowsService = runtime.workflowsService.get()
         manager = runtime.skipperSchedulerManager.get()
         manager.start()
+    }
 
+    private fun startDeadlineWorkflow(): String {
         val id = "deadline-${System.nanoTime()}"
         engine.startWorkflow(
             RunRequest.builder()
@@ -100,6 +111,23 @@ class OrphanedTimerOnSchedulerFailureTest {
                 .runAsync(true) // hand it to the scheduler so the task handler thread runs it
                 .build(),
         )
+        return id
+    }
+
+    private fun assertTimesOut(
+        helper: TestHelper,
+        id: String
+    ) {
+        val done = helper.waitForWorkflowToReachStatus(setOf(WorkflowInstance.Status.COMPLETED), maxAttempts = 100)
+        @Suppress("UNCHECKED_CAST")
+        assertEquals("timed out", (done.result.get() as CompletableFuture<String>).get())
+        assertEquals(Timer.Status.EXPIRED, store.getTimers(id).single().status)
+    }
+
+    @Test
+    fun timerTaskIsRearmedWhenSchedulingItFailsAfterTheTimerCommitted() {
+        start(timerScheduleFailures = 1)
+        val id = startDeadlineWorkflow()
         val helper = TestHelper(engine, scheduler, id)
 
         // First execution: the timer commits with the WAITING instance, then scheduling its task throws
@@ -115,10 +143,28 @@ class OrphanedTimerOnSchedulerFailureTest {
         )
 
         // The re-armed task fires at the deadline and the workflow resumes down its timeout branch.
-        val done = helper.waitForWorkflowToReachStatus(setOf(WorkflowInstance.Status.COMPLETED), maxAttempts = 100)
-        @Suppress("UNCHECKED_CAST")
-        assertEquals("timed out", (done.result.get() as CompletableFuture<String>).get())
-        assertEquals(Timer.Status.EXPIRED, store.getTimers(id).single().status)
+        assertTimesOut(helper, id)
+    }
+
+    @Test
+    fun workflowStrandedBeforeTheFixIsRecoveredByReExecutingIt() {
+        start(timerScheduleFailures = 0)
+        val id = startDeadlineWorkflow()
+        val helper = TestHelper(engine, scheduler, id)
+        helper.waitForWorkflowToReachStatus(setOf(WorkflowInstance.Status.WAITING))
+
+        // Strand it the way the bug did: drop the TIMER task, leaving an ACTIVE timer and no task of either kind.
+        val timer = store.getTimers(id).single()
+        scheduler.remove(scheduler.getTask<Timer>(timer.getUniqueId()).get())
+        assertEquals(Timer.Status.ACTIVE, store.getTimers(id).single().status)
+        assertFalse(scheduler.getTask<Timer>(timer.getUniqueId()).isDefined)
+        assertFalse(scheduler.getTask<Any>(id).isDefined, "nothing will run the workflow again on its own")
+
+        val failures = workflowsService.reExecuteWorkflows(listOf(id))
+        assertFalse(failures.getValue(id).isPresent, "re-executing a WAITING workflow is allowed")
+
+        // That one execution re-arms the timer; it fires and the workflow resumes down its timeout branch.
+        assertTimesOut(helper, id)
     }
 
     private companion object {

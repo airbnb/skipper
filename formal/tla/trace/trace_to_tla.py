@@ -30,6 +30,7 @@ ACTIONS = [
     ("schedule", "SkipperEngine.runSignal", "SignalSched"),
     ("schedule", "SkipperEngine.scheduleExecution", "StartSched"),
     ("schedule", "TimerTaskHandler.handle", "TmSched"),
+    ("schedule", "WorkflowExecutionTaskHandler.rearmOrphanedTimers", "WfRearm"),
     ("schedule", "WorkflowExecutionTaskHandler.persistExecutionResult", "WfTimers"),
     ("schedule", "SkipperSchedulerManager.scheduleRerunNow", "Finish"),
     ("fetch", "SkipperSchedulerManager", "Fetch"),

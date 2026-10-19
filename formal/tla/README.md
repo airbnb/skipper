@@ -55,6 +55,7 @@ replay, task partitioning, several workflows sharing workers.
 | `Fetch`, `MarkFailed`, `Finish` | `SqliteScheduler.fetch`, `SkipperSchedulerManager.handleTask` / `finishTask` / `scheduleRerunNow` |
 | `Take` | `SkipperSchedulerManager.startTakingTasks` on the in-memory queue |
 | `WfRead`, `WfRun`, `WfPersist`, `WfTimers` | `WorkflowExecutionTaskHandler.handle` (its instance read, then its timer read and the run) / `persistExecutionResult`, `Workflow.waitUntil` |
+| `WfRearm` | `WorkflowExecutionTaskHandler.rearmOrphanedTimers` |
 | `TmExec`, `TmSched` | `TimerTaskHandler.handle` |
 | `Renew` | `LeaseRenewalManager.attemptToRenewOneTask` |
 | `SignalStart`, `SignalPersist`, `SignalSched` | `SkipperEngine.runSignal` |
@@ -86,7 +87,7 @@ CI runs the same script in `.github/workflows/formal.yml` (job `tla-model-check`
 `formal/` changes. It keeps TLC's output as the `tlc-output` run artifact. The job isn't a required
 check.
 
-## Results (main at 619a628)
+## Results (main at 619a628, plus the timer re-arm from airbnb/skipper#40)
 
 | Model | Scenario | Result |
 |---|---|---|
@@ -95,8 +96,8 @@ check.
 | `pr12_regression` | `BUMP_TASK_VERSION_ON_HONORED_LEASE` off | `RunningIsDriven` violated: the #12 race, found again (calibration) |
 | `start_retry` | `startWorkflow` fails after creating the row; caller retries | **stuck forever** |
 | `start_retry_noop_off` | as above, `CREATE_EXISTING_WORKFLOW_IS_NOOP` off | ok |
-| `timer_arming_crash` | a worker crashes while running the workflow | **stuck forever** |
-| `timer_arming_store_error` | one store error after the workflow row committed | **stuck forever** |
+| `timer_arming_crash` | a worker crashes while running the workflow | ok (was stuck forever; fixed in #40) |
+| `timer_arming_store_error` | one store error after the workflow row committed | ok (was stuck forever; fixed in #40) |
 | `inmem_start` | in-process start, no faults | **stuck forever** |
 | `lease_faults` | a lease lapses under a live holder, 2 workers | **stuck forever** |
 | `signal_schedule` | a signal call fails before scheduling | `RunningIsDriven` violated; liveness holds only through the wait timer |
@@ -111,13 +112,21 @@ The findings behind these results:
    - With `CREATE_EXISTING_WORKFLOW_IS_NOOP`, which is on by default (`:128`), that retry returns
      without scheduling.
 
-2. **A `WAITING` workflow can end up with a timer that never fires.**
+2. **A `WAITING` workflow can end up with a timer that never fires.** Fixed in airbnb/skipper#40.
    - The timer row is written in the same transaction as `WAITING`
      (`WorkflowExecutionTaskHandler.kt:540`), but its `TIMER` task is scheduled afterwards
-     (`:555`).
+     (`:553`).
    - A crash, or one failed insert, between the two reruns the workflow task.
    - On the rerun, `waitUntil` finds the timer row and does not create it again
-     (`Workflow.kt:377`). No new `TIMER` task is scheduled, and the workflow task is removed.
+     (`Workflow.kt:377`). Before the fix, no new `TIMER` task was scheduled, and the workflow task
+     was removed.
+   - The repair (`WfRearm`, `:557`): after persisting a non-terminal execution, every timer the run
+     loaded as `ACTIVE` and left untouched gets its `TIMER` task scheduled again if that task is
+     missing (`:578`). A task that exists is left alone. With it, both `timer_arming_*` models pass,
+     and removing it brings back the `WaitingIsDriven` violation.
+   - A workflow stranded before the fix has no task of either kind, so nothing runs it again on its
+     own. Re-executing it (`WorkflowsService.reExecuteWorkflows`, the admin bulk-retry) runs it once,
+     and that run re-arms the timer.
 
 3. **The task row's version can be reused (ABA), so a stale holder deletes someone else's row.**
    - `remove` is `DELETE ... WHERE version = ?` (`SqliteScheduler.kt:420`, `MySqlScheduler.kt:424`),

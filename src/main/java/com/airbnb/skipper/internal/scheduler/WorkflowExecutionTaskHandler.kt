@@ -577,13 +577,14 @@ class WorkflowExecutionTaskHandler
                 }
                 if (scheduler.getTask<Timer>(timer.getUniqueId()).isEmpty) {
                     log.warn("timer {} is ACTIVE but has no TIMER task; scheduling it again", timer.getUniqueId())
+                    // Counted once the task exists: a schedule that throws is retried, not a repair.
+                    scheduleTimerTask(timer)
                     metrics
                         .counter(
                             ImmutableMap.of("workflowClass", context.workflow.workflowClass.simpleName),
                             METRICS_COMPONENT,
                             "orphanedTimerTasksRescheduled",
                         ).inc()
-                    scheduleTimerTask(timer)
                 }
             }
         }

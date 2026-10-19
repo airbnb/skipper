@@ -44,6 +44,7 @@ Act(e) ==
       [] e.act = "MarkFailed"    -> \E p \in Workers : MarkFailed(p)
       [] e.act = "WfPersist"     -> \E p \in Workers : WfPersist(p)
       [] e.act = "WfTimers"      -> \E p \in Workers : WfTimers(p)
+      [] e.act = "WfRearm"       -> \E p \in Workers : WfRearm(p)
       [] e.act = "TmExec"        -> \E p \in Workers : TmExec(p)
       [] e.act = "TmSched"       -> \E p \in Workers : TmSched(p)
       [] e.act = "Finish"        -> \E p \in Workers : Finish(p)

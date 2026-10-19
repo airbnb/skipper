@@ -77,6 +77,7 @@ class WorkflowExecutionTaskHandlerTest {
     private lateinit var mockScheduler: Scheduler
     private val unexpectedErrorRetryDelay = Duration.ofSeconds(10)
     private val metrics: Metrics = NoOpMetrics.INSTANCE
+    private val orphanedTimerCounter = "workflowExecutionTaskHandler.orphanedTimerTasksRescheduled"
     private lateinit var mockEventPublisher: EventPublisher
     private lateinit var skipperEngine: SkipperEngine
     private lateinit var mockFeatureGate: FeatureGate
@@ -533,7 +534,7 @@ class WorkflowExecutionTaskHandlerTest {
     /**
      * Runs one execution that loads [loaded] timers, ends in [newStatus] and marks [touched] dirty, as
      * `waitUntil` does when it creates or cancels a timer. Timers listed in [withTask] already have a
-     * TIMER task; every other timer's task is missing. Returns the counters the handler emitted.
+     * TIMER task; every other timer's task is missing. Returns the counters the handler incremented.
      */
     private fun runWithLoadedTimers(
         loaded: kotlin.collections.List<Timer>,
@@ -579,7 +580,7 @@ class WorkflowExecutionTaskHandlerTest {
             whenever(mockScheduler.getTask<Timer>(eq(timer.getUniqueId()))).thenReturn(task)
         }
         handlerWith(recordingMetrics).handle(TestUtils.getTestTask(workflowInstance), executor).join()
-        return recordingMetrics.counters
+        return recordingMetrics.increments
     }
 
     @Test
@@ -605,7 +606,18 @@ class WorkflowExecutionTaskHandlerTest {
         assertEquals(orphaned.getUniqueId(), request.dedupToken)
         assertEquals(orphaned, request.payload)
         assertEquals(orphaned.expiresAt, request.runAfter)
-        assertEquals(1, counters.count { it == "workflowExecutionTaskHandler.orphanedTimerTasksRescheduled" })
+        assertEquals(1, counters.count { it == orphanedTimerCounter })
+    }
+
+    @Test
+    fun testFailedRescheduleOfAnOrphanedTimerIsNotCounted() {
+        whenever(mockScheduler.schedule(any<ScheduleRequest<Any>>())).thenThrow(IllegalStateException("store down"))
+
+        val counters = runWithLoadedTimers(loaded = listOf(loadedTimer("orphaned", Timer.Status.ACTIVE)))
+
+        verify(mockScheduler, times(1)).schedule(any<ScheduleRequest<Any>>())
+        assertEquals(0, counters.count { it == orphanedTimerCounter }, "a schedule that threw repaired nothing")
+        assertTrue(counters.contains("workflowExecutionTaskHandler.handleExecutionUnexpectedError"), "it is retried")
     }
 
     @Test
@@ -738,12 +750,24 @@ class WorkflowExecutionTaskHandlerTest {
     private class RecordingMetrics : NoOpMetrics() {
         val counters = mutableListOf<String>()
 
+        /** The tagged counters actually incremented, one entry per increment. */
+        val increments = mutableListOf<String>()
+
         override fun counter(
             tags: kotlin.collections.Map<String, String>,
             vararg names: String
         ): SkipperCounter {
-            counters.add(names.joinToString("."))
-            return super.counter(tags, *names)
+            val name = names.joinToString(".")
+            counters.add(name)
+            return object : SkipperCounter {
+                override fun inc() {
+                    increments.add(name)
+                }
+
+                override fun inc(n: Long) {
+                    repeat(n.toInt()) { increments.add(name) }
+                }
+            }
         }
     }
 
