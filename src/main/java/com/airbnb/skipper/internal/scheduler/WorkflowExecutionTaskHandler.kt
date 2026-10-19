@@ -547,25 +547,59 @@ class WorkflowExecutionTaskHandler
                 updateResult._1.workflowId,
                 updateResult._1,
             )
-            if (!updateResult._3.isEmpty) {
-                for (newTimer in updateResult._3) {
-                    if (!newTimer.status.isTerminal) {
-                        // If a timer was created, we'll schedule it for execution
-                        val scheduledTask =
-                            scheduler.schedule(
-                                ScheduleRequest.builder<Timer>()
-                                    .id(newTimer.getUniqueId())
-                                    .dedupToken(newTimer.getUniqueId())
-                                    .payload(newTimer)
-                                    .type(Task.Type.TIMER)
-                                    .runAfter(newTimer.expiresAt)
-                                    .build(),
-                            )
-                        log.debug("scheduled timer task {}", scheduledTask)
-                    }
+            for (newTimer in updateResult._3) {
+                if (!newTimer.status.isTerminal) {
+                    // If a timer was created, we'll schedule it for execution
+                    scheduleTimerTask(newTimer)
                 }
             }
+            if (!updateResult._1.status.isTerminal()) {
+                rearmOrphanedTimers(context)
+            }
             return result
+        }
+
+        /**
+         * Schedules the TIMER task for each timer this execution loaded as ACTIVE and left untouched, if
+         * that task is missing.
+         *
+         * A timer row commits with the workflow instance, but its task is a separate write. If scheduling
+         * fails after the commit, the execution is retried, and the retry finds the timer already ACTIVE,
+         * so it creates no timer and schedules nothing. Without this the workflow waits forever on a timer
+         * nothing will fire. A task that exists is left alone: scheduling again would replace it, and
+         * another worker may hold its lease.
+         */
+        private fun rearmOrphanedTimers(context: ExecutionContext) {
+            val touchedTimerIds = context.dirtyTimers.map { it.id }.toSet()
+            for (timer in context.timers) {
+                if (timer.status != Timer.Status.ACTIVE || timer.id in touchedTimerIds) {
+                    continue
+                }
+                if (scheduler.getTask<Timer>(timer.getUniqueId()).isEmpty) {
+                    log.warn("timer {} is ACTIVE but has no TIMER task; scheduling it again", timer.getUniqueId())
+                    metrics
+                        .counter(
+                            ImmutableMap.of("workflowClass", context.workflow.workflowClass.simpleName),
+                            METRICS_COMPONENT,
+                            "orphanedTimerTasksRescheduled",
+                        ).inc()
+                    scheduleTimerTask(timer)
+                }
+            }
+        }
+
+        private fun scheduleTimerTask(timer: Timer) {
+            val scheduledTask =
+                scheduler.schedule(
+                    ScheduleRequest.builder<Timer>()
+                        .id(timer.getUniqueId())
+                        .dedupToken(timer.getUniqueId())
+                        .payload(timer)
+                        .type(Task.Type.TIMER)
+                        .runAfter(timer.expiresAt)
+                        .build(),
+                )
+            log.debug("scheduled timer task {}", scheduledTask)
         }
 
         private fun notifyNonRetryableError(

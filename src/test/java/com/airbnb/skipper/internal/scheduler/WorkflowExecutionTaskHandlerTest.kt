@@ -516,6 +516,121 @@ class WorkflowExecutionTaskHandlerTest {
         assertEquals(timer2, requests[1].payload)
     }
 
+    private fun loadedTimer(
+        id: String,
+        status: Timer.Status
+    ): Timer =
+        Timer(
+            TestUtils.getWorkflowInstance().workflowId,
+            id,
+            null,
+            Duration.ofMinutes(1),
+            Instant.EPOCH.plus(Duration.ofMinutes(1)),
+            status,
+            0
+        )
+
+    /**
+     * Runs one execution that loads [loaded] timers, ends in [newStatus] and marks [touched] dirty, as
+     * `waitUntil` does when it creates or cancels a timer. Timers listed in [withTask] already have a
+     * TIMER task; every other timer's task is missing. Returns the counters the handler emitted.
+     */
+    private fun runWithLoadedTimers(
+        loaded: kotlin.collections.List<Timer>,
+        withTask: Set<String> = emptySet(),
+        touched: kotlin.collections.List<Timer> = emptyList(),
+        newStatus: WorkflowInstance.Status = WorkflowInstance.Status.WAITING
+    ): kotlin.collections.List<String> {
+        val recordingMetrics = RecordingMetrics()
+        val result =
+            WorkflowExecutor.ExecutionResult.builder()
+                .newStatus(newStatus)
+                .waitDuration(Duration.ofMinutes(1))
+                .result(if (newStatus.isTerminal()) Either.right("done") else null)
+                .build()
+        whenever(mockWorkflowExecutor.executeWorkflowMethod(any(), any(), any())).doAnswer { invocation ->
+            val context = invocation.getArgument<ExecutionContext>(2)
+            touched.forEach { context.addDirtyTimer(it) }
+            CompletableFuture.completedFuture(result)
+        }
+        val workflowInstance = TestUtils.getWorkflowInstance()
+        whenever(mockWorkflowStore.getWorkflow(eq(workflowInstance.workflowId))).thenReturn(Option.of(workflowInstance))
+        whenever(mockWorkflowStore.getTimers(eq(workflowInstance.workflowId))).thenReturn(List.ofAll(loaded))
+        whenever(mockWorkflowStore.updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any()))
+            .thenReturn(
+                Tuple3(workflowInstance.toBuilder().status(newStatus).build(), List.empty(), List.ofAll(touched)),
+            )
+        for (timer in loaded) {
+            val task: Option<Task<Timer>> =
+                if (timer.id in withTask) {
+                    Option.of(
+                        Task.builder<Timer>()
+                            .id(timer.getUniqueId())
+                            .dedupToken(timer.getUniqueId())
+                            .type(Task.Type.TIMER)
+                            .payload(timer)
+                            .createdAt(Instant.EPOCH)
+                            .executionTimeout(Duration.ofSeconds(30))
+                            .build(),
+                    )
+                } else {
+                    Option.none()
+                }
+            whenever(mockScheduler.getTask<Timer>(eq(timer.getUniqueId()))).thenReturn(task)
+        }
+        handlerWith(recordingMetrics).handle(TestUtils.getTestTask(workflowInstance), executor).join()
+        return recordingMetrics.counters
+    }
+
+    @Test
+    fun testWaitingExecutionReschedulesOnlyActiveUntouchedTimersWhoseTaskIsMissing() {
+        val orphaned = loadedTimer("orphaned", Timer.Status.ACTIVE)
+        val counters =
+            runWithLoadedTimers(
+                loaded =
+                    listOf(
+                        orphaned,
+                        loadedTimer("armed", Timer.Status.ACTIVE),
+                        loadedTimer("expired", Timer.Status.EXPIRED),
+                        loadedTimer("cancelled", Timer.Status.CANCELLED),
+                    ),
+                withTask = setOf("armed"),
+            )
+
+        val captor = argumentCaptor<ScheduleRequest<Timer>>()
+        verify(mockScheduler, times(1)).schedule(captor.capture())
+        val request = captor.firstValue
+        assertEquals(Task.Type.TIMER, request.type)
+        assertEquals(orphaned.getUniqueId(), request.id)
+        assertEquals(orphaned.getUniqueId(), request.dedupToken)
+        assertEquals(orphaned, request.payload)
+        assertEquals(orphaned.expiresAt, request.runAfter)
+        assertEquals(1, counters.count { it == "workflowExecutionTaskHandler.orphanedTimerTasksRescheduled" })
+    }
+
+    @Test
+    fun testTimerThisExecutionTouchedIsNotRescheduled() {
+        val loaded = loadedTimer("deadline", Timer.Status.ACTIVE)
+        // The condition was met: waitUntil cancels the loaded timer, so its missing task is expected.
+        runWithLoadedTimers(
+            loaded = listOf(loaded),
+            touched = listOf(loaded.copy(status = Timer.Status.CANCELLED)),
+        )
+
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<Any>>())
+        verify(mockScheduler, never()).getTask<Timer>(eq(loaded.getUniqueId()))
+    }
+
+    @Test
+    fun testTerminalExecutionDoesNotRescheduleTimers() {
+        runWithLoadedTimers(
+            loaded = listOf(loadedTimer("deadline", Timer.Status.ACTIVE)),
+            newStatus = WorkflowInstance.Status.COMPLETED,
+        )
+
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<Any>>())
+    }
+
     @Test
     fun testHandleWhenExecutionReturnsRetriesExhaustedError() {
         val newState: Map<String, Any?> = HashMap.of("name", "Ricardo")
