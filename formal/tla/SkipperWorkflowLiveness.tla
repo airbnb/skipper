@@ -272,14 +272,16 @@ WfPersist(p) ==
                  SetW(p, [w EXCEPT !.pc = "finish", !.re = {}, !.fop = "retry", !.fra = ra])
     /\ UNCHANGED <<row, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
-(* After the transaction, one TIMER task is scheduled per timer the run created.        *)
+(* After the transaction, one TIMER task is scheduled per timer the run created. Like   *)
+(* the re-arm, it honours an active lease without a bump: an overlapping execution may  *)
+(* already have re-armed this timer, and a worker leased the task.                      *)
 WfTimers(p) ==
     /\ wk[p].pc = "wf_timers"
     /\ IF wk[p].pend = {}
        THEN /\ SetW(p, [wk[p] EXCEPT !.pc = "wf_rearm"])
             /\ UNCHANGED row
        ELSE \E k \in wk[p].pend, ra \in {DUE, SOON, LATER} :
-              /\ row' = [row EXCEPT ![k] = Sched(k, ra, FALSE)]
+              /\ row' = [row EXCEPT ![k] = SchedReq(k, ra, TRUE, FALSE)]
               /\ SetW(p, [wk[p] EXCEPT !.pend = @ \ {k}])
     /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
@@ -289,7 +291,7 @@ WfTimers(p) ==
 (* (getTask) and the schedule are separate steps: an overlapping execution of the same   *)
 (* workflow (a lease that lapsed under its holder) can create, and a worker lease, the   *)
 (* task in between. The schedule honours an active lease, without a version bump, so a  *)
-(* leased task is left alone (RearmKeepsLeases).                                        *)
+(* leased task is left alone (TimerSchedulesKeepLeases).                                *)
 WfRearmCheck(p) ==
     /\ wk[p].pc = "wf_rearm" /\ wk[p].re # {}
     /\ \E k \in wk[p].re :
@@ -576,13 +578,17 @@ RunningIsDriven ==
 WaitingIsDriven ==
     wf.st = "WAITING" => (\E k \in Timers : TimerArmed(k)) \/ WfDriven
 
-(* A re-arm never replaces a TIMER task someone holds a lease on: the check that found it *)
-(* missing may be stale by the time the schedule runs.                                  *)
-RearmKeepsLeases ==
+(* Worker p schedules timer k's task in this step: a new timer's (WfTimers) or a        *)
+(* re-armed one's (WfRearm).                                                             *)
+SchedulesTimer(p, k) ==
+    \/ wk[p].pc = "wf_timers" /\ k \in wk[p].pend /\ wk'[p].pc = "wf_timers" /\ k \notin wk'[p].pend
+    \/ wk[p].pc = "wf_rearm" /\ k \in wk[p].miss /\ wk'[p].pc = "wf_rearm" /\ k \notin wk'[p].miss
+
+(* The engine never replaces a TIMER task someone holds a lease on when it schedules a   *)
+(* timer's task: an overlapping execution may have scheduled it, and a worker leased it. *)
+TimerSchedulesKeepLeases ==
     [][\A p \in Workers, k \in Timers :
-         (wk[p].pc = "wf_rearm" /\ k \in wk[p].miss /\ ActiveLease(row[k])
-          /\ wk'[p].pc = "wf_rearm" /\ k \notin wk'[p].miss)
-         => row'[k] = row[k]]_vars
+         SchedulesTimer(p, k) /\ ActiveLease(row[k]) => row'[k] = row[k]]_vars
 
 (* Terminal states are absorbing.                                                       *)
 TerminalIsStable == [][wf.st \in Terminal => wf'.st = wf.st]_vars

@@ -554,7 +554,34 @@ class WorkflowExecutionTaskHandler
                 }
             }
             if (!updateResult._1.status.isTerminal()) {
-                rearmOrphanedTimers(context)
+                try {
+                    rearmOrphanedTimers(context)
+                } catch (
+                    @Suppress("TooGenericExceptionCaught") e: Exception
+                ) {
+                    // The execution's outcome is committed and still stands, so the caller is told what
+                    // it is; only the workflow task runs again, which repeats the check.
+                    log.error(
+                        "unable to re-arm timers of workflow instance with id={}. retrying in {}",
+                        workflowInstance.workflowId,
+                        unexpectedErrorRetryDelay,
+                        e,
+                    )
+                    metrics
+                        .counter(
+                            ImmutableMap.of("workflowClass", workflowInstance.workflowClass.simpleName),
+                            METRICS_COMPONENT,
+                            "orphanedTimerRearmErrors",
+                        ).inc()
+                    return WorkflowExecutor.ExecutionResult.builder()
+                        .result(result.result)
+                        .resultIsAsync(result.isResultIsAsync)
+                        .newState(result.newState)
+                        .newStatus(result.newStatus)
+                        .waitDuration(result.waitDuration)
+                        .retryDelay(unexpectedErrorRetryDelay)
+                        .build()
+                }
             }
             return result
         }
@@ -568,8 +595,8 @@ class WorkflowExecutionTaskHandler
          * so it creates no timer and schedules nothing. Without this the workflow waits forever on a timer
          * nothing will fire. A task that exists is left alone: scheduling again would replace it, and
          * another worker may hold its lease. The check and the schedule are separate calls, and an
-         * overlapping execution of the same workflow can create and lease the task in between, so the
-         * schedule also honours an active lease, which the scheduler checks in the same write.
+         * overlapping execution of the same workflow can create and lease the task in between, which
+         * [scheduleTimerTask] guards against. A failure here is retried without failing the execution.
          */
         private fun rearmOrphanedTimers(context: ExecutionContext) {
             val touchedTimerIds = context.dirtyTimers.map { it.id }.toSet()
@@ -580,7 +607,7 @@ class WorkflowExecutionTaskHandler
                 if (scheduler.getTask<Timer>(timer.getUniqueId()).isEmpty) {
                     log.warn("timer {} is ACTIVE but has no TIMER task; scheduling it again", timer.getUniqueId())
                     // Counted once the task exists: a schedule that throws is retried, not a repair.
-                    scheduleTimerTask(timer, honorActiveLease = true)
+                    scheduleTimerTask(timer)
                     metrics
                         .counter(
                             ImmutableMap.of("workflowClass", context.workflow.workflowClass.simpleName),
@@ -591,10 +618,13 @@ class WorkflowExecutionTaskHandler
             }
         }
 
-        private fun scheduleTimerTask(
-            timer: Timer,
-            honorActiveLease: Boolean = false,
-        ) {
+        /**
+         * Schedules [timer]'s TIMER task, leaving it alone if it already exists under an active lease
+         * (no version bump), which the scheduler checks in the same write. Overlapping executions of
+         * one workflow can both schedule a timer's task, a new one or a re-armed one, and a worker may
+         * already be running it.
+         */
+        private fun scheduleTimerTask(timer: Timer) {
             val scheduledTask =
                 scheduler.schedule(
                     ScheduleRequest.builder<Timer>()
@@ -603,7 +633,7 @@ class WorkflowExecutionTaskHandler
                         .payload(timer)
                         .type(Task.Type.TIMER)
                         .runAfter(timer.expiresAt)
-                        .honorActiveLeaseWhenOverwriting(honorActiveLease)
+                        .honorActiveLeaseWhenOverwriting(true)
                         .build(),
                 )
             log.debug("scheduled timer task {}", scheduledTask)
