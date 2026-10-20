@@ -109,7 +109,7 @@ ActiveLease(r) == r.st \in {"PENDING", "RUNNING"} /\ r.ra # LATER
 (* Scheduler.schedule for task t: insert, or overwrite resetting status and retry count;*)
 (* when honouring an active lease, leave the row alone or (bump) bump only its version  *)
 (* so the holder's final versioned write fails and it reruns the task. The lease check  *)
-(* and the write are one transaction (JDBC) or one versioned write (UDS).               *)
+(* and the write are one transaction (JDBC) or one versioned write.                     *)
 SchedReq(t, ra, honor, bump) ==
     IF row[t].st = "NONE" THEN [st |-> "PENDING", ra |-> ra, ver |-> 1, rc |-> 0]
     ELSE IF honor /\ ActiveLease(row[t])
