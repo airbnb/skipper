@@ -81,7 +81,7 @@ class AdminResource
             ObjectMapper()
                 .setFilterProvider(
                     SimpleFilterProvider()
-                        .addFilter(ThriftUnionFilter.ID, ThriftUnionFilter())
+                        .addFilter("thriftUnionFieldFilter", ThriftUnionFilter())
                         .setFailOnUnknownId(false),
                 )
                 .registerModule(JavaTimeModule())

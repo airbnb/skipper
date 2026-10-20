@@ -200,7 +200,7 @@ class SimplePojoSerde(
                 .setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
                 .setVisibility(PropertyAccessor.CREATOR, JsonAutoDetect.Visibility.ANY)
                 .setFilterProvider(
-                    SimpleFilterProvider().addFilter(ThriftUnionFilter.ID, ThriftUnionFilter())
+                    SimpleFilterProvider().addFilter("thriftUnionFieldFilter", ThriftUnionFilter())
                 )
                 .registerModule(Jdk8Module())
                 .registerModule(ParameterNamesModule())

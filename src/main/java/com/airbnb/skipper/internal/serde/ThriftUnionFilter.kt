@@ -60,9 +60,6 @@ internal class ThriftUnionFilter : SimpleBeanPropertyFilter(), Serializable {
     override fun include(writer: PropertyWriter): Boolean = true
 
     companion object {
-        /** The `@JsonFilter` id Airbnb's Thrift codegen puts on every union class. */
-        const val ID = "thriftUnionFieldFilter"
-
         private val GET_JSON_NAME_CACHE = ConcurrentHashMap<Class<*>, Method>()
     }
 }
