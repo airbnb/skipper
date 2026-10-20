@@ -6,6 +6,7 @@ import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.factory.SkipperRuntime
 import com.example.adminjson.Greeting
+import com.example.adminjson.Payout
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.time.Instant
@@ -31,6 +32,11 @@ class AdminResourceJsonTest {
         open fun echo(input: Greeting): String = "hello ${input.firstName}"
     }
 
+    open class PayoutWorkflow : Workflow() {
+        @WorkflowMethod
+        open fun pay(input: Payout): String = "paid"
+    }
+
     private lateinit var runtime: SkipperRuntime
     private lateinit var admin: AdminResource
     private val plainMapper = ObjectMapper()
@@ -40,11 +46,9 @@ class AdminResourceJsonTest {
         runtime = SkipperRuntime(SkipperConfig.forService("admin-json-test"))
         runtime.skipperSchedulerManager.get().start()
         runtime.workflowFactory.get().invoke(EchoWorkflow::class.java, WORKFLOW_ID).echo(Greeting("Ada"))
-        val deadline = System.currentTimeMillis() + 10_000
-        while (runtime.workflowStore.get().getWorkflow(WORKFLOW_ID).get().status != WorkflowInstance.Status.COMPLETED) {
-            check(System.currentTimeMillis() < deadline) { "workflow did not complete" }
-            Thread.sleep(50)
-        }
+        runtime.workflowFactory.get().invoke(PayoutWorkflow::class.java, UNION_WORKFLOW_ID).pay(Payout(amountMicros = 42))
+        awaitCompleted(WORKFLOW_ID)
+        awaitCompleted(UNION_WORKFLOW_ID)
         admin = runtime.adminResource.get()
     }
 
@@ -69,11 +73,11 @@ class AdminResourceJsonTest {
         assertTrue(stats.has("scheduler_backlog_count"), stats.toString())
 
         val types = json(admin.listWorkflowTypes())
-        assertEquals(EchoWorkflow::class.java.name, types[0]["workflow_class"].asText())
-        assertEquals("echo", types[0]["workflow_method"].asText())
+        val echoType = types.single { it["workflow_class"].asText() == EchoWorkflow::class.java.name }
+        assertEquals("echo", echoType["workflow_method"].asText())
 
         val search = json(admin.searchWorkflows(null, null, null, null, null, 50, null))
-        assertEquals(WORKFLOW_ID, search["workflows"][0]["workflow_id"].asText())
+        assertTrue(search["workflows"].any { it["workflow_id"].asText() == WORKFLOW_ID }, search.toString())
         assertTrue(search.has("next_cursor"), search.toString())
     }
 
@@ -95,9 +99,25 @@ class AdminResourceJsonTest {
         assertEquals("hello Ada", detail["instance"]["result"]["ok"]["value"]?.asText(), detail.toString())
     }
 
+    @Test
+    fun thriftUnionInputRendersOnlyItsSetField() {
+        val input = json(admin.getWorkflowInstance(UNION_WORKFLOW_ID))["instance"]["input"]["value"]
+        assertEquals(42, input["amountMicros"]?.asLong(), input.toString())
+        assertFalse(input.has("giftCardCode"), "unset union fields must be filtered out: $input")
+    }
+
+    private fun awaitCompleted(workflowId: String) {
+        val deadline = System.currentTimeMillis() + 10_000
+        while (runtime.workflowStore.get().getWorkflow(workflowId).get().status != WorkflowInstance.Status.COMPLETED) {
+            check(System.currentTimeMillis() < deadline) { "workflow $workflowId did not complete" }
+            Thread.sleep(50)
+        }
+    }
+
     private fun json(response: Response): JsonNode = plainMapper.readTree(response.entity as String)
 
     companion object {
         private const val WORKFLOW_ID = "admin-json-wf"
+        private const val UNION_WORKFLOW_ID = "admin-json-union-wf"
     }
 }

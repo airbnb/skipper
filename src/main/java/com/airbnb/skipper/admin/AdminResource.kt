@@ -13,6 +13,7 @@ import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.common.SneakyThrow
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
+import com.airbnb.skipper.internal.serde.ThriftUnionFilter
 import com.airbnb.skipper.internal.storage.WorkflowSearchFilter
 import com.airbnb.skipper.internal.storage.WorkflowSortDirection
 import com.airbnb.skipper.internal.storage.WorkflowSortField
@@ -24,6 +25,7 @@ import com.fasterxml.jackson.databind.cfg.MapperConfig
 import com.fasterxml.jackson.databind.introspect.AnnotatedField
 import com.fasterxml.jackson.databind.introspect.AnnotatedMethod
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter
+import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.google.common.collect.ImmutableList
@@ -70,8 +72,18 @@ class AdminResource
         // ObjectMapper configuration) the host's JAX-RS stack happens to have. The bundled index.html
         // depends on this format: snake_case keys and ISO-8601 timestamps. A host needs no JSON
         // MessageBodyWriter to serve the admin UI.
+        //
+        // User payloads may carry `@JsonFilter` annotations, and Jackson refuses to serialize a
+        // filtered class it has no filter for. Thrift unions get the same filter the persistence
+        // mapper uses, so the UI shows only the set field; any other filter id (e.g. from a mapper
+        // the host plugged into SkipperConfig) serializes unfiltered rather than failing the page.
         private val objectMapper: ObjectMapper =
             ObjectMapper()
+                .setFilterProvider(
+                    SimpleFilterProvider()
+                        .addFilter(ThriftUnionFilter.ID, ThriftUnionFilter())
+                        .setFailOnUnknownId(false),
+                )
                 .registerModule(JavaTimeModule())
                 .registerModule(Jdk8Module())
                 .setPropertyNamingStrategy(SkipperSnakeCase())
