@@ -809,6 +809,23 @@ class SkipperEngineTest {
         verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
     }
 
+    @Test
+    fun testForceDeleteWorkflow_removesAPendingCompensationTaskToo() {
+        val instance = TestUtils.getWorkflowInstance().toBuilder().status(WorkflowInstance.Status.CANCELLED).build()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+        val executionTask = getTestTask(instance)
+        val compensationTask = getTestTask(instance).toBuilder().id("${instance.workflowId}-compensation").build()
+        whenever(mockPersistentScheduler.getTask<Any>(eq(instance.workflowId))).thenReturn(Option.of(executionTask as Task<Any>))
+        whenever(mockPersistentScheduler.getTask<Any>(eq("${instance.workflowId}-compensation")))
+            .thenReturn(Option.of(compensationTask as Task<Any>))
+
+        skipperEngine.forceDeleteWorkflow(instance.workflowId)
+
+        verify(mockPersistentScheduler).remove(executionTask)
+        verify(mockPersistentScheduler).remove(compensationTask)
+        verify(mockWorkflowStore).deleteWorkflow(instance.workflowId)
+    }
+
     /** A thread registered as running an action for [workflowId], blocked until interrupted. */
     private fun blockedActionThread(workflowId: String): Pair<Thread, AtomicBoolean> {
         val entered = CountDownLatch(1)

@@ -628,7 +628,8 @@ open class SkipperEngine
          * invoked if one is registered. With the `INFLIGHT_CANCELLATION_CHECKPOINTS` gate on, a
          * workflow whose method declares `@WorkflowMethod(compensateOnCancel = true)` keeps its
          * execution task, so its completed actions are compensated once the execution settles.
-         * Cancelling it again only re-requests that execution, so a failed cancel can be retried.
+         * Cancelling it again only re-requests that execution; the new reason is dropped and the
+         * callback does not fire again.
          *
          * @param workflowId The id of the workflow to cancel
          * @param reason The reason for cancelling the workflow
@@ -741,10 +742,12 @@ open class SkipperEngine
             if (!instance.status.isTerminal()) {
                 cancelWorkflow(workflowId, "Force-deleted by admin")
             }
-            // Remove from scheduler (if still present)
-            val task = persistentScheduler.getTask<Any>(workflowId)
-            if (task.isDefined) {
-                persistentScheduler.remove(task.get())
+            // Remove from scheduler (if still present), including a pending compensation
+            for (taskId in listOf(workflowId, compensationTaskId(workflowId))) {
+                val task = persistentScheduler.getTask<Any>(taskId)
+                if (task.isDefined) {
+                    persistentScheduler.remove(task.get())
+                }
             }
             // Delete from database
             workflowStore.deleteWorkflow(workflowId)

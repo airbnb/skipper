@@ -117,8 +117,10 @@ and are lost if the worker dies first or the cancel arrives just as the run save
 instance does not re-run its actions, so those results are lost. Use `IMMEDIATE_CHECKPOINT` on
 compensable actions where that matters.
 
-Cancelling an already cancelled instance only re-requests its compensation, so a cancel that failed
-partway can be retried. This needs the `INFLIGHT_CANCELLATION_CHECKPOINTS` feature gate on.
+Cancelling an already cancelled instance only re-requests its compensation; the new reason is
+dropped and `onCancelled` does not fire again. This needs the `INFLIGHT_CANCELLATION_CHECKPOINTS`
+feature gate on, at cancel time and until the instance has settled: turning the gate off in between
+leaves those instances `CANCELLED` without compensation.
 
 ## Reacting to compensation
 

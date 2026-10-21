@@ -1651,6 +1651,23 @@ abstract class BaseWorkflowIntegTest {
         }
 
         @Test
+        fun testTimerFiringAfterCompensationCompletedLeavesNoTask() {
+            // The wait's timer fires after the cancelled instance has compensated. That run must
+            // finish its task rather than retry forever.
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
+            workflow.oneStepThenShortWait()
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.WAITING)
+
+            skipperEngine.cancelWorkflow(workflowId, "cancelled while waiting")
+
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            Thread.sleep(4_000)
+            helper.waitForExecutionFlowToFinish()
+            assertThat(scheduler.getTask<Any>(workflowId).isEmpty).isTrue()
+            assertThat(workflowStore.getWorkflow(workflowId).get().status).isEqualTo(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+        }
+
+        @Test
         fun testCancelWhileWaitingCompensatesTheCompletedAction() {
             val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
             workflow.oneStepThenWait()

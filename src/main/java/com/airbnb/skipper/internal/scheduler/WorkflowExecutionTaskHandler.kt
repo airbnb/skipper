@@ -149,6 +149,19 @@ class WorkflowExecutionTaskHandler
                     return CompletableFuture.completedFuture(timeoutResult)
                 }
             }
+            if (workflowInstance.status.isCompensationInProgress() ||
+                workflowInstance.status == WorkflowInstance.Status.COMPENSATION_COMPLETED
+            ) {
+                // A late timer or signal can start a run of an instance that is compensating or has
+                // compensated. There is nothing to execute, and a status write would be rejected (a
+                // result is stored, but these statuses may not carry one), so finish the task here.
+                log.info(
+                    "workflow instance with id={} is {}; nothing to execute",
+                    workflowInstance.workflowId,
+                    workflowInstance.status,
+                )
+                return CompletableFuture.completedFuture(Option.none())
+            }
             if (workflowInstance.status == WorkflowInstance.Status.TIMEOUT) {
                 // If the workflow is already in a timeout state, we won't attempt to execute it.
                 // Based on how the TIMEOUT logic works (see above), if we were able to update the
@@ -357,8 +370,9 @@ class WorkflowExecutionTaskHandler
 
         /**
          * Schedules compensation for a cancelled workflow, the same task a failed workflow gets.
-         * An action the cancel interrupted has no checkpoint, so it is not compensated. The
-         * CANCEL_COMPENSATION event and the log name it whether or not a task was scheduled.
+         * An action the cancel interrupted has no checkpoint, so it is not compensated; the
+         * CANCEL_COMPENSATION event names it. A run with nothing to schedule and nothing
+         * interrupted publishes no event, so a late timer or signal does not repeat it.
          */
         private fun scheduleCancelCompensation(
             workflowInstance: WorkflowInstance,
@@ -368,6 +382,9 @@ class WorkflowExecutionTaskHandler
             val scheduled = scheduleCompensationIfNeeded(workflowInstance, executionContext)
             val error = result.result?.takeIf { it.isLeft }?.left
             val interruptedAction = (error as? WorkflowCancelledException)?.interruptedAction
+            if (!scheduled && interruptedAction == null) {
+                return
+            }
             val detail =
                 "compensation scheduled: $scheduled" +
                     if (interruptedAction == null) "" else ", interrupted action not compensated: $interruptedAction"
@@ -511,14 +528,30 @@ class WorkflowExecutionTaskHandler
                         workflowInstance.workflowId,
                         result.newStatus,
                     )
+                    var retryDelay: Duration? = null
                     if (WorkflowInspector.isCompensateOnCancel(workflowInstance.workflowClass, workflowInstance.workflowMethod) &&
                         !compensationPending(workflowInstance.workflowId)
                     ) {
-                        scheduleCancelCompensation(workflowInstance, context, result)
+                        try {
+                            scheduleCancelCompensation(workflowInstance, context, result)
+                        } catch (
+                            @Suppress("TooGenericExceptionCaught") e: Exception
+                        ) {
+                            // The cancel stands; only the compensation request failed. Retry this
+                            // settle later instead of reporting a retryable error on a cancelled run.
+                            log.error(
+                                "failed to request compensation for cancelled workflow instance with id={}",
+                                workflowInstance.workflowId,
+                                e,
+                            )
+                            metrics.counter(METRICS_COMPONENT, "cancelCompensationRequestError").inc()
+                            retryDelay = unexpectedErrorRetryDelay
+                        }
                     }
                     return WorkflowExecutor.ExecutionResult.builder()
                         .newStatus(WorkflowInstance.Status.CANCELLED)
                         .result(Either.left(storedCancellation(stored.get())))
+                        .retryDelay(retryDelay)
                         .build()
                 }
             }
