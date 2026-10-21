@@ -152,9 +152,9 @@ class WorkflowExecutionTaskHandler
             if (workflowInstance.status.isCompensationInProgress() ||
                 workflowInstance.status == WorkflowInstance.Status.COMPENSATION_COMPLETED
             ) {
-                // A late timer or signal can start a run of an instance that is compensating or has
-                // compensated. There is nothing to execute, and a status write would be rejected (a
-                // result is stored, but these statuses may not carry one), so finish the task here.
+                // A late timer or signal can start a run after compensation has begun or finished.
+                // There is nothing to execute, and saving a result under these statuses would be
+                // rejected, so end the task here.
                 log.info(
                     "workflow instance with id={} is {}; nothing to execute",
                     workflowInstance.workflowId,
@@ -371,8 +371,8 @@ class WorkflowExecutionTaskHandler
         /**
          * Schedules compensation for a cancelled workflow, the same task a failed workflow gets.
          * An action the cancel interrupted has no checkpoint, so it is not compensated; the
-         * CANCEL_COMPENSATION event names it. A run with nothing to schedule and nothing
-         * interrupted publishes no event, so a late timer or signal does not repeat it.
+         * CANCEL_COMPENSATION event names that action. A run that schedules nothing and interrupted
+         * nothing publishes no event, so a late timer or signal does not publish a duplicate.
          */
         private fun scheduleCancelCompensation(
             workflowInstance: WorkflowInstance,
@@ -380,8 +380,7 @@ class WorkflowExecutionTaskHandler
             result: WorkflowExecutor.ExecutionResult,
         ) {
             val scheduled = scheduleCompensationIfNeeded(workflowInstance, executionContext)
-            val error = result.result?.takeIf { it.isLeft }?.left
-            val interruptedAction = (error as? WorkflowCancelledException)?.interruptedAction
+            val interruptedAction = interruptedAction(result)
             if (!scheduled && interruptedAction == null) {
                 return
             }
@@ -390,6 +389,12 @@ class WorkflowExecutionTaskHandler
                     if (interruptedAction == null) "" else ", interrupted action not compensated: $interruptedAction"
             log.info("workflow instance with id={} was cancelled. {}", workflowInstance.workflowId, detail)
             eventPublisher.publishEvent(Event.create(Event.Type.CANCEL_COMPENSATION, workflowInstance.workflowId, detail))
+        }
+
+        /** `Class#method` of the action a cancel interrupted in this run, if any. */
+        private fun interruptedAction(result: WorkflowExecutor.ExecutionResult): String? {
+            val error = result.result?.takeIf { it.isLeft }?.left
+            return (error as? WorkflowCancelledException)?.interruptedAction
         }
 
         /** The cancellation cancelWorkflow recorded, as loaded from the store. */
@@ -529,19 +534,21 @@ class WorkflowExecutionTaskHandler
                         result.newStatus,
                     )
                     var retryDelay: Duration? = null
-                    if (WorkflowInspector.isCompensateOnCancel(workflowInstance.workflowClass, workflowInstance.workflowMethod) &&
-                        !compensationPending(workflowInstance.workflowId)
-                    ) {
+                    if (WorkflowInspector.isCompensateOnCancel(workflowInstance.workflowClass, workflowInstance.workflowMethod)) {
                         try {
-                            scheduleCancelCompensation(workflowInstance, context, result)
+                            if (!compensationPending(workflowInstance.workflowId)) {
+                                scheduleCancelCompensation(workflowInstance, context, result)
+                            }
                         } catch (
                             @Suppress("TooGenericExceptionCaught") e: Exception
                         ) {
                             // The cancel stands; only the compensation request failed. Retry this
                             // settle later instead of reporting a retryable error on a cancelled run.
                             log.error(
-                                "failed to request compensation for cancelled workflow instance with id={}",
+                                "failed to request compensation for cancelled workflow instance with id={}. " +
+                                    "interruptedActionNotCompensated={}",
                                 workflowInstance.workflowId,
+                                interruptedAction(result),
                                 e,
                             )
                             metrics.counter(METRICS_COMPONENT, "cancelCompensationRequestError").inc()

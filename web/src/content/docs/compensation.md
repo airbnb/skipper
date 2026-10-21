@@ -119,8 +119,8 @@ compensable actions where that matters.
 
 Cancelling an already cancelled instance only re-requests its compensation; the new reason is
 dropped and `onCancelled` does not fire again. This needs the `INFLIGHT_CANCELLATION_CHECKPOINTS`
-feature gate on, at cancel time and until the instance has settled: turning the gate off in between
-leaves those instances `CANCELLED` without compensation.
+feature gate on from the cancel until the instance reaches its final status. If the gate is turned
+off in between, the instance stays `CANCELLED` without compensation.
 
 ## Reacting to compensation
 
