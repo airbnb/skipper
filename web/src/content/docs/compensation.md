@@ -118,9 +118,9 @@ instance does not re-run its actions, so those results are lost. Use `IMMEDIATE_
 compensable actions where that matters.
 
 Cancelling an already cancelled instance only re-requests its compensation; the new reason is
-dropped and `onCancelled` does not fire again. This needs the `INFLIGHT_CANCELLATION_CHECKPOINTS`
-feature gate on from the cancel until the instance reaches its final status. If the gate is turned
-off in between, the instance stays `CANCELLED` without compensation.
+dropped and `onCancelled` does not fire again. Compensation on cancel needs the
+`INFLIGHT_CANCELLATION_CHECKPOINTS` feature gate on from the cancel until the instance reaches its
+final status. If the gate is turned off in between, the instance stays `CANCELLED` without compensation.
 
 ## Reacting to compensation
 

@@ -79,7 +79,7 @@ interface FeatureGate {
          * Re-check the workflow status between actions and stop once it is cancelled, instead of
          * only at the next scheduling boundary. Off by default. Also gates compensation on cancel
          * (`@WorkflowMethod(compensateOnCancel)`): if the gate is turned off after a cancel but
-         * before that run finishes, the instance stays CANCELLED without compensation.
+         * before the instance reaches its final status, it stays CANCELLED without compensation.
          */
         INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints", enabledByDefault = false),
 
