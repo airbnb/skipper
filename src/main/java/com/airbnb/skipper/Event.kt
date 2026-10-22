@@ -34,7 +34,8 @@ data class Event internal constructor(
         ACTION_FAILED,
         ACTION_REPLAY_FROM_CHECKPOINT,
         WORKFLOW_CANCELLED,
-        WORKFLOW_DELETED
+        WORKFLOW_DELETED,
+        CANCEL_COMPENSATION
     }
 
     fun toBuilder(): EventBuilder =

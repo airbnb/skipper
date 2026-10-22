@@ -26,6 +26,7 @@ import com.airbnb.skipper.api.WorkflowInstanceView
 import com.airbnb.skipper.internal.ExecutionContext
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.WorkflowExecutor
+import com.airbnb.skipper.internal.WorkflowInspector
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.api.WaitSignal
 import com.airbnb.skipper.internal.storage.WorkflowStore
@@ -147,6 +148,19 @@ class WorkflowExecutionTaskHandler
                     val timeoutResult = handleWorkflowTimeout(workflowInstance)
                     return CompletableFuture.completedFuture(timeoutResult)
                 }
+            }
+            if (workflowInstance.status.isCompensationInProgress() ||
+                workflowInstance.status == WorkflowInstance.Status.COMPENSATION_COMPLETED
+            ) {
+                // A late timer or signal can start a run after compensation has begun or finished.
+                // There is nothing to execute, and saving a result under these statuses would be
+                // rejected, so end the task here.
+                log.info(
+                    "workflow instance with id={} is {}; nothing to execute",
+                    workflowInstance.workflowId,
+                    workflowInstance.status,
+                )
+                return CompletableFuture.completedFuture(Option.none())
             }
             if (workflowInstance.status == WorkflowInstance.Status.TIMEOUT) {
                 // If the workflow is already in a timeout state, we won't attempt to execute it.
@@ -327,6 +341,62 @@ class WorkflowExecutionTaskHandler
             return Option.some(now.instant().plus(unexpectedErrorRetryDelay))
         }
 
+        /**
+         * Schedules the compensation task when a completed action has a compensation method.
+         * Checkpoints are re-read from the store: IMMEDIATE ones are written by ActionExecutor and
+         * are missing from the context. Returns whether a task was scheduled.
+         */
+        private fun scheduleCompensationIfNeeded(
+            workflowInstance: WorkflowInstance,
+            executionContext: ExecutionContext,
+        ): Boolean {
+            val checkpoints: List<ActionCheckpoint> =
+                workflowStore.getActionCheckpoints(workflowInstance.workflowId)
+            val context = executionContext.toBuilder().actionCheckpoints(checkpoints).build()
+            if (!context.hasCompensationFlow()) {
+                return false
+            }
+            skipperEngine.scheduleCompensationTask(workflowInstance)
+            return true
+        }
+
+        /**
+         * Whether a compensation task for the workflow already exists, in any state. A later run of
+         * a cancelled workflow (a timer firing, a signal) must not request a second one.
+         */
+        private fun compensationPending(workflowId: String): Boolean {
+            return scheduler.getTask<Any>(SkipperEngine.compensationTaskId(workflowId)).isDefined
+        }
+
+        /**
+         * Schedules compensation for a cancelled workflow, the same task a failed workflow gets.
+         * An action the cancel interrupted has no checkpoint, so it is not compensated; the
+         * CANCEL_COMPENSATION event names that action. A run that schedules nothing and interrupted
+         * nothing publishes no event, so a late timer or signal does not publish a duplicate.
+         */
+        private fun scheduleCancelCompensation(
+            workflowInstance: WorkflowInstance,
+            executionContext: ExecutionContext,
+            result: WorkflowExecutor.ExecutionResult,
+        ) {
+            val scheduled = scheduleCompensationIfNeeded(workflowInstance, executionContext)
+            val interruptedAction = interruptedAction(result)
+            if (!scheduled && interruptedAction == null) {
+                return
+            }
+            val detail =
+                "compensation scheduled: $scheduled" +
+                    if (interruptedAction == null) "" else ", interrupted action not compensated: $interruptedAction"
+            log.info("workflow instance with id={} was cancelled. {}", workflowInstance.workflowId, detail)
+            eventPublisher.publishEvent(Event.create(Event.Type.CANCEL_COMPENSATION, workflowInstance.workflowId, detail))
+        }
+
+        /** `Class#method` of the action a cancel interrupted in this run, if any. */
+        private fun interruptedAction(result: WorkflowExecutor.ExecutionResult): String? {
+            val error = result.result?.takeIf { it.isLeft }?.left
+            return (error as? WorkflowCancelledException)?.interruptedAction
+        }
+
         /** The cancellation cancelWorkflow recorded, as loaded from the store. */
         private fun storedCancellation(stored: WorkflowInstance): SkipperError {
             if (stored.result.isCompletedExceptionally) {
@@ -442,7 +512,7 @@ class WorkflowExecutionTaskHandler
         ): WorkflowExecutor.ExecutionResult {
             // TODO: skip persisting if there was no change in the workflow instance
             var currentWorkflowInstance = workflowInstance
-            var context = executionContext
+            val context = executionContext
             // With in-flight cancellation on: if cancelWorkflow already wrote CANCELLED, a status write
             // here would only lose the optimistic lock and reschedule a dead workflow, so keep the
             // checkpoints, skip the write and hand the caller the recorded cancellation. Not keyed on
@@ -463,9 +533,32 @@ class WorkflowExecutionTaskHandler
                         workflowInstance.workflowId,
                         result.newStatus,
                     )
+                    var retryDelay: Duration? = null
+                    if (WorkflowInspector.isCompensateOnCancel(workflowInstance.workflowClass, workflowInstance.workflowMethod)) {
+                        try {
+                            if (!compensationPending(workflowInstance.workflowId)) {
+                                scheduleCancelCompensation(workflowInstance, context, result)
+                            }
+                        } catch (
+                            @Suppress("TooGenericExceptionCaught") e: Exception
+                        ) {
+                            // The cancel stands; only the compensation request failed. Retry this
+                            // settle later instead of reporting a retryable error on a cancelled run.
+                            log.error(
+                                "failed to request compensation for cancelled workflow instance with id={}. " +
+                                    "interruptedActionNotCompensated={}",
+                                workflowInstance.workflowId,
+                                interruptedAction(result),
+                                e,
+                            )
+                            metrics.counter(METRICS_COMPONENT, "cancelCompensationRequestError").inc()
+                            retryDelay = unexpectedErrorRetryDelay
+                        }
+                    }
                     return WorkflowExecutor.ExecutionResult.builder()
                         .newStatus(WorkflowInstance.Status.CANCELLED)
                         .result(Either.left(storedCancellation(stored.get())))
+                        .retryDelay(retryDelay)
                         .build()
                 }
             }
@@ -522,19 +615,9 @@ class WorkflowExecutionTaskHandler
                     timers,
                 )
             }
-            // Check if we're transitioning to ERROR status and need compensation
             if (result.newStatus == WorkflowInstance.Status.ERROR) {
-                // We need to reload the action checkpoints because action checkpoints might have been
-                // created due to CheckpointMode.IMMEDIATE, which would cause the checkpoint to be
-                // created at the ActionExecutor layer and wouldn't be present in the execution context.
-                // We need all the latest checkpoints in order to verify if compensation is needed.
-                val checkpoints: List<ActionCheckpoint> =
-                    workflowStore.getActionCheckpoints(workflowInstance.workflowId)
-                context = context.toBuilder().actionCheckpoints(checkpoints).build()
-                if (context.hasCompensationFlow()) {
-                    // Schedule compensation task BEFORE persisting ERROR status
-                    skipperEngine.scheduleCompensationTask(currentWorkflowInstance)
-                }
+                // Schedule compensation BEFORE persisting ERROR status
+                scheduleCompensationIfNeeded(currentWorkflowInstance, context)
             }
             val updateResult: io.vavr.Tuple3<WorkflowInstance, List<ActionCheckpoint>, List<Timer>> =
                 workflowStore.updateWorkflowAndStoreCheckpointsAndTimers(

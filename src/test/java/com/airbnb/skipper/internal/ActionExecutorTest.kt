@@ -188,6 +188,96 @@ class ActionExecutorTest {
     }
 
     @Test
+    fun testCompensatingActionRunsWhileTheWorkflowIsCancelled() {
+        // A cancelled workflow's compensation runs while the workflow is CANCELLED, so the boundary
+        // check must let a compensating action through.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val cancelledExecutor =
+            ActionExecutor(
+                mockWorkflowStore,
+                CheckpointMode.EVENTUAL_CHECKPOINT,
+                metrics,
+                errorMapper,
+                mockEventPublisher,
+                mockExecutionMetricsCollector,
+                mockTracer,
+                ContextPropagator.NOOP,
+                InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS to true)),
+                inFlightActions,
+            )
+        whenever(mockWorkflowStore.getWorkflow(any())).thenReturn(
+            Option.of(
+                TestUtils.getWorkflowInstance().toBuilder()
+                    .status(WorkflowInstance.Status.CANCELLED)
+                    .build(),
+            ),
+        )
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "hello" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actionMap[DemoActions::class.java]!!)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .arg(arrayOf<Any?>("Ricardo"))
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .isCompensatingAction(true)
+                .build()
+
+        cancelledExecutor.executeAction(req)
+
+        assertEquals(1, executionContext.dirtyCheckpoints.size())
+    }
+
+    @Test
+    fun testCompensatingActionIsNotInterruptedByACancel() {
+        // A compensation for a cancelled workflow must not be registered for interrupts: the
+        // workflow is already CANCELLED, so the cancel watcher would otherwise interrupt it.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        blockStarted = CountDownLatch(1)
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "block" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actionMap[DemoActions::class.java]!!)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .isCompensatingAction(true)
+                .build()
+        val executor =
+            ActionExecutor(
+                mockWorkflowStore,
+                CheckpointMode.EVENTUAL_CHECKPOINT,
+                metrics,
+                errorMapper,
+                mockEventPublisher,
+                mockExecutionMetricsCollector,
+                mockTracer,
+                ContextPropagator.NOOP,
+                InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT to true)),
+                inFlightActions,
+            )
+        val worker =
+            Thread {
+                try {
+                    executor.executeAction(req)
+                } catch (_: Throwable) {
+                }
+            }
+        worker.start()
+        assertTrue(blockStarted.await(5, TimeUnit.SECONDS))
+
+        assertFalse(inFlightActions.interrupt(executionContext.workflow.workflowId))
+
+        worker.interrupt()
+        worker.join(5_000)
+        assertFalse(worker.isAlive)
+    }
+
+    @Test
     fun testInterruptedActionEndsAsCancelled() {
         // A cancel interrupting the running action ends it as cancelled, not as a retryable error:
         // nothing is checkpointed and the thread leaves with a clear interrupt flag.

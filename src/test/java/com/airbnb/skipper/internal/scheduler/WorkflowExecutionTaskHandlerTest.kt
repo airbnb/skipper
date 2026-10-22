@@ -21,8 +21,11 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Timer
 import com.airbnb.skipper.TransientError
 import com.airbnb.skipper.ValidationError
+import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowCallbackHandler
+import com.airbnb.skipper.WorkflowCancelledException
 import com.airbnb.skipper.WorkflowInstance
+import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.api.WorkflowInstanceView
 import com.airbnb.skipper.internal.CheckpointTag
 import com.airbnb.skipper.internal.ExecutionContext
@@ -56,6 +59,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argThat
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
@@ -92,6 +96,7 @@ class WorkflowExecutionTaskHandlerTest {
         mockWorkflowStore = mock()
         whenever(mockWorkflowStore.getActionCheckpoints(any())).thenReturn(List.empty())
         mockScheduler = mock()
+        whenever(mockScheduler.getTask<Any>(any())).thenReturn(Option.none())
         mockEventPublisher = mock()
         skipperEngine = mock()
         mockFeatureGate = mock()
@@ -320,6 +325,226 @@ class WorkflowExecutionTaskHandlerTest {
         // Verify compensation manager is called when workflow transitions to ERROR and has
         // compensation flow
         verify(skipperEngine, times(1)).scheduleCompensationTask(eq(workflowInstance))
+    }
+
+    class OptedInWorkflow : Workflow() {
+        @WorkflowMethod(compensateOnCancel = true)
+        fun run() {}
+    }
+
+    class CompensableActions : Actions() {
+        @Execute
+        fun step(input: String): String = "result"
+
+        @Compensate(forExecute = "step")
+        fun undoStep(input: String) {}
+    }
+
+    private fun compensableCheckpoint(workflowId: String): ActionCheckpoint =
+        ActionCheckpoint.builder()
+            .checkpointTag(
+                CheckpointTag.builder()
+                    .workflowId(workflowId)
+                    .actionClass(CompensableActions::class.java)
+                    .actionMethod("step")
+                    .iteration(0)
+                    .build()
+            )
+            .executionStartTime(Instant.EPOCH)
+            .executionEndTime(Instant.EPOCH)
+            .result(Either.right("success"))
+            .isTransient(false)
+            .resultIsAsync(false)
+            .build()
+
+    /** Runs an execution that ends with [error] on a workflow the store already holds as CANCELLED. */
+    private fun settleCancelled(
+        workflowInstance: WorkflowInstance,
+        error: SkipperError,
+        storedCheckpoints: List<ActionCheckpoint>,
+    ) {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val result =
+            WorkflowExecutor.ExecutionResult.builder()
+                .result(Either.left(error))
+                .newState(HashMap.empty())
+                .newStatus(WorkflowInstance.Status.CANCELLED)
+                .build()
+        whenever(mockWorkflowExecutor.executeWorkflowMethod(any(), any(), any()))
+            .thenReturn(CompletableFuture.completedFuture(result))
+        whenever(mockWorkflowStore.getWorkflow(eq(workflowInstance.workflowId)))
+            .thenReturn(Option.of(workflowInstance.toBuilder().status(WorkflowInstance.Status.CANCELLED).build()))
+        whenever(mockWorkflowStore.getTimers(eq(workflowInstance.workflowId))).thenReturn(List.empty())
+        whenever(mockWorkflowStore.getActionCheckpoints(eq(workflowInstance.workflowId))).thenReturn(storedCheckpoints)
+        taskHandler.handle(TestUtils.getTestTask(workflowInstance), executor).join()
+    }
+
+    @Test
+    fun testCancelSettleSchedulesCompensationForOptedInWorkflowAndNamesTheInterruptedAction() {
+        val workflowInstance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .build()
+        val interrupted = WorkflowCancelledException("cancelled", "CompensableActions#blocking")
+
+        settleCancelled(workflowInstance, interrupted, List.of(compensableCheckpoint(workflowInstance.workflowId)))
+
+        verify(skipperEngine).scheduleCompensationTask(argThat { workflowId == workflowInstance.workflowId })
+        verify(mockEventPublisher).publishEvent(
+            argThat {
+                type == Event.Type.CANCEL_COMPENSATION &&
+                    description == "compensation scheduled: true, interrupted action not compensated: CompensableActions#blocking"
+            },
+        )
+        // The handler does not overwrite the stored CANCELLED status; the compensation task changes it.
+        verify(mockWorkflowStore, never()).updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
+    }
+
+    @Test
+    fun testCancelSettleDoesNotRequestCompensationAgainWhileOneIsPending() {
+        val workflowInstance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .build()
+        whenever(mockScheduler.getTask<Any>(eq("${workflowInstance.workflowId}-compensation")))
+            .thenReturn(Option.of(TestUtils.getTestTask(workflowInstance) as Task<Any>))
+
+        settleCancelled(workflowInstance, WorkflowCancelledException("cancelled"), List.of(compensableCheckpoint(workflowInstance.workflowId)))
+
+        verify(skipperEngine, never()).scheduleCompensationTask(any())
+        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.CANCEL_COMPENSATION })
+    }
+
+    @Test
+    fun testRunOfACompensatingInstanceExecutesNothingAndFinishes() {
+        // A late timer or signal can start a run after compensation began or completed. The run
+        // must end the task without executing or writing (a result write would be rejected).
+        for (status in listOf(
+            WorkflowInstance.Status.COMPENSATION_IN_PROGRESS,
+            WorkflowInstance.Status.COMPENSATION_ERROR,
+            WorkflowInstance.Status.COMPENSATION_COMPLETED,
+        )) {
+            val workflowInstance = TestUtils.getWorkflowInstance().toBuilder().status(status).build()
+            whenever(mockWorkflowStore.getWorkflow(eq(workflowInstance.workflowId))).thenReturn(Option.of(workflowInstance))
+
+            val handleResult = taskHandler.handle(TestUtils.getTestTask(workflowInstance), executor).join()
+
+            assertTrue(handleResult.isEmpty, "status $status")
+        }
+        verify(mockWorkflowExecutor, never()).executeWorkflowMethod(any(), any(), any())
+        verify(mockWorkflowStore, never()).updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
+    }
+
+    @Test
+    fun testCancelSettleRetriesWhenTheCompensationRequestFailsAndStaysCancelled() {
+        val workflowInstance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .build()
+        whenever(skipperEngine.scheduleCompensationTask(any())).thenThrow(RuntimeException("scheduler down"))
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val result =
+            WorkflowExecutor.ExecutionResult.builder()
+                .result(Either.left(WorkflowCancelledException("cancelled")))
+                .newState(HashMap.empty())
+                .newStatus(WorkflowInstance.Status.CANCELLED)
+                .build()
+        whenever(mockWorkflowExecutor.executeWorkflowMethod(any(), any(), any()))
+            .thenReturn(CompletableFuture.completedFuture(result))
+        whenever(mockWorkflowStore.getWorkflow(eq(workflowInstance.workflowId)))
+            .thenReturn(Option.of(workflowInstance.toBuilder().status(WorkflowInstance.Status.CANCELLED).build()))
+        whenever(mockWorkflowStore.getTimers(eq(workflowInstance.workflowId))).thenReturn(List.empty())
+        whenever(mockWorkflowStore.getActionCheckpoints(eq(workflowInstance.workflowId)))
+            .thenReturn(List.of(compensableCheckpoint(workflowInstance.workflowId)))
+
+        val handleResult = taskHandler.handle(TestUtils.getTestTask(workflowInstance), executor).join()
+
+        // Retried later; the caller still sees the cancellation and no retryable-error event fires.
+        assertTrue(handleResult.isDefined)
+        assertEquals(Instant.EPOCH.plus(unexpectedErrorRetryDelay), handleResult.get())
+        assertTrue(workflowInstance.result.isCompletedExceptionally)
+        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.WORKFLOW_RETRIABLE_ERROR })
+        verify(mockWorkflowStore, never()).updateWorkflowAndStoreCheckpointsAndTimers(any(), any(), any())
+    }
+
+    @Test
+    fun testCancelSettleRetriesWhenThePendingCompensationLookupFailsAndStaysCancelled() {
+        val workflowInstance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .build()
+        whenever(mockScheduler.getTask<Any>(eq("${workflowInstance.workflowId}-compensation")))
+            .thenThrow(RuntimeException("scheduler down"))
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val result =
+            WorkflowExecutor.ExecutionResult.builder()
+                .result(Either.left(WorkflowCancelledException("cancelled")))
+                .newState(HashMap.empty())
+                .newStatus(WorkflowInstance.Status.CANCELLED)
+                .build()
+        whenever(mockWorkflowExecutor.executeWorkflowMethod(any(), any(), any()))
+            .thenReturn(CompletableFuture.completedFuture(result))
+        whenever(mockWorkflowStore.getWorkflow(eq(workflowInstance.workflowId)))
+            .thenReturn(Option.of(workflowInstance.toBuilder().status(WorkflowInstance.Status.CANCELLED).build()))
+        whenever(mockWorkflowStore.getTimers(eq(workflowInstance.workflowId))).thenReturn(List.empty())
+
+        val handleResult = taskHandler.handle(TestUtils.getTestTask(workflowInstance), executor).join()
+
+        assertTrue(handleResult.isDefined)
+        assertTrue(workflowInstance.result.isCompletedExceptionally)
+        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.WORKFLOW_RETRIABLE_ERROR })
+        verify(skipperEngine, never()).scheduleCompensationTask(any())
+    }
+
+    @Test
+    fun testCancelSettleWithNothingToReportPublishesNoEvent() {
+        val workflowInstance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .build()
+
+        settleCancelled(workflowInstance, WorkflowCancelledException("cancelled"), List.empty())
+
+        verify(skipperEngine, never()).scheduleCompensationTask(any())
+        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.CANCEL_COMPENSATION })
+    }
+
+    @Test
+    fun testCancelSettleDoesNotScheduleCompensationWithoutOptIn() {
+        val workflowInstance = TestUtils.getWorkflowInstance()
+
+        settleCancelled(
+            workflowInstance,
+            WorkflowCancelledException("cancelled"),
+            List.of(compensableCheckpoint(workflowInstance.workflowId)),
+        )
+
+        verify(skipperEngine, never()).scheduleCompensationTask(any())
+        verify(mockEventPublisher, never()).publishEvent(argThat { type == Event.Type.CANCEL_COMPENSATION })
+    }
+
+    @Test
+    fun testCancelSettleStillNamesTheInterruptedActionWhenNothingCompletedIsCompensable() {
+        val workflowInstance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .build()
+
+        settleCancelled(workflowInstance, WorkflowCancelledException("cancelled", "CompensableActions#step"), List.empty())
+
+        verify(skipperEngine, never()).scheduleCompensationTask(any())
+        verify(mockEventPublisher).publishEvent(
+            argThat {
+                type == Event.Type.CANCEL_COMPENSATION &&
+                    description == "compensation scheduled: false, interrupted action not compensated: CompensableActions#step"
+            },
+        )
     }
 
     @Test

@@ -690,6 +690,142 @@ class SkipperEngineTest {
         running.join(5_000)
     }
 
+    class OptedInWorkflow : Workflow() {
+        @WorkflowMethod(compensateOnCancel = true)
+        fun run() {}
+    }
+
+    private fun cancelWithTaskPresent(instance: WorkflowInstance): Task<WorkflowInstance> {
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+        whenever(mockWorkflowStore.updateWorkflow(any()))
+            .thenReturn(instance.toBuilder().status(WorkflowInstance.Status.CANCELLED).build())
+        val task = getTestTask(instance)
+        whenever(mockPersistentScheduler.getTask<Any>(any())).thenReturn(Option.of(task as Task<Any>))
+        skipperEngine.cancelWorkflow(instance.workflowId, "cancelled")
+        return task
+    }
+
+    @Test
+    fun testCancelWorkflow_keepsAnExecutionTaskForAnOptedInWorkflow() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder().workflowClass(OptedInWorkflow::class.java).workflowMethod("run").build()
+
+        cancelWithTaskPresent(instance)
+
+        verify(mockPersistentScheduler, never()).remove(any<Task<Any>>())
+        verify(mockScheduler).schedule(
+            argThat<ScheduleRequest<WorkflowInstance>> {
+                id == instance.workflowId && type == Task.Type.WORKFLOW && !inMemoryExecutionEnabled &&
+                    isHonorActiveLeaseWhenOverwriting && !isBumpVersionWhenHonoringLease
+            },
+        )
+    }
+
+    @Test
+    fun testCancelWorkflow_ofAnAlreadyCancelledOptedInWorkflowOnlyRequestsTheSettleRun() {
+        // A cancel that died after writing CANCELLED and before requesting the run can be retried.
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder()
+                .workflowClass(OptedInWorkflow::class.java)
+                .workflowMethod("run")
+                .status(WorkflowInstance.Status.CANCELLED)
+                .build()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+
+        val returned = skipperEngine.cancelWorkflow(instance.workflowId, "again")
+
+        assertSame(instance, returned)
+        verify(mockWorkflowStore, never()).updateWorkflow(any())
+        verify(mockScheduler).schedule(argThat<ScheduleRequest<WorkflowInstance>> { id == instance.workflowId && type == Task.Type.WORKFLOW })
+    }
+
+    @Test
+    fun testCancelWorkflow_ofAnOptedInWorkflowPastCancellationStillThrows() {
+        // Only CANCELLED is re-requested; once compensation has run, the instance is terminal.
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        for (status in listOf(WorkflowInstance.Status.COMPENSATION_COMPLETED, WorkflowInstance.Status.COMPENSATION_ERROR)) {
+            val instance =
+                TestUtils.getWorkflowInstance().toBuilder()
+                    .workflowClass(OptedInWorkflow::class.java)
+                    .workflowMethod("run")
+                    .status(status)
+                    .build()
+            whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+            assertThrows(IllegalArgumentException::class.java) { skipperEngine.cancelWorkflow(instance.workflowId, "again") }
+        }
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
+    @Test
+    fun testCancelWorkflow_ofACancelledWorkflowWithoutOptInStillThrowsWithTheGateOn() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val instance = TestUtils.getWorkflowInstance().toBuilder().status(WorkflowInstance.Status.CANCELLED).build()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+
+        assertThrows(IllegalArgumentException::class.java) { skipperEngine.cancelWorkflow(instance.workflowId, "again") }
+
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
+    @Test
+    fun testCancelWorkflow_failingToRequestTheSettleRunIsRetryable() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder().workflowClass(OptedInWorkflow::class.java).workflowMethod("run").build()
+        val cancelled = instance.toBuilder().status(WorkflowInstance.Status.CANCELLED).build()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance), Option.of(cancelled))
+        whenever(mockWorkflowStore.updateWorkflow(any())).thenReturn(cancelled)
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>()))
+            .thenThrow(RuntimeException("scheduler down"))
+            .thenReturn(getTestTask(cancelled))
+
+        assertThrows(RuntimeException::class.java) { skipperEngine.cancelWorkflow(instance.workflowId, "first") }
+        skipperEngine.cancelWorkflow(instance.workflowId, "retry")
+
+        verify(mockWorkflowStore, times(1)).updateWorkflow(any())
+        verify(mockScheduler, times(2)).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
+    @Test
+    fun testCancelWorkflow_removesTheTaskWithoutOptIn() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_CHECKPOINTS)).thenReturn(true)
+
+        val task = cancelWithTaskPresent(TestUtils.getWorkflowInstance())
+
+        verify(mockPersistentScheduler).remove(task)
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
+    @Test
+    fun testCancelWorkflow_removesTheTaskWhenTheCheckpointGateIsOff() {
+        val instance =
+            TestUtils.getWorkflowInstance().toBuilder().workflowClass(OptedInWorkflow::class.java).workflowMethod("run").build()
+
+        val task = cancelWithTaskPresent(instance)
+
+        verify(mockPersistentScheduler).remove(task)
+        verify(mockScheduler, never()).schedule(any<ScheduleRequest<WorkflowInstance>>())
+    }
+
+    @Test
+    fun testForceDeleteWorkflow_removesAPendingCompensationTaskToo() {
+        val instance = TestUtils.getWorkflowInstance().toBuilder().status(WorkflowInstance.Status.CANCELLED).build()
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
+        val executionTask = getTestTask(instance)
+        val compensationTask = getTestTask(instance).toBuilder().id("${instance.workflowId}-compensation").build()
+        whenever(mockPersistentScheduler.getTask<Any>(eq(instance.workflowId))).thenReturn(Option.of(executionTask as Task<Any>))
+        whenever(mockPersistentScheduler.getTask<Any>(eq("${instance.workflowId}-compensation")))
+            .thenReturn(Option.of(compensationTask as Task<Any>))
+
+        skipperEngine.forceDeleteWorkflow(instance.workflowId)
+
+        verify(mockPersistentScheduler).remove(executionTask)
+        verify(mockPersistentScheduler).remove(compensationTask)
+        verify(mockWorkflowStore).deleteWorkflow(instance.workflowId)
+    }
+
     /** A thread registered as running an action for [workflowId], blocked until interrupted. */
     private fun blockedActionThread(workflowId: String): Pair<Thread, AtomicBoolean> {
         val entered = CountDownLatch(1)
@@ -1083,6 +1219,9 @@ class SkipperEngineTest {
         assertEquals(Task.Type.COMPENSATION, capturedRequest.type)
         assertEquals(fixedInstant, capturedRequest.runAfter)
         assertFalse(capturedRequest.inMemoryExecutionEnabled)
+        // A compensation already running keeps its lease; a second request must not restart it.
+        assertTrue(capturedRequest.isHonorActiveLeaseWhenOverwriting)
+        assertFalse(capturedRequest.isBumpVersionWhenHonoringLease)
     }
 
     @Test

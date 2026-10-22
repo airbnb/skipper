@@ -229,5 +229,25 @@ class WorkflowInspector(private val workflow: Workflow) {
                 .map { m -> m.getAnnotation(SignalMethod::class.java).persist }
                 .orElse(false)
         }
+
+        /**
+         * Whether the workflow method opts in to compensation on cancel via
+         * `@WorkflowMethod(compensateOnCancel = true)`. Resolved from the persisted class and method
+         * name, so it can be read long after the run started. False if the method is not found.
+         */
+        @JvmStatic
+        fun isCompensateOnCancel(
+            workflowClass: Class<out Workflow>,
+            workflowMethodName: String,
+        ): Boolean {
+            return ReflectionUtils.getAllDeclaredMethods(workflowClass, Workflow::class.java)
+                .stream()
+                .filter { m -> !m.isSynthetic }
+                .filter { m -> m.isAnnotationPresent(WorkflowMethod::class.java) }
+                .filter { m -> m.name == workflowMethodName }
+                .findFirst()
+                .map { m -> m.getAnnotation(WorkflowMethod::class.java).compensateOnCancel }
+                .orElse(false)
+        }
     }
 }

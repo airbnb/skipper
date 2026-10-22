@@ -90,6 +90,38 @@ public CompletableFuture<Void> processOrder(OrderRequest req) {
 }
 ```
 
+## Compensating a cancelled workflow
+
+By default a cancel is terminal: the instance stops as `CANCELLED` and nothing is undone. A
+workflow method can opt in to the same rollback on cancel:
+
+```kotlin
+@WorkflowMethod(compensateOnCancel = true)
+suspend fun processOrder(req: OrderRequest) { /* ... */ }
+```
+
+```java
+@WorkflowMethod(compensateOnCancel = true)
+public CompletableFuture<Void> processOrder(OrderRequest req) { /* ... */ }
+```
+
+Cancelling such an instance runs the compensations of its completed actions in reverse order and
+ends it as `COMPENSATION_COMPLETED` (or `COMPENSATION_ERROR` if a compensation fails), so the instance
+is not final the moment it is cancelled. `onCancelled` and `onCompensationCompleted` both fire, in no
+guaranteed order.
+
+An action that an [in-flight cancel](/docs/instance-management/#a-single-instance) interrupted has
+no checkpoint and is not compensated; the engine names it in a `CANCEL_COMPENSATION` event. Actions
+using `EVENTUAL_CHECKPOINT` can also be missed. Their checkpoints are saved only when the run ends,
+and are lost if the worker dies first or the cancel arrives just as the run saves them. A cancelled
+instance does not re-run its actions, so those results are lost. Use `IMMEDIATE_CHECKPOINT` on
+compensable actions where that matters.
+
+Cancelling an already cancelled instance only re-requests its compensation; the new reason is
+dropped and `onCancelled` does not fire again. Compensation on cancel needs the
+`INFLIGHT_CANCELLATION_CHECKPOINTS` feature gate on from the cancel until the instance reaches its
+final status. If the gate is turned off in between, the instance stays `CANCELLED` without compensation.
+
 ## Reacting to compensation
 
 Implement callback methods to be notified when compensation finishes or itself fails (which

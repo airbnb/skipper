@@ -13,7 +13,7 @@ abstract base classes and are honored on concrete subclasses.
 
 | Annotation | Target | Description |
 |---|---|---|
-| `@WorkflowMethod` | Workflow method | Declares a workflow entry point. Pass `returnType` to give the unwrapped type for a Java `CompletableFuture` return. |
+| `@WorkflowMethod` | Workflow method | Declares a workflow entry point. Pass `returnType` to give the unwrapped type for a Java `CompletableFuture` return. `compensateOnCancel = true` runs the saga rollback when the instance is cancelled. |
 | `@StateField` | Workflow field | Marks a field as persisted workflow state, saved and restored when the workflow resumes. No parameters. |
 | `@SignalMethod` | Workflow method | Injects data into a running workflow (max one serializable parameter). `persist = true` durably records the signal. |
 | `@QueryMethod` | Workflow method | Reads workflow state without mutating it. No parameters. |
