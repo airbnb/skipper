@@ -17,7 +17,9 @@ workflow proxy and the <code>WorkflowsService</code>.</p>
 <span class="line"></span>
 <span class="line"><span style="color:#E1E4E8">workflow.</span><span style="color:#B392F0">cancelWorkflowInstance</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">"User cancelled"</span><span style="color:#E1E4E8">);</span></span></code></pre>
 <p>Cancellation won’t kill a workflow that is actively executing, but it prevents further
-retries and cancels a workflow that is in a waiting state.</p>
+retries and cancels a workflow that is in a waiting state. With the <code>INFLIGHT_CANCELLATION_CHECKPOINTS</code>
+gate on, a running workflow stops at its next action boundary. A workflow method declared with
+<code>compensateOnCancel = true</code> also <a href="/docs/compensation/#compensating-a-cancelled-workflow">undoes its completed actions</a>.</p>
 <h2 id="bulk-operations">Bulk operations</h2>
 <p><code>WorkflowsService</code> operates across many instances — useful for dashboards and incident
 response.</p>

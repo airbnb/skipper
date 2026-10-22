@@ -62,6 +62,27 @@ body stays clean:</p>
 <span class="line"><span style="color:#E1E4E8">  shipping.</span><span style="color:#B392F0">schedule</span><span style="color:#E1E4E8">(req);             </span><span style="color:#6A737D">// if this fails, the two above are undone</span></span>
 <span class="line"><span style="color:#F97583">  return</span><span style="color:#E1E4E8"> CompletableFuture.</span><span style="color:#B392F0">completedFuture</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">null</span><span style="color:#E1E4E8">);</span></span>
 <span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<h2 id="compensating-a-cancelled-workflow">Compensating a cancelled workflow</h2>
+<p>By default a cancel is terminal: the instance stops as <code>CANCELLED</code> and nothing is undone. A
+workflow method can opt in to the same rollback on cancel:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#B392F0">@WorkflowMethod</span><span style="color:#E1E4E8">(compensateOnCancel </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> true</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#F97583">suspend</span><span style="color:#F97583"> fun</span><span style="color:#B392F0"> processOrder</span><span style="color:#E1E4E8">(req: </span><span style="color:#B392F0">OrderRequest</span><span style="color:#E1E4E8">) { </span><span style="color:#6A737D">/* ... */</span><span style="color:#E1E4E8"> }</span></span></code></pre>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="java"><code><span class="line"><span style="color:#E1E4E8">@</span><span style="color:#F97583">WorkflowMethod</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">compensateOnCancel</span><span style="color:#F97583"> =</span><span style="color:#79B8FF"> true</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#F97583">public</span><span style="color:#E1E4E8"> CompletableFuture</span><span style="color:#F97583">&#x3C;</span><span style="color:#E1E4E8">Void</span><span style="color:#F97583">></span><span style="color:#B392F0"> processOrder</span><span style="color:#E1E4E8">(OrderRequest req) { </span><span style="color:#6A737D">/* ... */</span><span style="color:#E1E4E8"> }</span></span></code></pre>
+<p>Cancelling such an instance runs the compensations of its completed actions in reverse order and
+ends it as <code>COMPENSATION_COMPLETED</code> (or <code>COMPENSATION_ERROR</code> if a compensation fails), so the instance
+is not final the moment it is cancelled. <code>onCancelled</code> and <code>onCompensationCompleted</code> both fire, in no
+guaranteed order.</p>
+<p>An action that an <a href="/docs/instance-management/#a-single-instance">in-flight cancel</a> interrupted has
+no checkpoint and is not compensated; the engine names it in a <code>CANCEL_COMPENSATION</code> event. Actions
+using <code>EVENTUAL_CHECKPOINT</code> can also be missed. Their checkpoints are saved only when the run ends,
+and are lost if the worker dies first or the cancel arrives just as the run saves them. A cancelled
+instance does not re-run its actions, so those results are lost. Use <code>IMMEDIATE_CHECKPOINT</code> on
+compensable actions where that matters.</p>
+<p>Cancelling an already cancelled instance only re-requests its compensation; the new reason is
+dropped and <code>onCancelled</code> does not fire again. Compensation on cancel needs the
+<code>INFLIGHT_CANCELLATION_CHECKPOINTS</code> feature gate on from the cancel until the instance reaches its
+final status. If the gate is turned off in between, the instance stays <code>CANCELLED</code> without compensation.</p>
 <h2 id="reacting-to-compensation">Reacting to compensation</h2>
 <p>Implement callback methods to be notified when compensation finishes or itself fails (which
 may need manual intervention):</p>
