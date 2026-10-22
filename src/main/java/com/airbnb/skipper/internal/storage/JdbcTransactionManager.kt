@@ -69,8 +69,8 @@ class JdbcTransactionManager(
      * @return the result of the lambda function
      */
     fun <T> execute(lambda: Function<Connection, T>): T {
-        // Nested calls join the current (outermost) transaction, which owns the
-        // begin/commit/rollback/close lifecycle and the retry-on-contention loop below.
+        // Nested calls join the current (outermost) transaction, which owns begin/commit/rollback/close
+        // and the contention retry.
         if (inOuterTransaction()) {
             try {
                 return lambda.apply(currentTransaction.get())
@@ -112,12 +112,10 @@ class JdbcTransactionManager(
      * SELECT phase); a write phase should handle contention per statement instead, as the SQLite
      * scheduler's lease loop does, so that nothing already written is dropped from the result.
      *
-     * The limit is time, counted from the first failure, not a retry count: a stalled writer can
-     * hold the table lock much longer than a few quick retries last.
+     * The budget starts at the first failure.
      */
     fun <T> retryOnTransientLockContention(action: Supplier<T>): T {
-        var started = false
-        var deadlineNanos = 0L
+        var deadlineNanos: Long? = null
         var backoffMillis = RETRY_BASE_BACKOFF_MILLIS
         while (true) {
             try {
@@ -129,10 +127,10 @@ class JdbcTransactionManager(
                     throw SneakyThrow.sneakyThrow(e)
                 }
                 val now = System.nanoTime()
-                if (!started) {
-                    started = true
+                val deadline = deadlineNanos
+                if (deadline == null) {
                     deadlineNanos = now + lockRetryBudget.toNanos()
-                } else if (now - deadlineNanos >= 0) {
+                } else if (now - deadline >= 0) {
                     throw SneakyThrow.sneakyThrow(e)
                 }
             }

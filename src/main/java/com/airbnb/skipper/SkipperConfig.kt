@@ -88,7 +88,7 @@ class SkipperConfig(
     /**
      * How long a store or scheduler call keeps retrying when it loses a database lock race
      * (SQLite's `SQLITE_LOCKED` / `SQLITE_BUSY`) before the failure propagates. A writer stalled
-     * mid-transaction on a busy host can hold a table lock for seconds. MySQL errors never match.
+     * mid-transaction on a busy host can hold a table lock for seconds. MySQL failures are never retried.
      */
     var lockContentionRetryBudget: Duration = Duration.ofSeconds(10),
     /** The main thread pool used by Skipper internals. */
