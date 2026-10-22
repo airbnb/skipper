@@ -6,6 +6,7 @@ import com.airbnb.skipper.internal.cluster.BaseClusterMembershipManagerTest
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.storage.JdbcTransactionManager
 import com.airbnb.skipper.testutils.SqliteTestSetupExtension
+import java.time.Duration
 import javax.sql.DataSource
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.extension.ExtendWith
@@ -23,7 +24,7 @@ class SqliteClusterMembershipManagerTest : BaseClusterMembershipManagerTest() {
 
     override fun newClusterManager(memberName: String): ClusterMembershipManager =
         JdbcClusterMembershipManager(
-            JdbcTransactionManager(dataSource()),
+            JdbcTransactionManager(dataSource(), Duration.ofSeconds(10)),
             owner,
             owner,
             NoOpMetrics.INSTANCE,
