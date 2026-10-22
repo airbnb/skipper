@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.sqlite.SQLiteDataSource
+import org.sqlite.SQLiteErrorCode
 import org.sqlite.SQLiteException
 
 /**
@@ -37,7 +38,7 @@ class JdbcTransactionManagerSqliteContentionTest {
         keepAlive.close()
     }
 
-    /** Holds an uncommitted write on `rows` for [hold], from another connection, then commits. */
+    /** Returns once another connection holds an uncommitted write on `rows`. That connection commits after [hold]. */
     private fun holdWriteLock(hold: Duration) {
         val locked = CountDownLatch(1)
         holder =
@@ -86,8 +87,8 @@ class JdbcTransactionManagerSqliteContentionTest {
         val thrown = assertThrows(SQLiteException::class.java) { countRows(manager) }
 
         val elapsed = Duration.ofNanos(System.nanoTime() - started)
-        assertTrue(thrown.message!!.contains("locked"), thrown.message)
+        assertEquals(SQLiteErrorCode.SQLITE_LOCKED.code, thrown.resultCode.code and 0xFF)
         assertTrue(elapsed >= Duration.ofMillis(500), "retried for the budget: $elapsed")
-        assertTrue(elapsed < Duration.ofMillis(1_500), "gave up within one back-off of the budget: $elapsed")
+        assertTrue(elapsed < Duration.ofMillis(1_500), "gave up soon after the budget: $elapsed")
     }
 }
