@@ -85,6 +85,12 @@ class SkipperConfig(
     var schedulerTaskMaxRetries: Int = 100,
     /** The time to wait before retrying a task that failed unexpectedly. */
     var taskUnexpectedErrorRetryDelay: Duration = Duration.ofSeconds(30),
+    /**
+     * How long a store or scheduler call keeps retrying when it loses a database lock race
+     * (SQLite's `SQLITE_LOCKED` / `SQLITE_BUSY`) before the failure propagates. A writer stalled
+     * mid-transaction on a busy host can hold a table lock for seconds. MySQL errors never match.
+     */
+    var lockContentionRetryBudget: Duration = Duration.ofSeconds(10),
     /** The main thread pool used by Skipper internals. */
     var mainThreadPool: ExecutorService = Executors.newCachedThreadPool(ThreadFactoryBuilder().setNameFormat("skipper-main-%d").build()),
     /** The thread pool used to process workflow executions. */

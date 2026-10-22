@@ -14,12 +14,15 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import org.sqlite.SQLiteErrorCode
+import org.sqlite.SQLiteException
 
 class JdbcTransactionManagerTest {
     private val connection: Connection = mock()
     private val dataSource: DataSource = mock<DataSource>().also { whenever(it.connection).thenReturn(connection) }
 
-    private fun locked() = SQLException("[SQLITE_LOCKED_SHAREDCACHE] database table is locked: skipper_workflow_instances")
+    // The driver's typed code decides; the message deliberately carries no "SQLITE_LOCKED" token.
+    private fun locked() = SQLiteException("database table is locked: skipper_workflow_instances", SQLiteErrorCode.SQLITE_LOCKED_SHAREDCACHE)
 
     @Test
     fun testContentionIsRetriedUntilTheStatementSucceeds() {
@@ -50,7 +53,7 @@ class JdbcTransactionManagerTest {
             )
         }
 
-        assertTrue(thrown.message!!.contains("SQLITE_LOCKED"))
+        assertTrue(thrown is SQLiteException)
         assertTrue(calls > 1, "retried before giving up")
         assertTrue(Duration.ofNanos(System.nanoTime() - started) >= Duration.ofMillis(60))
     }
