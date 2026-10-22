@@ -4,6 +4,7 @@ import com.airbnb.skipper.ComponentFactory
 import com.airbnb.skipper.SkipperConfig
 import com.airbnb.skipper.internal.common.SneakyThrow
 import java.sql.Connection
+import java.time.Duration
 import java.util.UUID
 import java.util.function.Function
 import java.util.function.Supplier
@@ -12,6 +13,8 @@ import javax.sql.DataSource
 import kotlin.random.Random
 import org.flywaydb.core.Flyway
 import org.sqlite.SQLiteDataSource
+import org.sqlite.SQLiteErrorCode
+import org.sqlite.SQLiteException
 
 /**
  * Manages connections and transactions over a JDBC [DataSource].
@@ -25,7 +28,15 @@ import org.sqlite.SQLiteDataSource
  * configured manager.
  */
 @Singleton
-class JdbcTransactionManager(private val ds: DataSource) {
+class JdbcTransactionManager(
+    private val ds: DataSource,
+    /** How long [execute] or [retryOnTransientLockContention] keeps retrying lock contention before it rethrows. */
+    private val lockRetryBudget: Duration,
+) {
+    init {
+        require(!lockRetryBudget.isNegative && !lockRetryBudget.isZero) { "lockRetryBudget must be positive" }
+    }
+
     private val currentTransaction = ThreadLocal<Connection>()
 
     /**
@@ -43,7 +54,7 @@ class JdbcTransactionManager(private val ds: DataSource) {
      * In case the lambda throws any exception, the transaction will be rolled back and the exception
      * will be rethrown.
      *
-     * Outermost transactions are retried a bounded number of times when they fail with transient
+     * Outermost transactions are retried for up to [lockRetryBudget] when they fail with transient
      * lock contention (see [isTransientLockContention]). The SQLite backend serves one logical
      * database from a shared cache across connections, and the engine writes from background
      * scheduler / executor threads concurrently with the calling thread, so a write can lose the
@@ -58,8 +69,8 @@ class JdbcTransactionManager(private val ds: DataSource) {
      * @return the result of the lambda function
      */
     fun <T> execute(lambda: Function<Connection, T>): T {
-        // Nested calls join the current (outermost) transaction, which owns the
-        // begin/commit/rollback/close lifecycle and the retry-on-contention loop below.
+        // Nested calls join the current (outermost) transaction, which owns begin/commit/rollback/close
+        // and the contention retry.
         if (inOuterTransaction()) {
             try {
                 return lambda.apply(currentTransaction.get())
@@ -69,35 +80,28 @@ class JdbcTransactionManager(private val ds: DataSource) {
                 throw SneakyThrow.sneakyThrow(ex)
             }
         }
-
-        var attempt = 0
-        while (true) {
+        return retryOnTransientLockContention {
             try {
                 begin()
                 val result = lambda.apply(currentTransaction.get())
                 currentTransaction.get().commit()
-                return result
+                result
             } catch (
                 @Suppress("TooGenericExceptionCaught") e: Throwable
             ) {
                 rollbackCurrentTransactionQuietly()
-                if (attempt >= MAX_TRANSIENT_LOCK_RETRIES || !isTransientLockContention(e)) {
-                    throw SneakyThrow.sneakyThrow(e)
-                }
-                attempt++
+                throw SneakyThrow.sneakyThrow(e)
             } finally {
                 closeCurrentTransaction()
             }
-            // Reached only when the attempt failed with retryable lock contention and was not rethrown.
-            backoffBeforeRetry(attempt)
         }
     }
 
     /**
-     * Runs [action], retrying it a bounded number of times when it fails with transient lock
-     * contention (see [isTransientLockContention]), for work that manages its own connection via
-     * [getConnection] instead of running inside [execute] — e.g. the schedulers' auto-commit fetch
-     * paths and the cluster membership reads. The same SQLite `SQLITE_LOCKED` / `SQLITE_BUSY`
+     * Runs [action], retrying it for up to [lockRetryBudget] when it fails with transient lock
+     * contention (see [isTransientLockContention]). Use it for work that gets its own connection
+     * from [getConnection] instead of running inside [execute], such as the schedulers' auto-commit
+     * fetches and the cluster membership reads. The same SQLite `SQLITE_LOCKED` / `SQLITE_BUSY`
      * conditions that [execute] retries can hit any statement when several Skipper instances share
      * one database; [action] must therefore be safe to re-run from the top (which holds for the
      * versioned, optimistic writes Skipper issues: a repeat either finds the row already moved and
@@ -107,21 +111,41 @@ class JdbcTransactionManager(private val ds: DataSource) {
      * Only retry work that has not yet produced a side effect the caller depends on seeing (e.g. a
      * SELECT phase); a write phase should handle contention per statement instead, as the SQLite
      * scheduler's lease loop does, so that nothing already written is dropped from the result.
+     *
+     * The budget starts at the first failure.
      */
     fun <T> retryOnTransientLockContention(action: Supplier<T>): T {
-        var attempt = 0
+        var deadlineNanos: Long? = null
+        var backoffMillis = RETRY_BASE_BACKOFF_MILLIS
         while (true) {
             try {
                 return action.get()
             } catch (
                 @Suppress("TooGenericExceptionCaught") e: Throwable
             ) {
-                if (attempt >= MAX_TRANSIENT_LOCK_RETRIES || !isTransientLockContention(e)) {
+                if (!isTransientLockContention(e)) {
                     throw SneakyThrow.sneakyThrow(e)
                 }
-                attempt++
+                val now = System.nanoTime()
+                val deadline = deadlineNanos
+                if (deadline == null) {
+                    deadlineNanos = now + lockRetryBudget.toNanos()
+                } else if (now - deadline >= 0) {
+                    throw SneakyThrow.sneakyThrow(e)
+                }
             }
-            backoffBeforeRetry(attempt)
+            // A growing, randomized back-off so contending writers do not retry in lock-step.
+            sleep(backoffMillis + Random.nextLong(RETRY_JITTER_MILLIS + 1))
+            backoffMillis = minOf(backoffMillis * 2, RETRY_MAX_BACKOFF_MILLIS)
+        }
+    }
+
+    private fun sleep(millis: Long) {
+        try {
+            Thread.sleep(millis)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw SneakyThrow.sneakyThrow(e)
         }
     }
 
@@ -154,34 +178,22 @@ class JdbcTransactionManager(private val ds: DataSource) {
 
     /**
      * Returns true if [error] (or any cause in its chain) is a transient lock-contention failure
-     * worth retrying — SQLite's `SQLITE_LOCKED` (incl. `SQLITE_LOCKED_SHAREDCACHE`) and
-     * `SQLITE_BUSY` conditions. Matched on the exception message so it is robust across the driver's
-     * primary / extended result codes, and so other backends (whose messages do not contain these
-     * tokens) are never retried.
+     * worth retrying: SQLite's `SQLITE_BUSY` or `SQLITE_LOCKED`, including their extended codes such
+     * as `SQLITE_LOCKED_SHAREDCACHE`. Matched on the driver's result code, so other backends are
+     * never retried.
      */
     fun isTransientLockContention(error: Throwable): Boolean {
         var cause: Throwable? = error
         while (cause != null) {
-            val message = cause.message
-            if (message != null &&
-                (message.contains("SQLITE_LOCKED") || message.contains("SQLITE_BUSY"))
-            ) {
-                return true
+            if (cause is SQLiteException) {
+                val primaryCode = cause.resultCode.code and 0xFF
+                if (primaryCode == SQLiteErrorCode.SQLITE_BUSY.code || primaryCode == SQLiteErrorCode.SQLITE_LOCKED.code) {
+                    return true
+                }
             }
             cause = cause.cause
         }
         return false
-    }
-
-    /** Sleeps a short, randomized back-off so contending writers do not retry in lock-step. */
-    private fun backoffBeforeRetry(attempt: Int) {
-        val backoffMillis = RETRY_BASE_BACKOFF_MILLIS + Random.nextLong(RETRY_JITTER_MILLIS + 1)
-        try {
-            Thread.sleep(backoffMillis)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            throw SneakyThrow.sneakyThrow(e)
-        }
     }
 
     private fun begin() {
@@ -200,14 +212,11 @@ class JdbcTransactionManager(private val ds: DataSource) {
     private fun inOuterTransaction(): Boolean = currentTransaction.get() != null
 
     companion object {
-        /**
-         * Maximum additional attempts for an outermost transaction that keeps failing with transient
-         * lock contention before the failure is propagated.
-         */
-        private const val MAX_TRANSIENT_LOCK_RETRIES = 50
-
-        /** Base back-off between contention retries. */
+        /** Back-off before the first retry; it doubles on each further retry. */
         private const val RETRY_BASE_BACKOFF_MILLIS = 5L
+
+        /** Longest back-off between retries, before jitter. */
+        private const val RETRY_MAX_BACKOFF_MILLIS = 100L
 
         /** Upper bound (inclusive) of the random jitter added to each retry back-off. */
         private const val RETRY_JITTER_MILLIS = 15L
@@ -222,7 +231,7 @@ class JdbcTransactionManager(private val ds: DataSource) {
             val dataSource =
                 config.mySqlDataSource
                     ?: throw IllegalStateException("mySqlDataSource must be set on SkipperConfig")
-            return JdbcTransactionManager(dataSource)
+            return JdbcTransactionManager(dataSource, config.lockContentionRetryBudget)
         }
     }
 
@@ -249,7 +258,7 @@ class JdbcTransactionManager(private val ds: DataSource) {
             override fun create(config: SkipperConfig): JdbcTransactionManager {
                 val dataSource = dataSourceOverride ?: config.sqliteDataSource ?: buildSharedInMemoryDataSource()
                 migrateSqliteSchema(dataSource, config.tablePrefix)
-                return JdbcTransactionManager(dataSource)
+                return JdbcTransactionManager(dataSource, config.lockContentionRetryBudget)
             }
 
             /**
