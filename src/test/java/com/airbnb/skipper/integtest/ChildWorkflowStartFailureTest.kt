@@ -1,0 +1,188 @@
+package com.airbnb.skipper.integtest
+
+import com.airbnb.skipper.ComponentFactory
+import com.airbnb.skipper.IWorkflowFactory
+import com.airbnb.skipper.Workflow
+import com.airbnb.skipper.WorkflowInstance
+import com.airbnb.skipper.WorkflowMethod
+import com.airbnb.skipper.internal.SkipperEngine
+import com.airbnb.skipper.internal.SkipperSchedulerManager
+import com.airbnb.skipper.internal.api.RunRequest
+import com.airbnb.skipper.internal.scheduler.ScheduleRequest
+import com.airbnb.skipper.internal.scheduler.Scheduler
+import com.airbnb.skipper.internal.scheduler.Task
+import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
+import com.airbnb.skipper.internal.storage.WorkflowCreationRequest
+import com.airbnb.skipper.internal.storage.WorkflowStore
+import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore
+import com.airbnb.skipper.testutils.TestHelper
+import com.airbnb.skipper.testutils.TestRequestContext
+import com.airbnb.skipper.testutils.TestRuntime
+import com.airbnb.skipper.util.ExtraRequestData
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
+import javax.inject.Inject
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.parallel.Execution
+import org.junit.jupiter.api.parallel.ExecutionMode
+
+/**
+ * A parent workflow starts its children on its own execution thread, so a store or scheduler failure
+ * while starting one of them escapes the parent's workflow method. A transient one (a timeout) must
+ * retry the parent, which then starts the remaining children and completes; before the fix it was
+ * taken for a bug in the workflow code and failed the parent terminally. A request the store rejects
+ * as invalid still fails the parent, since retrying it cannot succeed.
+ *
+ * Each test fails the first store or scheduler call for the second of three children.
+ */
+@Execution(ExecutionMode.SAME_THREAD)
+class ChildWorkflowStartFailureTest {
+    /** Throws [error] from the first call that targets [workflowId]; every other call passes through. */
+    class Fault(
+        private val workflowId: String,
+        private val error: () -> Exception,
+    ) {
+        val hits = AtomicInteger()
+
+        fun maybeThrow(id: String) {
+            if (id == workflowId && hits.incrementAndGet() == 1) {
+                throw error()
+            }
+        }
+    }
+
+    class FaultyStore(
+        private val delegate: WorkflowStore,
+        private val fault: Fault?,
+    ) : WorkflowStore by delegate {
+        override fun createWorkflow(request: WorkflowCreationRequest): WorkflowInstance {
+            fault?.maybeThrow(request.workflowId)
+            return delegate.createWorkflow(request)
+        }
+    }
+
+    class FaultyScheduler(
+        private val delegate: Scheduler,
+        private val fault: Fault?,
+    ) : Scheduler by delegate {
+        override fun <T> schedule(request: ScheduleRequest<T>): Task<T> {
+            if (request.type == Task.Type.WORKFLOW) {
+                fault?.maybeThrow(request.id)
+            }
+            return delegate.schedule(request)
+        }
+    }
+
+    open class ChildWorkflow : Workflow() {
+        @WorkflowMethod
+        open fun run() {}
+    }
+
+    open class FanOutWorkflow : Workflow() {
+        @Inject lateinit var workflowFactory: IWorkflowFactory
+
+        @WorkflowMethod
+        open fun run(): String {
+            for (i in 1..CHILDREN) {
+                workflowFactory.builder(ChildWorkflow::class.java, childId(id, i)).runAsync().detached().build().run()
+            }
+            return "started $CHILDREN children"
+        }
+    }
+
+    private lateinit var engine: SkipperEngine
+    private lateinit var scheduler: Scheduler
+    private lateinit var manager: SkipperSchedulerManager
+
+    @AfterEach
+    fun tearDown() {
+        if (::manager.isInitialized) manager.forceStop()
+    }
+
+    private fun start(
+        storeFault: Fault? = null,
+        schedulerFault: Fault? = null,
+    ) {
+        val deps = TestRuntime()
+        deps.config.workflowStore = ComponentFactory { FaultyStore(SqliteWorkflowStore.Factory().create(it), storeFault) }
+        deps.config.scheduler = ComponentFactory { FaultyScheduler(SqliteScheduler.Factory().create(it), schedulerFault) }
+        val runtime = deps.runtime
+        engine = runtime.skipperEngine.get()
+        scheduler = runtime.scheduler.get()
+        manager = runtime.skipperSchedulerManager.get()
+        manager.start()
+    }
+
+    private fun startFanOut(parentId: String) {
+        engine.startWorkflow(
+            RunRequest.builder()
+                .workflowId(parentId)
+                .workflowClass(FanOutWorkflow::class.java)
+                .workflowMethod("run")
+                .requestContext(TestRequestContext.builder().build())
+                .extraRequestData(ExtraRequestData())
+                .runAsync(true) // hand it to the scheduler so the task handler retries it like any other task
+                .build(),
+        )
+    }
+
+    private fun awaitTerminal(workflowId: String): WorkflowInstance =
+        TestHelper(engine, scheduler, workflowId)
+            .waitForWorkflowToReachStatus(setOf(WorkflowInstance.Status.COMPLETED, WorkflowInstance.Status.ERROR))
+
+    private fun assertParentRetriedAndCompleted(
+        parentId: String,
+        fault: Fault,
+    ) {
+        val parent = awaitTerminal(parentId)
+        assertEquals(WorkflowInstance.Status.COMPLETED, parent.status, "a transient child-start failure must not fail the parent")
+        assertEquals("started $CHILDREN children", parent.result.get())
+        assertEquals(2, fault.hits.get(), "the parent is retried and starts the failed child again")
+        for (i in 1..CHILDREN) {
+            assertEquals(WorkflowInstance.Status.COMPLETED, awaitTerminal(childId(parentId, i)).status)
+        }
+    }
+
+    @Test
+    fun schedulerTimeoutWhileSchedulingAChildRetriesTheParent() {
+        val parentId = "fan-out-${System.nanoTime()}"
+        // The child's instance commits, then inserting its task times out. The retried parent finds the
+        // instance already there and schedules it again.
+        val fault = Fault(childId(parentId, 2)) { TimeoutException("injected timeout inserting the child's task") }
+        start(schedulerFault = fault)
+        startFanOut(parentId)
+        assertParentRetriedAndCompleted(parentId, fault)
+    }
+
+    @Test
+    fun storeTimeoutWhileCreatingAChildRetriesTheParent() {
+        val parentId = "fan-out-${System.nanoTime()}"
+        val fault = Fault(childId(parentId, 2)) { TimeoutException("injected timeout creating the child's instance") }
+        start(storeFault = fault)
+        startFanOut(parentId)
+        assertParentRetriedAndCompleted(parentId, fault)
+    }
+
+    @Test
+    fun invalidChildRequestStillFailsTheParent() {
+        val parentId = "fan-out-${System.nanoTime()}"
+        val fault = Fault(childId(parentId, 2)) { IllegalArgumentException("injected invalid child request") }
+        start(storeFault = fault)
+        startFanOut(parentId)
+
+        val parent = awaitTerminal(parentId)
+        assertEquals(WorkflowInstance.Status.ERROR, parent.status)
+        assertEquals(1, fault.hits.get(), "an invalid request is not retried")
+    }
+
+    private companion object {
+        const val CHILDREN = 3
+
+        fun childId(
+            parentId: String,
+            i: Int
+        ) = "$parentId-child-$i"
+    }
+}
