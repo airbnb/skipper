@@ -100,7 +100,10 @@ open class SkipperEngine
                         .build()
                 var workflowInstance: WorkflowInstance
                 try {
-                    workflowInstance = workflowStore.createWorkflow(workflowCreationRequest)
+                    workflowInstance =
+                        startWorkflowIo(request.workflowId, "create the workflow instance") {
+                            workflowStore.createWorkflow(workflowCreationRequest)
+                        }
                     eventPublisher.publishEvent(
                         Event.create(Event.Type.WORKFLOW_CREATED, request.workflowId)
                     )
@@ -113,8 +116,9 @@ open class SkipperEngine
                         throw IllegalArgumentException("workflow with id %s already exists")
                     }
                     workflowInstance =
-                        workflowStore
-                            .getWorkflow(request.workflowId)
+                        startWorkflowIo(request.workflowId, "read the existing workflow instance") {
+                            workflowStore.getWorkflow(request.workflowId)
+                        }
                             .getOrElseThrow {
                                 IllegalStateException(
                                     String.format(
@@ -142,19 +146,23 @@ open class SkipperEngine
                     }
                 }
                 val inProcessExecution = !request.isRunAsync
-                scheduleExecution(workflowInstance, inProcessExecution)
+                startWorkflowIo(request.workflowId, "schedule the workflow task") {
+                    scheduleExecution(workflowInstance, inProcessExecution)
+                }
                 if (request.executionTimeout != null) {
                     val timeoutTaskId = String.format("%s:timeout", workflowInstance.workflowId)
                     val executionTimeout = now.instant().plus(request.executionTimeout)
-                    scheduler.schedule(
-                        ScheduleRequest.builder<String>()
-                            .id(timeoutTaskId)
-                            .dedupToken(workflowInstance.workflowId)
-                            .payload(workflowInstance.workflowId)
-                            .type(Task.Type.EXECUTION_TIMEOUT)
-                            .runAfter(executionTimeout)
-                            .build()
-                    )
+                    startWorkflowIo(request.workflowId, "schedule the execution timeout task") {
+                        scheduler.schedule(
+                            ScheduleRequest.builder<String>()
+                                .id(timeoutTaskId)
+                                .dedupToken(workflowInstance.workflowId)
+                                .payload(workflowInstance.workflowId)
+                                .type(Task.Type.EXECUTION_TIMEOUT)
+                                .runAfter(executionTimeout)
+                                .build()
+                        )
+                    }
                     log.info(
                         "scheduled execution timeout task for workflowId={} on {}",
                         workflowInstance.workflowId,
@@ -180,6 +188,40 @@ open class SkipperEngine
                 metrics.counter(tags, METRICS_COMPONENT, "startWorkflow").inc()
             }
         }
+
+        /**
+         * Runs one store or scheduler call made while starting [workflowId], and reports an
+         * infrastructure failure (a timeout, a dropped connection, an unavailable backend) as an
+         * [InternalError].
+         *
+         * A workflow that starts a child makes these calls on its own execution thread, so whatever
+         * escapes here escapes the parent's workflow method. There an unclassified exception is taken
+         * for a bug in the workflow code and fails the parent terminally, while an [InternalError] is
+         * retried with the parent's task. One transient failure among the many starts of a fan-out
+         * must not fail the parent for good.
+         *
+         * Failures the call already classified, and requests it rejects as invalid (including input or
+         * request context that cannot be serialized), are rethrown unchanged: retrying them cannot
+         * succeed, so they still fail the caller.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        private inline fun <T> startWorkflowIo(
+            workflowId: String,
+            operation: String,
+            call: () -> T
+        ): T =
+            try {
+                call()
+            } catch (e: Exception) {
+                if (e is EntityAlreadyExists ||
+                    e is SkipperError ||
+                    e is InternalError ||
+                    e is IllegalArgumentException
+                ) {
+                    throw e
+                }
+                throw InternalError("unable to $operation while starting workflow $workflowId", e)
+            }
 
         open fun scheduleExecution(
             workflowInstance: WorkflowInstance,
