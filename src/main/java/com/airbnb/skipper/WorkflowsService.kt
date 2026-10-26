@@ -46,6 +46,40 @@ open class WorkflowsService
         }
 
         /**
+         * Count the child workflows of a parent workflow, i.e. the workflow instances started with
+         * the given parent workflow ID, in any status.
+         *
+         * This reads the store directly, so the result is not deterministic across replays. Call it
+         * from client code, or from an action, never directly from a workflow method.
+         *
+         * @param parentWorkflowId the ID of the parent workflow.
+         * @return the number of child workflows, or 0 if the parent has none (or does not exist).
+         */
+        fun countChildWorkflows(parentWorkflowId: String): Long = workflowStore.countChildWorkflows(parentWorkflowId, io.vavr.collection.List.empty())
+
+        /**
+         * Count the child workflows of a parent workflow that are in one of the specified statuses.
+         * See [countChildWorkflows] for the replay caveat.
+         *
+         * @param parentWorkflowId the ID of the parent workflow.
+         * @param statusViews the statuses to count. Must not be empty; use the overload without
+         *     statuses to count children in any status.
+         * @return the number of child workflows in the specified statuses.
+         */
+        fun countChildWorkflows(
+            parentWorkflowId: String,
+            statusViews: List<@JvmSuppressWildcards WorkflowInstanceStatusView>
+        ): Long {
+            // An empty set is rejected rather than read as "any status": a caller whose computed
+            // set ends up empty would otherwise silently get every child counted.
+            require(statusViews.isNotEmpty()) {
+                "statusViews must not be empty; use countChildWorkflows(parentWorkflowId) to count all children."
+            }
+            val statuses = statusViews.map { v -> WorkflowInstance.Status.fromView(v) }
+            return workflowStore.countChildWorkflows(parentWorkflowId, io.vavr.collection.List.ofAll(statuses))
+        }
+
+        /**
          * Find all the workflow instances that have exhausted their retries and are waiting for
          * manual intervention.
          *

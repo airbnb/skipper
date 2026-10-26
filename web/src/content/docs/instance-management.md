@@ -46,6 +46,10 @@ response.
 // Count by status
 val running = workflowsService.countWorkflowsByStatus(listOf(RUNNING))
 
+// Count a parent's children, all or only those in some statuses
+val children = workflowsService.countChildWorkflows("parent-1")
+val pending = workflowsService.countChildWorkflows("parent-1", listOf(RUNNING, WAITING))
+
 // Find workflows parked after exhausting retries
 val stuck = workflowsService.findWorkflowsWithExhaustedRetries(100)
 
@@ -59,6 +63,10 @@ workflowsService.cancelWorkflows(listOf("wf-3", "wf-4"), "Cleaning up")
 ```java
 // Count by status
 long running = workflowsService.countWorkflowsByStatus(List.of(RUNNING));
+
+// Count a parent's children, all or only those in some statuses
+long children = workflowsService.countChildWorkflows("parent-1");
+long pending = workflowsService.countChildWorkflows("parent-1", List.of(RUNNING, WAITING));
 
 // Find workflows parked after exhausting retries
 List<String> stuck = workflowsService.findWorkflowsWithExhaustedRetries(100);

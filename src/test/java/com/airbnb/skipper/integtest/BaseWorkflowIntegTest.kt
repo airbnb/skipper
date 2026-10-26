@@ -994,6 +994,23 @@ abstract class BaseWorkflowIntegTest {
         }
 
         @Test
+        fun testCountChildWorkflowsThroughWorkflowsService() {
+            val parentId = "$workflowId-parent"
+            for (i in 1..2) {
+                workflowFactory.builder(SampleWorkflow::class.java, "$workflowId-child-$i")
+                    .parentWorkflowId(parentId).build()
+                    .completableFutureWorkflowMethod().join()
+            }
+            helper.waitForExecutionFlowToFinish()
+            val workflowsService = deps.runtime.workflowsService.get()
+
+            assertEquals(2, workflowsService.countChildWorkflows(parentId))
+            assertEquals(2, workflowsService.countChildWorkflows(parentId, listOf(WorkflowInstanceStatusView.COMPLETED)))
+            assertEquals(0, workflowsService.countChildWorkflows(parentId, listOf(WorkflowInstanceStatusView.RUNNING)))
+            assertEquals(0, workflowsService.countChildWorkflows(workflowId))
+        }
+
+        @Test
         fun testNonBlockingInvokeCompletableFutureWorkflowMethod() {
             val workflow = workflowFactory<SampleWorkflow>(workflowId)
             workflow.failingWorkflow()

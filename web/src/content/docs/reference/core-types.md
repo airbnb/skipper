@@ -76,6 +76,7 @@ Bulk operations over many instances. See [Instance Management](/docs/instance-ma
 | Signature | Description |
 |---|---|
 | `countWorkflowsByStatus(statuses): long` | Count instances in the given statuses. |
+| `countChildWorkflows(parentId[, statuses]): long` | Count a parent's child workflows, optionally only those in the given statuses. |
 | `findWorkflowsWithExhaustedRetries(limit)` | List workflows parked in `RETRIES_EXHAUSTED`. |
 | `reExecuteWorkflows(ids)` | Re-run workflows, retrying their last failed action. |
 | `cancelWorkflows(ids, reason)` | Cancel multiple non-terminal workflows. |

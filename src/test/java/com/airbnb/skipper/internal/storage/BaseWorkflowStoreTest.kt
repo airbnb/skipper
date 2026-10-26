@@ -666,6 +666,67 @@ abstract class BaseWorkflowStoreTest {
     }
 
     @Test
+    fun countChildWorkflows_shouldCountOnlyTheParentsChildrenInTheGivenStatuses() {
+        createChildWorkflow("child-1", "parent-a")
+        createChildWorkflow("child-2", "parent-a")
+        val completedChild = createChildWorkflow("child-3", "parent-a")
+        workflowStore().updateWorkflow(
+            WorkflowUpdateRequest.builder()
+                .workflowInstance(completedChild)
+                .newStatus(WorkflowInstance.Status.COMPLETED)
+                .result(Either.right("done"))
+                .resultIsAsync(false)
+                .build()
+        )
+        // Neither a sibling parent's child, a top-level workflow, nor a child of the same parent ID
+        // under another owner is counted.
+        createChildWorkflow("child-4", "parent-b")
+        createInstanceForTimer("top-level")
+        createChildWorkflow("child-5", "parent-a", createWorkflowStore("test-owner2"))
+
+        assertEquals(3, workflowStore().countChildWorkflows("parent-a", List.empty()))
+        assertEquals(
+            2,
+            workflowStore().countChildWorkflows("parent-a", List.of(WorkflowInstance.Status.RUNNING))
+        )
+        assertEquals(
+            1,
+            workflowStore().countChildWorkflows("parent-a", List.of(WorkflowInstance.Status.COMPLETED))
+        )
+        assertEquals(
+            3,
+            workflowStore()
+                .countChildWorkflows(
+                    "parent-a",
+                    List.of(WorkflowInstance.Status.RUNNING, WorkflowInstance.Status.COMPLETED)
+                )
+        )
+        assertEquals(
+            0,
+            workflowStore().countChildWorkflows("parent-a", List.of(WorkflowInstance.Status.ERROR))
+        )
+        assertEquals(1, workflowStore().countChildWorkflows("parent-b", List.empty()))
+        assertEquals(0, workflowStore().countChildWorkflows("no-such-parent", List.empty()))
+    }
+
+    private fun createChildWorkflow(
+        workflowId: String,
+        parentWorkflowId: String,
+        store: WorkflowStore = workflowStore()
+    ): WorkflowInstance =
+        store.createWorkflow(
+            WorkflowCreationRequest.builder()
+                .workflowClass(Workflow::class.java)
+                .workflowId(workflowId)
+                .workflowMethod("execute")
+                .input("test")
+                .requestContext(REQUEST_CONTEXT)
+                .extraRequestData(EXTRA_REQUEST_DATA)
+                .parentWorkflowId(parentWorkflowId)
+                .build()
+        )
+
+    @Test
     @Throws(InterruptedException::class)
     fun testFindWorkflowsWithExhaustedRetries() {
         // Create a workflow with exhausted retries

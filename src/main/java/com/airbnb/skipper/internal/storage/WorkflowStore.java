@@ -50,6 +50,28 @@ public interface WorkflowStore {
   long countWorkflowsByStatus(List<WorkflowInstance.Status> statuses);
 
   /**
+   * Count the child workflows of a parent workflow, i.e. the workflows created with the given
+   * {@code parentWorkflowId}.
+   *
+   * @param parentWorkflowId The ID of the parent workflow.
+   * @param statuses Only count children in one of these statuses. An empty list counts children in
+   *     any status.
+   * @return The number of matching child workflows, or 0 if the parent has none (or does not
+   *     exist).
+   */
+  default long countChildWorkflows(
+      String parentWorkflowId, List<WorkflowInstance.Status> statuses) {
+    if (parentWorkflowId == null) {
+      throw new java.lang.NullPointerException("parentWorkflowId is marked non-null but is null");
+    }
+    if (statuses == null) {
+      throw new java.lang.NullPointerException("statuses is marked non-null but is null");
+    }
+    throw new UnsupportedOperationException(
+        "countChildWorkflows is not supported by this WorkflowStore implementation");
+  }
+
+  /**
    * Find workflows with exhausted retries.
    *
    * <p>This method will return workflows that have exhausted their retries and are in a waiting for
