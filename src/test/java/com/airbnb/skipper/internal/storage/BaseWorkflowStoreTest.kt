@@ -10,6 +10,7 @@ import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowCallbackHandler
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.internal.CheckpointTag
+import com.airbnb.skipper.internal.InternalError
 import com.airbnb.skipper.internal.TestUtils.EXTRA_REQUEST_DATA
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.api.PersistedSignal
@@ -60,6 +61,12 @@ abstract class BaseWorkflowStoreTest {
     protected abstract fun workflowStore(): WorkflowStore
 
     protected abstract fun createWorkflowStore(owner: String): WorkflowStore
+
+    /** A store over tables named with [tablePrefix], which need not exist. */
+    protected abstract fun createWorkflowStore(
+        owner: String,
+        tablePrefix: String
+    ): WorkflowStore
 
     @Test
     @Throws(Exception::class)
@@ -707,6 +714,15 @@ abstract class BaseWorkflowStoreTest {
         )
         assertEquals(1, workflowStore().countChildWorkflows("parent-b", List.empty()))
         assertEquals(0, workflowStore().countChildWorkflows("no-such-parent", List.empty()))
+    }
+
+    @Test
+    fun countChildWorkflows_shouldWrapDatabaseErrorsInInternalError() {
+        val storeWithoutTables = createWorkflowStore("test-owner", "missing_tables_")
+
+        assertThrows(InternalError::class.java) {
+            storeWithoutTables.countChildWorkflows("parent-a", List.of(WorkflowInstance.Status.RUNNING))
+        }
     }
 
     private fun createChildWorkflow(

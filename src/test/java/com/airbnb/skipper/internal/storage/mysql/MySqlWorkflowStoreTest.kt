@@ -51,7 +51,12 @@ class MySqlWorkflowStoreTest : BaseWorkflowStoreTest() {
         return workflowStore
     }
 
-    override fun createWorkflowStore(owner: String): WorkflowStore {
+    override fun createWorkflowStore(owner: String): WorkflowStore = createWorkflowStore(owner, SkipperConfig.DEFAULT_TABLE_PREFIX)
+
+    override fun createWorkflowStore(
+        owner: String,
+        tablePrefix: String
+    ): WorkflowStore {
         return MySqlWorkflowStore(
             transactionManager,
             metrics,
@@ -60,7 +65,7 @@ class MySqlWorkflowStoreTest : BaseWorkflowStoreTest() {
             TEST_REQUEST_CONTEXT_SERDE,
             clock,
             owner,
-            SkipperConfig.DEFAULT_TABLE_PREFIX
+            tablePrefix
         )
     }
 }

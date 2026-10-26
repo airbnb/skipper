@@ -397,39 +397,35 @@ class MySqlWorkflowStore
             val sql =
                 "SELECT COUNT(*) FROM $workflowInstancesTable WHERE owner = ? AND parent_workflow_id = ?" +
                     statusClause
-            return transactionManager
-                .execute { conn ->
-                    try {
-                        conn.prepareStatement(sql).use { ps ->
-                            metrics
-                                .timer(METRICS_COMPONENT, "countChildWorkflows.latency")
-                                .time()
-                                .use { _ ->
-                                    ps.setString(1, owner)
-                                    ps.setString(2, parentWorkflowId)
-                                    for (i in 0 until statuses.size()) {
-                                        ps.setString(i + 3, statuses.get(i).name)
-                                    }
-                                    val rs = ps.executeQuery()
-                                    if (rs.next()) {
-                                        return@execute rs.getLong(1)
-                                    } else {
-                                        return@execute 0L
-                                    }
-                                }
-                        }
-                    } catch (e: SQLException) {
+            return transactionManager.execute { conn ->
+                try {
+                    conn.prepareStatement(sql).use { ps ->
                         metrics
-                            .counter(
-                                ImmutableMap.of("source", "countChildWorkflows"),
-                                METRICS_COMPONENT,
-                                "errors",
-                            )
-                            .inc()
-                        throw InternalError(e)
+                            .timer(METRICS_COMPONENT, "countChildWorkflows.latency")
+                            .time()
+                            .use { _ ->
+                                ps.setString(1, owner)
+                                ps.setString(2, parentWorkflowId)
+                                for (i in 0 until statuses.size()) {
+                                    ps.setString(i + 3, statuses.get(i).name)
+                                }
+                                val rs = ps.executeQuery()
+                                // COUNT(*) without GROUP BY always yields exactly one row.
+                                rs.next()
+                                rs.getLong(1)
+                            }
                     }
+                } catch (e: SQLException) {
+                    metrics
+                        .counter(
+                            ImmutableMap.of("source", "countChildWorkflows"),
+                            METRICS_COMPONENT,
+                            "errors",
+                        )
+                        .inc()
+                    throw InternalError(e)
                 }
-                .toLong()
+            }
         }
 
         override fun findWorkflowsWithExhaustedRetries(
