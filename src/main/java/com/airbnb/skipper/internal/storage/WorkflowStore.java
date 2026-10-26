@@ -9,6 +9,7 @@ import io.vavr.Tuple2;
 import io.vavr.Tuple3;
 import io.vavr.collection.List;
 import io.vavr.control.Option;
+import java.util.Set;
 
 public interface WorkflowStore {
   /**
@@ -54,13 +55,12 @@ public interface WorkflowStore {
    * {@code parentWorkflowId}.
    *
    * @param parentWorkflowId The ID of the parent workflow.
-   * @param statuses Only count children in one of these statuses. An empty list counts children in
+   * @param statuses Only count children in one of these statuses. An empty set counts children in
    *     any status.
    * @return The number of matching child workflows, or 0 if the parent has none (or does not
    *     exist).
    */
-  default long countChildWorkflows(
-      String parentWorkflowId, List<WorkflowInstance.Status> statuses) {
+  default long countChildWorkflows(String parentWorkflowId, Set<WorkflowInstance.Status> statuses) {
     if (parentWorkflowId == null) {
       throw new java.lang.NullPointerException("parentWorkflowId is marked non-null but is null");
     }

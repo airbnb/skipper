@@ -55,7 +55,7 @@ open class WorkflowsService
          * @param parentWorkflowId the ID of the parent workflow.
          * @return the number of child workflows, or 0 if the parent has none (or does not exist).
          */
-        fun countChildWorkflows(parentWorkflowId: String): Long = workflowStore.countChildWorkflows(parentWorkflowId, io.vavr.collection.List.empty())
+        fun countChildWorkflows(parentWorkflowId: String): Long = workflowStore.countChildWorkflows(parentWorkflowId, emptySet())
 
         /**
          * Count the child workflows of a parent workflow that are in one of the specified statuses.
@@ -68,15 +68,15 @@ open class WorkflowsService
          */
         fun countChildWorkflows(
             parentWorkflowId: String,
-            statusViews: List<@JvmSuppressWildcards WorkflowInstanceStatusView>
+            statusViews: Set<@JvmSuppressWildcards WorkflowInstanceStatusView>
         ): Long {
             // An empty set is rejected rather than read as "any status": a caller whose computed
             // set ends up empty would otherwise silently get every child counted.
             require(statusViews.isNotEmpty()) {
                 "statusViews must not be empty; use countChildWorkflows(parentWorkflowId) to count all children."
             }
-            val statuses = statusViews.map { v -> WorkflowInstance.Status.fromView(v) }
-            return workflowStore.countChildWorkflows(parentWorkflowId, io.vavr.collection.List.ofAll(statuses))
+            val statuses = statusViews.map { v -> WorkflowInstance.Status.fromView(v) }.toSet()
+            return workflowStore.countChildWorkflows(parentWorkflowId, statuses)
         }
 
         /**

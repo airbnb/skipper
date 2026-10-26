@@ -1005,8 +1005,8 @@ abstract class BaseWorkflowIntegTest {
             val workflowsService = deps.runtime.workflowsService.get()
 
             assertEquals(2, workflowsService.countChildWorkflows(parentId))
-            assertEquals(2, workflowsService.countChildWorkflows(parentId, listOf(WorkflowInstanceStatusView.COMPLETED)))
-            assertEquals(0, workflowsService.countChildWorkflows(parentId, listOf(WorkflowInstanceStatusView.RUNNING)))
+            assertEquals(2, workflowsService.countChildWorkflows(parentId, setOf(WorkflowInstanceStatusView.COMPLETED)))
+            assertEquals(0, workflowsService.countChildWorkflows(parentId, setOf(WorkflowInstanceStatusView.RUNNING)))
             assertEquals(0, workflowsService.countChildWorkflows(workflowId))
         }
 

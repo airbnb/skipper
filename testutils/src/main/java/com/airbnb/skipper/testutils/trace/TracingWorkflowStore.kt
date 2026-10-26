@@ -123,7 +123,7 @@ internal class TracingWorkflowStore(
 
     override fun countChildWorkflows(
         parentWorkflowId: String,
-        statuses: List<WorkflowInstance.Status>,
+        statuses: Set<WorkflowInstance.Status>,
     ): Long = delegate.countChildWorkflows(parentWorkflowId, statuses)
 
     override fun findWorkflowsWithExhaustedRetries(

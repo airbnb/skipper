@@ -49,7 +49,7 @@ class WorkflowsServiceTest {
 
     @Test
     fun countChildWorkflows_withoutStatuses_shouldCountChildrenInAnyStatus() {
-        whenever(workflowStore.countChildWorkflows("parent-1", io.vavr.collection.List.empty())).thenReturn(5L)
+        whenever(workflowStore.countChildWorkflows("parent-1", emptySet())).thenReturn(5L)
 
         assertEquals(5L, workflowsService.countChildWorkflows("parent-1"))
     }
@@ -59,14 +59,14 @@ class WorkflowsServiceTest {
         whenever(
             workflowStore.countChildWorkflows(
                 "parent-1",
-                of(WorkflowInstance.Status.RUNNING, WorkflowInstance.Status.WAITING)
+                setOf(WorkflowInstance.Status.RUNNING, WorkflowInstance.Status.WAITING)
             )
         ).thenReturn(2L)
 
         val count =
             workflowsService.countChildWorkflows(
                 "parent-1",
-                listOf(WorkflowInstanceStatusView.RUNNING, WorkflowInstanceStatusView.WAITING)
+                setOf(WorkflowInstanceStatusView.RUNNING, WorkflowInstanceStatusView.WAITING)
             )
 
         assertEquals(2L, count)
@@ -75,7 +75,7 @@ class WorkflowsServiceTest {
     @Test
     fun countChildWorkflows_withEmptyStatuses_shouldRejectInsteadOfCountingEverything() {
         assertThrows(IllegalArgumentException::class.java) {
-            workflowsService.countChildWorkflows("parent-1", emptyList())
+            workflowsService.countChildWorkflows("parent-1", emptySet())
         }
         verify(workflowStore, never()).countChildWorkflows(any(), any())
     }

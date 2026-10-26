@@ -691,29 +691,29 @@ abstract class BaseWorkflowStoreTest {
         createInstanceForTimer("top-level")
         createChildWorkflow("child-5", "parent-a", createWorkflowStore("test-owner2"))
 
-        assertEquals(3, workflowStore().countChildWorkflows("parent-a", List.empty()))
+        assertEquals(3, workflowStore().countChildWorkflows("parent-a", emptySet()))
         assertEquals(
             2,
-            workflowStore().countChildWorkflows("parent-a", List.of(WorkflowInstance.Status.RUNNING))
+            workflowStore().countChildWorkflows("parent-a", setOf(WorkflowInstance.Status.RUNNING))
         )
         assertEquals(
             1,
-            workflowStore().countChildWorkflows("parent-a", List.of(WorkflowInstance.Status.COMPLETED))
+            workflowStore().countChildWorkflows("parent-a", setOf(WorkflowInstance.Status.COMPLETED))
         )
         assertEquals(
             3,
             workflowStore()
                 .countChildWorkflows(
                     "parent-a",
-                    List.of(WorkflowInstance.Status.RUNNING, WorkflowInstance.Status.COMPLETED)
+                    setOf(WorkflowInstance.Status.RUNNING, WorkflowInstance.Status.COMPLETED)
                 )
         )
         assertEquals(
             0,
-            workflowStore().countChildWorkflows("parent-a", List.of(WorkflowInstance.Status.ERROR))
+            workflowStore().countChildWorkflows("parent-a", setOf(WorkflowInstance.Status.ERROR))
         )
-        assertEquals(1, workflowStore().countChildWorkflows("parent-b", List.empty()))
-        assertEquals(0, workflowStore().countChildWorkflows("no-such-parent", List.empty()))
+        assertEquals(1, workflowStore().countChildWorkflows("parent-b", emptySet()))
+        assertEquals(0, workflowStore().countChildWorkflows("no-such-parent", emptySet()))
     }
 
     @Test
@@ -721,7 +721,7 @@ abstract class BaseWorkflowStoreTest {
         val storeWithoutTables = createWorkflowStore("test-owner", "missing_tables_")
 
         assertThrows(InternalError::class.java) {
-            storeWithoutTables.countChildWorkflows("parent-a", List.of(WorkflowInstance.Status.RUNNING))
+            storeWithoutTables.countChildWorkflows("parent-a", setOf(WorkflowInstance.Status.RUNNING))
         }
     }
 

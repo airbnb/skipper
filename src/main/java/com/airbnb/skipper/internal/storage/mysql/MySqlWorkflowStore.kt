@@ -385,14 +385,14 @@ class MySqlWorkflowStore
 
         override fun countChildWorkflows(
             parentWorkflowId: String,
-            statuses: VavrList<WorkflowInstance.Status>,
+            statuses: Set<WorkflowInstance.Status>,
         ): Long {
             // Served by the (owner, parent_workflow_id, status) index.
             val statusClause =
-                if (statuses.isEmpty) {
+                if (statuses.isEmpty()) {
                     ""
                 } else {
-                    " AND status IN (" + java.lang.String.join(",", statuses.map { "?" }.toJavaList()) + ")"
+                    " AND status IN (" + statuses.joinToString(",") { "?" } + ")"
                 }
             val sql =
                 "SELECT COUNT(*) FROM $workflowInstancesTable WHERE owner = ? AND parent_workflow_id = ?" +
@@ -406,8 +406,8 @@ class MySqlWorkflowStore
                             .use { _ ->
                                 ps.setString(1, owner)
                                 ps.setString(2, parentWorkflowId)
-                                for (i in 0 until statuses.size()) {
-                                    ps.setString(i + 3, statuses.get(i).name)
+                                statuses.forEachIndexed { i, status ->
+                                    ps.setString(i + 3, status.name)
                                 }
                                 val rs = ps.executeQuery()
                                 // COUNT(*) without GROUP BY always yields exactly one row.

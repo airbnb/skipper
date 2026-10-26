@@ -1,7 +1,6 @@
 package com.airbnb.skipper.internal.storage
 
 import com.airbnb.skipper.WorkflowInstance
-import io.vavr.collection.List
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -14,14 +13,14 @@ class WorkflowStoreTest {
     @Test
     fun countChildWorkflows_byDefault_shouldBeUnsupported() {
         assertThrows(UnsupportedOperationException::class.java) {
-            store.countChildWorkflows("parent-1", List.of(WorkflowInstance.Status.RUNNING))
+            store.countChildWorkflows("parent-1", setOf(WorkflowInstance.Status.RUNNING))
         }
     }
 
     @Test
     fun countChildWorkflows_byDefault_shouldRejectNullArguments() {
         assertThrows(NullPointerException::class.java) {
-            store.countChildWorkflows(null, List.empty())
+            store.countChildWorkflows(null, emptySet())
         }
         assertThrows(NullPointerException::class.java) {
             store.countChildWorkflows("parent-1", null)
