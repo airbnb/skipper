@@ -4,6 +4,7 @@ import com.airbnb.skipper.SkipperAnnotationNames.RESULT_POLLING_SLEEP_DURATION
 import com.airbnb.skipper.SkipperAnnotationNames.RESULT_POLLING_TIME_LIMIT
 import com.airbnb.skipper.SkipperAnnotationNames.SKIPPER_MAIN_THREAD_POOL
 import com.airbnb.skipper.SkipperAnnotationNames.UTC_CLOCK
+import com.airbnb.skipper.internal.InternalError
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.api.RunRequest
@@ -181,7 +182,11 @@ open class WorkflowFactory
                         return@MethodHandler queryResult
                     }
                     val workflowInstance =
-                        skipperEngine.startWorkflow(request)
+                        if (parentWorkflowId != null) {
+                            startChildWorkflow(request)
+                        } else {
+                            skipperEngine.startWorkflow(request)
+                        }
                     result = workflowInstance.result
 
                     // Fire-and-forget: the caller opted out of the result, so return now that
@@ -312,6 +317,50 @@ open class WorkflowFactory
             }
         }
 
+        /**
+         * Starts a child workflow from its parent's workflow method, so that a failure to start it
+         * retries the parent instead of failing it.
+         *
+         * The parent runs this on its own execution thread, so whatever it throws escapes the parent's
+         * workflow method, and there an exception Skipper does not recognize is taken for a bug in the
+         * workflow code: the parent ends in ERROR for good. But starting a child writes to the
+         * workflow store and the scheduler, and a timeout or a dropped connection on one of those
+         * writes is no bug. What the start throws reaches the parent as follows:
+         *
+         * 1. An error Skipper has already classified (a [SkipperError] such as [NonRetryableError],
+         *    or one of Skipper's internal errors) is rethrown unchanged, so it means what it meant
+         *    before.
+         * 2. A request Skipper rejected as invalid ([IllegalArgumentException] or [ValidationError]),
+         *    such as a child id that is already taken while duplicates are not allowed, is rethrown
+         *    unchanged too. Running the parent again would only repeat it, so it still fails the parent.
+         * 3. Anything else, such as a store or scheduler timeout, becomes a [RetryableError]. The
+         *    parent runs again after [CHILD_START_RETRY_DELAY] and starts the child again under the
+         *    same id, which schedules an instance the failed attempt already wrote, unless
+         *    createExistingWorkflowIsNoop is on: then it returns that instance as it is, and a child
+         *    whose task was never scheduled does not run.
+         *
+         * Only the start is covered. Waiting for a child's result happens afterwards, and the child's
+         * own failures reach the parent as before.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        private fun startChildWorkflow(request: RunRequest): WorkflowInstance =
+            try {
+                skipperEngine.startWorkflow(request)
+            } catch (e: Exception) {
+                if (e is SkipperError ||
+                    e is InternalError ||
+                    e is IllegalArgumentException ||
+                    e is ValidationError
+                ) {
+                    throw e
+                }
+                throw RetryableError(
+                    "unable to start child workflow ${request.workflowId} of ${request.parentWorkflowId}: ${e.message}",
+                    ApplicationError.fromException(e),
+                    CHILD_START_RETRY_DELAY,
+                )
+            }
+
         private fun executeSignalWithRetries(request: RunRequest): SkipperEngine.SendSignalResult {
             val retries = 3
             var lastSignalError: Throwable? = null
@@ -427,5 +476,15 @@ open class WorkflowFactory
             return workflowInstance.toView {
                 skipperEngine.getActionCheckpoints(workflowInstance.workflowId).map(ActionCheckpoint::toView)
             }.getLastTransientError().getOrNull()
+        }
+
+        companion object {
+            /**
+             * How long a parent waits before running again after one of its children failed to start:
+             * long enough for a brief store or scheduler outage to pass, short enough not to stall a
+             * fan-out.
+             */
+            @JvmField
+            val CHILD_START_RETRY_DELAY: Duration = Duration.ofSeconds(5)
         }
     }

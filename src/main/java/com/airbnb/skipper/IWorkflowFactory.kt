@@ -284,14 +284,14 @@ class InvocationBuilder<T : Workflow>(
     }
 
     /**
-     * Start this workflow as a child of [parent], from inside [parent]'s workflow method, so that a
-     * failure to start it retries [parent] instead of failing it. Records [parent] as the child's parent
-     * workflow. Set the invocation's other options first; see [ChildWorkflowBuilder].
+     * Start this workflow as a child of [parent], from inside [parent]'s workflow method. Records
+     * [parent] as the child's parent workflow, the same as [parentWorkflowId] with [parent]'s id.
+     *
+     * A child's invocation treats a failure to start it as transient: a store or scheduler timeout
+     * retries [parent] instead of failing it for good. See [WorkflowFactory] for which failures that
+     * covers.
      */
-    fun asChildOf(parent: Workflow): ChildWorkflowBuilder<T> {
-        this.parentWorkflowId = parent.id
-        return ChildWorkflowBuilder(this, workflowId)
-    }
+    fun asChildOf(parent: Workflow): InvocationBuilder<T> = parentWorkflowId(parent.id)
 
     /**
      * Detach the invocation from the workflow result: the call returns as soon as the instance is

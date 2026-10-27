@@ -19,7 +19,6 @@ import com.airbnb.skipper.testutils.TestHelper
 import com.airbnb.skipper.testutils.TestRequestContext
 import com.airbnb.skipper.testutils.TestRuntime
 import com.airbnb.skipper.util.ExtraRequestData
-import java.time.Duration
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -31,10 +30,10 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 
 /**
  * A parent workflow starts its children on its own execution thread, so a store or scheduler failure
- * while starting one of them escapes the parent's workflow method. Started through
- * [com.airbnb.skipper.ChildWorkflowBuilder], a transient one (a timeout) retries the parent, which
- * then starts the remaining children and completes. Started through the plain builder, the same
- * failure is taken for a bug in the workflow code and fails the parent terminally. A request the
+ * while starting one of them escapes the parent's workflow method. Started with
+ * [com.airbnb.skipper.InvocationBuilder.asChildOf], a transient one (a timeout) retries the parent,
+ * which then starts the remaining children and completes. Started without it, the same failure is
+ * taken for a bug in the workflow code and fails the parent terminally. A request the
  * store rejects as invalid fails the parent either way, since retrying it cannot succeed.
  *
  * Each test fails the first store or scheduler call for the second of three children.
@@ -88,12 +87,7 @@ class ChildWorkflowStartFailureTest {
         @WorkflowMethod
         open fun run(): String {
             for (i in 1..CHILDREN) {
-                workflowFactory.builder(ChildWorkflow::class.java, childId(id, i))
-                    .runAsync()
-                    .detached()
-                    .asChildOf(this)
-                    .startFailureRetryDelay(Duration.ofMillis(100))
-                    .start { it.run() }
+                workflowFactory.builder(ChildWorkflow::class.java, childId(id, i)).runAsync().detached().asChildOf(this).build().run()
             }
             return "started $CHILDREN children"
         }
@@ -202,14 +196,14 @@ class ChildWorkflowStartFailureTest {
     }
 
     @Test
-    fun plainBuilderStillFailsTheParentOnATransientStartFailure() {
+    fun invocationWithoutAParentStillFailsTheParentOnATransientStartFailure() {
         val parentId = "fan-out-${System.nanoTime()}"
         val fault = Fault(childId(parentId, 2)) { TimeoutException("injected timeout creating the child's instance") }
         start(storeFault = fault)
         startParent(parentId, PlainFanOutWorkflow::class.java)
 
         val parent = awaitTerminal(parentId)
-        assertEquals(WorkflowInstance.Status.ERROR, parent.status, "only the child builder retries the parent")
+        assertEquals(WorkflowInstance.Status.ERROR, parent.status, "only a child invocation retries the parent")
         assertEquals(1, fault.hits.get())
     }
 

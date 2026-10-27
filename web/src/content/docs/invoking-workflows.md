@@ -266,7 +266,7 @@ But a start writes the child to the workflow store and the scheduler, and a time
 writes is no bug. In a fan-out that starts thousands of children, one such blip would end the whole
 parent.
 
-Start children with `.asChildOf(this)` and `.start { … }` instead of `.build()`:
+Mark the invocation with `.asChildOf(this)`:
 
 ```kotlin
 @WorkflowMethod
@@ -275,35 +275,27 @@ open fun issueAll(requests: List<IssueRequest>) {
     workflowFactory.builder<IssueWorkflow>(IssueWorkflow.idFor(request))
       .callbackHandler(IssueCallbackHandler::class.java)
       .asChildOf(this)
-      .start { it.issue(request) }
+      .build()
+      .issue(request)
   }
 }
 ```
 
-```java
-workflowFactory.builder(IssueWorkflow.class, IssueWorkflow.idFor(request))
-    .callbackHandler(IssueCallbackHandler.class)
-    .asChildOf(this)
-    .start(child -> child.issue(request));
-```
-
-`asChildOf` records the parent's id on the child and returns a `ChildWorkflowBuilder`, whose
-`start` builds the child, runs your lambda on it and sorts out what the lambda throws:
+`asChildOf` records the parent's id on the child (the same as `.parentWorkflowId(id)`), and an
+invocation with a parent id sorts out what its start throws:
 
 1. **An error Skipper has already classified** — `NonRetryableError`, `RetryableError` and the
    like — is rethrown unchanged.
 2. **A request Skipper rejected as invalid** (`IllegalArgumentException`, `ValidationError`) is
    rethrown unchanged too, and still fails the parent: running it again would only repeat it.
 3. **Anything else**, such as a store or scheduler timeout, becomes a `RetryableError`. The parent
-   runs again after `startFailureRetryDelay` (5 seconds by default) and starts the child again
-   under the same id; children it already started aren't duplicated, because the id is an
-   idempotency key.
+   runs again after 5 seconds and starts the child again under the same id; children it already
+   started aren't duplicated, because the id is an idempotency key.
+
+Only the start is covered: waiting for a child's result, and the child's own failures, reach the
+parent as before.
 
 > **Caveat with `createExistingWorkflowIsNoop`.** If the store wrote the child's instance and only
 > scheduling its task failed, the retried start normally schedules that instance. With
-> `createExistingWorkflowIsNoop` (or its feature gate) on, the start returns the existing instance untouched instead, so
-> that child never runs.
-
-Keep the lambda to the call itself and build the child's input before it, so that a bug in that
-code fails the parent rather than retrying it forever. In Java, start a `void` workflow method with
-`start(child -> { child.run(); return null; })`.
+> `createExistingWorkflowIsNoop` (or its feature gate) on, the start returns the existing instance
+> untouched instead, so that child never runs.
