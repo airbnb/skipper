@@ -1,5 +1,6 @@
 package com.airbnb.skipper
 
+import com.airbnb.skipper.api.WorkflowInstanceStatusView
 import com.airbnb.skipper.internal.CheckpointTag
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.TestUtils.EXTRA_REQUEST_DATA
@@ -44,6 +45,39 @@ class WorkflowsServiceTest {
     @BeforeEach
     fun setUp() {
         workflowsService = WorkflowsService(workflowStore, skipperEngine, scheduler)
+    }
+
+    @Test
+    fun countChildWorkflows_withoutStatuses_shouldCountChildrenInAnyStatus() {
+        whenever(workflowStore.countChildWorkflows("parent-1", emptySet())).thenReturn(5L)
+
+        assertEquals(5L, workflowsService.countChildWorkflows("parent-1"))
+    }
+
+    @Test
+    fun countChildWorkflows_withStatuses_shouldPassThemToTheStore() {
+        whenever(
+            workflowStore.countChildWorkflows(
+                "parent-1",
+                setOf(WorkflowInstance.Status.RUNNING, WorkflowInstance.Status.WAITING)
+            )
+        ).thenReturn(2L)
+
+        val count =
+            workflowsService.countChildWorkflows(
+                "parent-1",
+                setOf(WorkflowInstanceStatusView.RUNNING, WorkflowInstanceStatusView.WAITING)
+            )
+
+        assertEquals(2L, count)
+    }
+
+    @Test
+    fun countChildWorkflows_withEmptyStatuses_shouldRejectInsteadOfCountingEverything() {
+        assertThrows(IllegalArgumentException::class.java) {
+            workflowsService.countChildWorkflows("parent-1", emptySet())
+        }
+        verify(workflowStore, never()).countChildWorkflows(any(), any())
     }
 
     @Test

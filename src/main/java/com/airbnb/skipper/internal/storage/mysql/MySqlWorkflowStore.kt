@@ -383,6 +383,51 @@ class MySqlWorkflowStore
                 .toLong()
         }
 
+        override fun countChildWorkflows(
+            parentWorkflowId: String,
+            statuses: Set<WorkflowInstance.Status>,
+        ): Long {
+            // Served by the (owner, parent_workflow_id, status) index.
+            val statusClause =
+                if (statuses.isEmpty()) {
+                    ""
+                } else {
+                    " AND status IN (" + statuses.joinToString(",") { "?" } + ")"
+                }
+            val sql =
+                "SELECT COUNT(*) FROM $workflowInstancesTable WHERE owner = ? AND parent_workflow_id = ?" +
+                    statusClause
+            return transactionManager.execute { conn ->
+                try {
+                    conn.prepareStatement(sql).use { ps ->
+                        metrics
+                            .timer(METRICS_COMPONENT, "countChildWorkflows.latency")
+                            .time()
+                            .use { _ ->
+                                ps.setString(1, owner)
+                                ps.setString(2, parentWorkflowId)
+                                statuses.forEachIndexed { i, status ->
+                                    ps.setString(i + 3, status.name)
+                                }
+                                val rs = ps.executeQuery()
+                                // COUNT(*) without GROUP BY always yields exactly one row.
+                                rs.next()
+                                rs.getLong(1)
+                            }
+                    }
+                } catch (e: SQLException) {
+                    metrics
+                        .counter(
+                            ImmutableMap.of("source", "countChildWorkflows"),
+                            METRICS_COMPONENT,
+                            "errors",
+                        )
+                        .inc()
+                    throw InternalError(e)
+                }
+            }
+        }
+
         override fun findWorkflowsWithExhaustedRetries(
             limit: Int,
             sortField: WorkflowSortField?,

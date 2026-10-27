@@ -9,6 +9,7 @@ import io.vavr.Tuple2;
 import io.vavr.Tuple3;
 import io.vavr.collection.List;
 import io.vavr.control.Option;
+import java.util.Set;
 
 public interface WorkflowStore {
   /**
@@ -48,6 +49,27 @@ public interface WorkflowStore {
    *     few thousands.
    */
   long countWorkflowsByStatus(List<WorkflowInstance.Status> statuses);
+
+  /**
+   * Count the child workflows of a parent workflow, i.e. the workflows created with the given
+   * {@code parentWorkflowId}.
+   *
+   * @param parentWorkflowId The ID of the parent workflow.
+   * @param statuses Only count children in one of these statuses. An empty set counts children in
+   *     any status.
+   * @return The number of matching child workflows, or 0 if the parent has none (or does not
+   *     exist).
+   */
+  default long countChildWorkflows(String parentWorkflowId, Set<WorkflowInstance.Status> statuses) {
+    if (parentWorkflowId == null) {
+      throw new java.lang.NullPointerException("parentWorkflowId is marked non-null but is null");
+    }
+    if (statuses == null) {
+      throw new java.lang.NullPointerException("statuses is marked non-null but is null");
+    }
+    throw new UnsupportedOperationException(
+        "countChildWorkflows is not supported by this WorkflowStore implementation");
+  }
 
   /**
    * Find workflows with exhausted retries.
