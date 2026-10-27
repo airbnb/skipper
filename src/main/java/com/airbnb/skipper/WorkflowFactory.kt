@@ -327,9 +327,10 @@ open class WorkflowFactory
          * workflow store and the scheduler, and a timeout or a dropped connection on one of those
          * writes is no bug. What the start throws reaches the parent as follows:
          *
-         * 1. An error Skipper has already classified (a [SkipperError] such as [NonRetryableError],
-         *    or one of Skipper's internal errors) is rethrown unchanged, so it means what it meant
-         *    before.
+         * 1. An error Skipper has already classified (a [SkipperError], or one of Skipper's internal
+         *    errors) is rethrown unchanged, so it means what it meant before: a [RetryableError], such
+         *    as an [OptimisticLockingError], still retries the parent on its own delay, and a
+         *    [NonRetryableError] still fails it.
          * 2. A request Skipper rejected as invalid ([IllegalArgumentException] or [ValidationError]),
          *    such as a child id that is already taken while duplicates are not allowed, is rethrown
          *    unchanged too. Running the parent again would only repeat it, so it still fails the parent.

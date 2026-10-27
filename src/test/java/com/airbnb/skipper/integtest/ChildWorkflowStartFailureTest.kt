@@ -2,6 +2,7 @@ package com.airbnb.skipper.integtest
 
 import com.airbnb.skipper.ComponentFactory
 import com.airbnb.skipper.IWorkflowFactory
+import com.airbnb.skipper.OptimisticLockingError
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowMethod
@@ -178,6 +179,16 @@ class ChildWorkflowStartFailureTest {
     fun storeTimeoutWhileCreatingAChildRetriesTheParent() {
         val parentId = "fan-out-${System.nanoTime()}"
         val fault = Fault(childId(parentId, 2)) { TimeoutException("injected timeout creating the child's instance") }
+        start(storeFault = fault)
+        startParent(parentId)
+        assertParentRetriedAndCompleted(parentId, fault)
+    }
+
+    @Test
+    fun retryableErrorWhileCreatingAChildRetriesTheParent() {
+        val parentId = "fan-out-${System.nanoTime()}"
+        // Already a RetryableError, so it is rethrown unchanged and the executor retries the parent on it.
+        val fault = Fault(childId(parentId, 2)) { OptimisticLockingError("injected conflict creating the child's instance") }
         start(storeFault = fault)
         startParent(parentId)
         assertParentRetriedAndCompleted(parentId, fault)
