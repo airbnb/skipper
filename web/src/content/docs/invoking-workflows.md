@@ -299,6 +299,11 @@ workflowFactory.builder(IssueWorkflow.class, IssueWorkflow.idFor(request))
    under the same id; children it already started aren't duplicated, because the id is an
    idempotency key.
 
+> **Caveat with `createExistingWorkflowIsNoop`.** If the store wrote the child's instance and only
+> scheduling its task failed, the retried start normally schedules that instance. With
+> `createExistingWorkflowIsNoop` (or its feature gate) on, the start returns the existing instance untouched instead, so
+> that child never runs.
+
 Keep the lambda to the call itself and build the child's input before it, so that a bug in that
 code fails the parent rather than retrying it forever. In Java, start a `void` workflow method with
 `start(child -> { child.run(); return null; })`.

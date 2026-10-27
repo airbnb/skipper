@@ -55,8 +55,10 @@ class ChildWorkflowBuilder<T : Workflow> internal constructor(
      *    still fails the parent.
      * 3. Anything else, such as a timeout or a dropped connection while writing the child to the store
      *    or the scheduler, becomes a [RetryableError]. The parent runs again after
-     *    [startFailureRetryDelay] and starts the child again under the same id, which picks up an
-     *    instance the failed attempt already wrote.
+     *    [startFailureRetryDelay] and starts the child again under the same id. If the failed
+     *    attempt already wrote the child's instance, the new start schedules that instance, unless
+     *    [WorkflowOptions.createExistingWorkflowIsNoop] or its feature gate is on: then it returns the instance as it
+     *    is, and a child whose task was never scheduled does not run.
      *
      * For a workflow method that blocks until the child finishes, [call] covers that wait as well. The
      * child's own failure is already a Skipper error (case 1), and giving up on the wait (case 3) makes
