@@ -1,6 +1,7 @@
 package com.airbnb.skipper.integtest
 
 import com.airbnb.skipper.ComponentFactory
+import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.IWorkflowFactory
 import com.airbnb.skipper.OptimisticLockingError
 import com.airbnb.skipper.Workflow
@@ -20,6 +21,7 @@ import com.airbnb.skipper.testutils.TestHelper
 import com.airbnb.skipper.testutils.TestRequestContext
 import com.airbnb.skipper.testutils.TestRuntime
 import com.airbnb.skipper.util.ExtraRequestData
+import java.time.Duration
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
+import org.mockito.Mockito.`when`
 
 /**
  * A parent workflow starts its children on its own execution thread, so a store or scheduler failure
@@ -118,8 +121,11 @@ class ChildWorkflowStartFailureTest {
     private fun start(
         storeFault: Fault? = null,
         schedulerFault: Fault? = null,
+        createExistingWorkflowIsNoop: Boolean = false,
     ) {
         val deps = TestRuntime()
+        `when`(deps.featureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP)).thenReturn(createExistingWorkflowIsNoop)
+        deps.config.taskUnexpectedErrorRetryDelay = Duration.ofMillis(200)
         deps.config.workflowStore = ComponentFactory { FaultyStore(SqliteWorkflowStore.Factory().create(it), storeFault) }
         deps.config.scheduler = ComponentFactory { FaultyScheduler(SqliteScheduler.Factory().create(it), schedulerFault) }
         val runtime = deps.runtime
@@ -171,6 +177,17 @@ class ChildWorkflowStartFailureTest {
         // instance already there and schedules it again.
         val fault = Fault(childId(parentId, 2)) { TimeoutException("injected timeout inserting the child's task") }
         start(schedulerFault = fault)
+        startParent(parentId)
+        assertParentRetriedAndCompleted(parentId, fault)
+    }
+
+    @Test
+    fun schedulerTimeoutWhileSchedulingAChildRunsTheChildWhenCreatingAnExistingWorkflowIsNoop() {
+        val parentId = "fan-out-${System.nanoTime()}"
+        // The gate's default. The retried start finds the child CREATED with no task, so it schedules the
+        // child instead of returning it as it is.
+        val fault = Fault(childId(parentId, 2)) { TimeoutException("injected timeout inserting the child's task") }
+        start(schedulerFault = fault, createExistingWorkflowIsNoop = true)
         startParent(parentId)
         assertParentRetriedAndCompleted(parentId, fault)
     }

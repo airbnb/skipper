@@ -288,14 +288,12 @@ invocation with a parent id sorts out what its start throws:
    like — is rethrown unchanged.
 2. **A request Skipper rejected as invalid** (`IllegalArgumentException`, `ValidationError`) is
    rethrown unchanged too, and still fails the parent: running it again would only repeat it.
-3. **Anything else**, such as a store or scheduler timeout, becomes a `RetryableError`. The parent
-   runs again after 5 seconds and starts the child again under the same id; children it already
-   started aren't duplicated, because the id is an idempotency key.
+3. **Anything else**, such as a store or scheduler timeout, is rethrown as Skipper's internal error,
+   the same one its own stores and schedulers throw when a statement fails. The parent runs again
+   after `taskUnexpectedErrorRetryDelay` (30 seconds by default) and starts the child again under
+   the same id. Children it already started aren't duplicated, because the id is an idempotency
+   key. A child whose instance was written but whose task wasn't gets scheduled on that retry, even
+   with `createExistingWorkflowIsNoop` on.
 
 Only the start is covered: waiting for a child's result, and the child's own failures, reach the
 parent as before.
-
-> **Caveat with `createExistingWorkflowIsNoop`.** If the store wrote the child's instance and only
-> scheduling its task failed, the retried start normally schedules that instance. With
-> `createExistingWorkflowIsNoop` (or its feature gate) on, the start returns the existing instance
-> untouched instead, so that child never runs.

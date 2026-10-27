@@ -167,10 +167,10 @@ class WorkflowFactoryTest {
     fun testChildStartInfrastructureFailureRetriesTheParent() {
         val thrown = startChildThrowing(java.util.concurrent.TimeoutException("store timed out"))
 
-        assertThat(thrown).isInstanceOf(RetryableError::class.java)
-        assertThat((thrown as RetryableError).getNextRetryDelay()).isEqualTo(WorkflowFactory.CHILD_START_RETRY_DELAY)
+        // The same error the stores and schedulers throw, which the task handler already retries.
+        assertThat(thrown).isInstanceOf(com.airbnb.skipper.internal.InternalError::class.java)
         assertThat(thrown.message).contains(workflowId).contains("parent-id").contains("store timed out")
-        assertThat(thrown.cause).isInstanceOf(ApplicationError::class.java)
+        assertThat(thrown.cause).isInstanceOf(java.util.concurrent.TimeoutException::class.java)
         verify(skipperEngine).startWorkflow(org.mockito.kotlin.argThat { parentWorkflowId == "parent-id" })
     }
 

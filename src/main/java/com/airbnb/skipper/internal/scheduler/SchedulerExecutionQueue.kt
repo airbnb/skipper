@@ -4,6 +4,7 @@ import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_LEASE_DURATION
 import com.airbnb.skipper.SkipperAnnotationNames.UTC_CLOCK
 import com.airbnb.skipper.internal.common.UniqueBlockingQueue
 import com.google.common.annotations.VisibleForTesting
+import io.vavr.control.Option
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -122,6 +123,9 @@ open class SchedulerExecutionQueue
             }
             return newTask
         }
+
+        /** The persisted task with [taskId], if any. Every scheduled task is persisted, in-memory ones too. */
+        open fun <T> getTask(taskId: String): Option<Task<T>> = persistentScheduler.getTask(taskId)
 
         open fun add(task: Task<*>): Boolean = getQueue(task.type).add(task, task.id)
 

@@ -334,11 +334,11 @@ open class WorkflowFactory
          * 2. A request Skipper rejected as invalid ([IllegalArgumentException] or [ValidationError]),
          *    such as a child id that is already taken while duplicates are not allowed, is rethrown
          *    unchanged too. Running the parent again would only repeat it, so it still fails the parent.
-         * 3. Anything else, such as a store or scheduler timeout, becomes a [RetryableError]. The
-         *    parent runs again after [CHILD_START_RETRY_DELAY] and starts the child again under the
-         *    same id, which schedules an instance the failed attempt already wrote, unless
-         *    createExistingWorkflowIsNoop is on: then it returns that instance as it is, and a child
-         *    whose task was never scheduled does not run.
+         * 3. Anything else, such as a store or scheduler timeout, becomes an [InternalError], the same
+         *    error Skipper's own stores and schedulers throw when a statement fails. The parent runs
+         *    again after the configured unexpected-error delay and starts the child again under the
+         *    same id. If the failed attempt already wrote the child but not its task, that start
+         *    schedules it.
          *
          * Only the start is covered. Waiting for a child's result happens afterwards, and the child's
          * own failures reach the parent as before.
@@ -355,10 +355,9 @@ open class WorkflowFactory
                 ) {
                     throw e
                 }
-                throw RetryableError(
+                throw InternalError(
                     "unable to start child workflow ${request.workflowId} of ${request.parentWorkflowId}: ${e.message}",
-                    ApplicationError.fromException(e),
-                    CHILD_START_RETRY_DELAY,
+                    e,
                 )
             }
 
@@ -477,15 +476,5 @@ open class WorkflowFactory
             return workflowInstance.toView {
                 skipperEngine.getActionCheckpoints(workflowInstance.workflowId).map(ActionCheckpoint::toView)
             }.getLastTransientError().getOrNull()
-        }
-
-        companion object {
-            /**
-             * How long a parent waits before running again after one of its children failed to start:
-             * long enough for a brief store or scheduler outage to pass, short enough not to stall a
-             * fan-out.
-             */
-            @JvmField
-            val CHILD_START_RETRY_DELAY: Duration = Duration.ofSeconds(5)
         }
     }
