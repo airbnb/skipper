@@ -256,3 +256,49 @@ lets Skipper hibernate the instance and notify you on completion, rather than ho
 that will time out anyway. For the Kotlin-specific picture — why `launch { }` is a poor
 substitute, and how threads are held on each side of a call — see
 [Kotlin Coroutines](/docs/kotlin-coroutines/).
+
+## Starting child workflows
+
+A workflow that starts other workflows from its workflow method starts them on its own execution
+thread, so whatever a start throws escapes the parent's workflow method. There, an exception Skipper
+doesn't recognize is taken for a bug in your workflow code and ends the parent in `ERROR` for good.
+But a start writes the child to the workflow store and the scheduler, and a timeout on one of those
+writes is no bug. In a fan-out that starts thousands of children, one such blip would end the whole
+parent.
+
+Start children with `.asChildOf(this)` and `.start { … }` instead of `.build()`:
+
+```kotlin
+@WorkflowMethod
+open fun issueAll(requests: List<IssueRequest>) {
+  for (request in requests) {
+    workflowFactory.builder<IssueWorkflow>(IssueWorkflow.idFor(request))
+      .callbackHandler(IssueCallbackHandler::class.java)
+      .asChildOf(this)
+      .start { it.issue(request) }
+  }
+}
+```
+
+```java
+workflowFactory.builder(IssueWorkflow.class, IssueWorkflow.idFor(request))
+    .callbackHandler(IssueCallbackHandler.class)
+    .asChildOf(this)
+    .start(child -> child.issue(request));
+```
+
+`asChildOf` records the parent's id on the child and returns a `ChildWorkflowBuilder`, whose
+`start` builds the child, runs your lambda on it and sorts out what the lambda throws:
+
+1. **An error Skipper has already classified** — `NonRetryableError`, `RetryableError` and the
+   like — is rethrown unchanged.
+2. **A request Skipper rejected as invalid** (`IllegalArgumentException`, `ValidationError`) is
+   rethrown unchanged too, and still fails the parent: running it again would only repeat it.
+3. **Anything else**, such as a store or scheduler timeout, becomes a `RetryableError`. The parent
+   runs again after `startFailureRetryDelay` (5 seconds by default) and starts the child again
+   under the same id; children it already started aren't duplicated, because the id is an
+   idempotency key.
+
+Keep the lambda to the call itself and build the child's input before it, so that a bug in that
+code fails the parent rather than retrying it forever. In Java, start a `void` workflow method with
+`start(child -> { child.run(); return null; })`.

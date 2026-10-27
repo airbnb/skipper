@@ -52,6 +52,8 @@ Starting and addressing workflows. See [Invoking Workflows](/docs/invoking-workf
 | `.requestContext(payload)` | Opaque, persisted per-request payload surfaced to middleware. |
 | `.parentWorkflowId(id)` | Link this instance to a parent workflow. |
 | `.build(): T` | Build the workflow handle. |
+| `.asChildOf(parent)` | Start this workflow as a child of `parent`, from `parent`'s workflow method; returns a `ChildWorkflowBuilder`. See [Starting child workflows](/docs/invoking-workflows/#starting-child-workflows). |
+| `ChildWorkflowBuilder.start(call)` | Build the child and run `call` on it. A store or scheduler failure retries the parent after `startFailureRetryDelay(Duration)` (default 5 s) instead of failing it. |
 
 ## Lifecycle callbacks — `WorkflowCallbackHandler`
 
