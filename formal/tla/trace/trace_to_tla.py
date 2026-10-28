@@ -29,6 +29,7 @@ ACTIONS = [
     ("createWorkflow", "SkipperEngine.startWorkflow", "StartCreate"),
     ("schedule", "SkipperEngine.runSignal", "SignalSched"),
     ("schedule", "SkipperEngine.scheduleExecution", "StartSched"),
+    ("schedule", "SchedulerExecutionQueue.scheduleAfterLease", "StartRecover"),
     ("schedule", "TimerTaskHandler.handle", "TmSched"),
     ("schedule", "WorkflowExecutionTaskHandler.rearmOrphanedTimers", "WfRearm"),
     ("schedule", "WorkflowExecutionTaskHandler.persistExecutionResult", "WfTimers"),
@@ -137,8 +138,10 @@ def normalise(workflow, event, header, action):
     task = event.get("task")
     row = state["tasks"].get(task) if task else None
     if row and event["ok"]:
-        in_memory = event["op"] == "schedule" and any("SchedulerExecutionQueue.schedule" in f for f in event["site"])
-        if event["op"] in ("fetch", "renewLease") or in_memory:
+        # An in-memory schedule leases its backstop row, and scheduleAfterLease writes the same row.
+        leasing_schedule = event["op"] == "schedule" and any(
+            f in ("SchedulerExecutionQueue.schedule", "SchedulerExecutionQueue.scheduleAfterLease") for f in event["site"])
+        if event["op"] in ("fetch", "renewLease") or leasing_schedule:
             workflow.lease_values.setdefault(task, set()).add(row["ra"])
 
     def cls(task_id, r):
@@ -203,7 +206,8 @@ def model_files(workflow, header):
         "MaxFaults": EARLY_EXPIRIES,
         "MaxRenewals": count("Renew"),
         "MaxRequeues": count("Requeue"),
-        "Faults": '{"early_expiry"}',
+        # A start that ran again found the workflow already there: an earlier call may have failed.
+        "Faults": '{"early_expiry", "caller_fail"}' if count("StartCreate") > 1 else '{"early_expiry"}',
         "NoopOnExisting": gates["CREATE_EXISTING_WORKFLOW_IS_NOOP"],
         "BumpOnHonoredLease": gates["BUMP_TASK_VERSION_ON_HONORED_LEASE"],
         "InMemoryStart": True,
@@ -211,6 +215,9 @@ def model_files(workflow, header):
         "MaxStartCalls": max(1, count("StartCreate")),
         "UserFailures": True,
         "FreeBody": True,
+        "Callers": "{c1}",
+        "RecoverAfterLease": True,
+        "NoLongPauses": False,
     }
     fmt = lambda v: ("TRUE" if v else "FALSE") if isinstance(v, bool) else str(v)
     cfg = "SPECIFICATION TraceSpec\nCONSTANTS\n"

@@ -20,6 +20,7 @@ import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore
 import com.airbnb.skipper.testutils.TestHelper
 import com.airbnb.skipper.testutils.TestRequestContext
 import com.airbnb.skipper.testutils.TestRuntime
+import com.airbnb.skipper.testutils.trace.Tracing
 import com.airbnb.skipper.util.ExtraRequestData
 import java.time.Duration
 import java.util.concurrent.TimeoutException
@@ -127,8 +128,15 @@ class ChildWorkflowStartFailureTest {
         `when`(deps.featureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP)).thenReturn(createExistingWorkflowIsNoop)
         deps.config.taskUnexpectedErrorRetryDelay = Duration.ofMillis(200)
         deps.config.schedulerTaskLeaseDuration = Duration.ofSeconds(1)
-        deps.config.workflowStore = ComponentFactory { FaultyStore(SqliteWorkflowStore.Factory().create(it), storeFault) }
-        deps.config.scheduler = ComponentFactory { FaultyScheduler(SqliteScheduler.Factory().create(it), schedulerFault) }
+        // Trace the stock backends beneath the faults (when tracing is on), so trace validation checks
+        // what reached the store, the recovery of a stranded child included.
+        deps.config.workflowStore = SqliteWorkflowStore.Factory()
+        deps.config.scheduler = SqliteScheduler.Factory()
+        Tracing.installIfRequested(deps.config)
+        val store = deps.config.workflowStore
+        val stockScheduler = deps.config.scheduler
+        deps.config.workflowStore = ComponentFactory { FaultyStore(store.create(it), storeFault) }
+        deps.config.scheduler = ComponentFactory { FaultyScheduler(stockScheduler.create(it), schedulerFault) }
         val runtime = deps.runtime
         engine = runtime.skipperEngine.get()
         scheduler = runtime.scheduler.get()

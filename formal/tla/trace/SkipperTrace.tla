@@ -50,8 +50,9 @@ Act(e) ==
       [] e.act = "Finish"        -> \E p \in Workers : Finish(p)
       [] e.act = "Renew"         -> \E p \in Workers : Renew(p)
       [] e.act = "Requeue"       -> \E t \in TaskIds : Requeue(t)
-      [] e.act = "StartCreate"   -> StartCreate
-      [] e.act = "StartSched"    -> StartSched
+      [] e.act = "StartCreate"   -> \E c \in Callers : StartCreate(c)
+      [] e.act = "StartSched"    -> \E c \in Callers : StartSched(c)
+      [] e.act = "StartRecover"  -> \E c \in Callers : StartRecover(c)
       [] e.act = "SignalPersist" -> SignalPersist
       [] e.act = "SignalSched"   -> SignalSched
       [] e.act = "SignalStart"   -> SignalStart
@@ -86,15 +87,17 @@ TimeNeeded ==
 Silent == Next /\ DurableSame /\ ~LoggedRead /\ TimeNeeded /\ UNCHANGED l
 
 (* A logged read is its model step. A write that changed nothing the model tracks (a    *)
-(* lost optimistic lock, an entity that already existed, a no-op honour of a lease) is   *)
-(* consumed without a model step; the model action it came from, if any, runs as a     *)
-(* silent step. A refused signal changes nothing at all.                                 *)
+(* lost optimistic lock, a no-op honour of a lease) is consumed without a model step;   *)
+(* the model action it came from, if any, runs as a silent step. A refused signal       *)
+(* changes nothing at all. A start that found the workflow already there is its model    *)
+(* step, like a read: what it does next depends on what it found, so a retried start     *)
+(* cannot pass for the first start's late schedule.                                      *)
 Consume ==
     /\ l <= Len(TraceLog)
     /\ LET e == TraceLog[l] IN
          /\ CASE e.act = "SignalRejected" -> UNCHANGED vars /\ Matches(e)
               [] e.read -> Act(e) /\ Matches(e)
-              [] e.noop -> UNCHANGED vars /\ Matches(e)
+              [] e.noop /\ e.act # "StartCreate" -> UNCHANGED vars /\ Matches(e)
               [] OTHER -> Act(e) /\ Matches(e)
          /\ ReportProgress => PrintT(<<"matched", l, e.seq>>)
     /\ l' = l + 1
