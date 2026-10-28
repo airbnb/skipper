@@ -155,6 +155,49 @@ class WorkflowFactoryTest {
         )
     }
 
+    private val parent = SampleWorkflow().apply { id = "parent-id" }
+
+    private fun startChildThrowing(error: Exception): Throwable {
+        whenever(skipperEngine.startWorkflow(any())).thenAnswer { throw error }
+        val child = workflowFactory.builder(SampleWorkflow::class.java, workflowId).asChildOf(parent).build()
+        return assertThrows<Throwable> { child.asyncWorkflowMethod("input") }
+    }
+
+    @Test
+    fun testChildStartInfrastructureFailureRetriesTheParent() {
+        val thrown = startChildThrowing(java.util.concurrent.TimeoutException("store timed out"))
+
+        // The same error the stores and schedulers throw, which the task handler already retries.
+        assertThat(thrown).isInstanceOf(com.airbnb.skipper.internal.InternalError::class.java)
+        assertThat(thrown.message).contains(workflowId).contains("parent-id").contains("store timed out")
+        assertThat(thrown.cause).isInstanceOf(java.util.concurrent.TimeoutException::class.java)
+        verify(skipperEngine).startWorkflow(org.mockito.kotlin.argThat { parentWorkflowId == "parent-id" })
+    }
+
+    @Test
+    fun testChildStartClassifiedOrInvalidFailureIsRethrownUnchanged() {
+        val unchanged =
+            listOf(
+                NonRetryableError("child failed"),
+                RetryableError("child asked to retry", null, java.time.Duration.ofSeconds(1)),
+                com.airbnb.skipper.internal.InternalError("engine failure"),
+                IllegalArgumentException("invalid child request"),
+                ValidationError("invalid child input"),
+            )
+        for (error in unchanged) {
+            assertThat(startChildThrowing(error)).isSameAs(error)
+        }
+    }
+
+    @Test
+    fun testStartFailureWithoutAParentIsNotReclassified() {
+        val error = IllegalStateException("store timed out")
+        whenever(skipperEngine.startWorkflow(any())).thenAnswer { throw error }
+        val workflow = workflowFactory.builder(SampleWorkflow::class.java, workflowId).build()
+
+        assertThat(assertThrows<Throwable> { workflow.asyncWorkflowMethod("input") }).isSameAs(error)
+    }
+
     /**
      * A detached invocation returns before the workflow executes, so its future must not report
      * success — a caller that awaits it by mistake would otherwise take an immediate completion as

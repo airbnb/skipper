@@ -99,6 +99,7 @@ open class SkipperEngine
                         )
                         .build()
                 var workflowInstance: WorkflowInstance
+                var stranded = false
                 try {
                     workflowInstance = workflowStore.createWorkflow(workflowCreationRequest)
                     eventPublisher.publishEvent(
@@ -136,13 +137,27 @@ open class SkipperEngine
                         // If the workflow is waiting for a manual retry, then force the execution regardless.
                         shouldByPassExecution = false
                     }
+                    if (shouldByPassExecution && isStranded(workflowInstance)) {
+                        // An earlier start wrote the instance and then failed to schedule it, so nothing
+                        // will ever run it. Schedule it now even if starting an existing workflow is a
+                        // no-op, or retrying that start (e.g. a parent starting its child again) would
+                        // return an instance that never runs.
+                        shouldByPassExecution = false
+                        stranded = true
+                    }
                     if (shouldByPassExecution) {
                         tags[METRIC_OUTCOME] = "existingNoOp"
                         return workflowInstance
                     }
                 }
-                val inProcessExecution = !request.isRunAsync
-                scheduleExecution(workflowInstance, inProcessExecution)
+                if (stranded) {
+                    // The start that wrote the instance may only be slow rather than failed, and about to
+                    // schedule it in memory. Scheduling after a lease lets either one run it, never both.
+                    scheduler.scheduleAfterLease(executionRequest(workflowInstance).build())
+                } else {
+                    val inProcessExecution = !request.isRunAsync
+                    scheduleExecution(workflowInstance, inProcessExecution)
+                }
                 if (request.executionTimeout != null) {
                     val timeoutTaskId = String.format("%s:timeout", workflowInstance.workflowId)
                     val executionTimeout = now.instant().plus(request.executionTimeout)
@@ -181,24 +196,34 @@ open class SkipperEngine
             }
         }
 
+        /**
+         * Whether [workflowInstance] is RUNNING with no task to execute it. The store writes a new
+         * instance as RUNNING, and a RUNNING instance keeps its task until an execution persists a
+         * new status, so a missing task means the start that wrote it failed to schedule it.
+         */
+        private fun isStranded(workflowInstance: WorkflowInstance): Boolean =
+            workflowInstance.status == WorkflowInstance.Status.RUNNING &&
+                scheduler.getTask<Any>(workflowInstance.workflowId).isEmpty
+
         open fun scheduleExecution(
             workflowInstance: WorkflowInstance,
             inMemoryExecution: Boolean
         ) {
             scheduler.schedule(
-                ScheduleRequest.builder<WorkflowInstance>()
-                    .id(workflowInstance.workflowId)
-                    .dedupToken(workflowInstance.workflowId)
-                    .payload(workflowInstance)
-                    .type(Task.Type.WORKFLOW)
-                    .honorActiveLeaseWhenOverwriting(true)
-                    .bumpVersionWhenHonoringLease(
-                        featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE)
-                    )
-                    .inMemoryExecutionEnabled(inMemoryExecution)
-                    .build()
+                executionRequest(workflowInstance).inMemoryExecutionEnabled(inMemoryExecution).build()
             )
         }
+
+        private fun executionRequest(workflowInstance: WorkflowInstance): ScheduleRequest.ScheduleRequestBuilder<WorkflowInstance> =
+            ScheduleRequest.builder<WorkflowInstance>()
+                .id(workflowInstance.workflowId)
+                .dedupToken(workflowInstance.workflowId)
+                .payload(workflowInstance)
+                .type(Task.Type.WORKFLOW)
+                .honorActiveLeaseWhenOverwriting(true)
+                .bumpVersionWhenHonoringLease(
+                    featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE)
+                )
 
         /**
          * Clones a workflow instance.

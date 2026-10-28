@@ -76,4 +76,54 @@ class QueueBasedSchedulerTest {
         // the execution queue.
         assertEquals(1, persistentScheduler.realSize())
     }
+
+    @Test
+    fun testScheduleAfterLeaseOnlyWritesTheRowDueAfterTheLease() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val task = scheduler.scheduleAfterLease(workflowTaskRequest())
+        assertEquals(0, scheduler.getQueue(Task.Type.WORKFLOW).size())
+        assertEquals(Instant.EPOCH.plus(leaseDuration), task.runAfter)
+        assertEquals(0, persistentScheduler.fetch<Any>(10).size(), "the row is not due before the lease passes")
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH.plus(leaseDuration).plus(Duration.ofSeconds(1)))
+        assertEquals(listOf(task.id), persistentScheduler.fetch<Any>(10).map { it.id }.toJavaList())
+    }
+
+    /** A start schedules the task in memory on one node while a retried start schedules it after the lease on another. */
+    @Test
+    fun testInMemoryScheduleFollowedByScheduleAfterLeaseRunsTheTaskOnce() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val otherNode = SchedulerExecutionQueue(persistentScheduler, mockClock, leaseDuration)
+        scheduler.schedule(workflowTaskRequest())
+        otherNode.scheduleAfterLease(workflowTaskRequest())
+        assertRunsOnlyInMemoryOn(scheduler, otherNode)
+    }
+
+    @Test
+    fun testScheduleAfterLeaseFollowedByInMemoryScheduleRunsTheTaskOnce() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val otherNode = SchedulerExecutionQueue(persistentScheduler, mockClock, leaseDuration)
+        otherNode.scheduleAfterLease(workflowTaskRequest())
+        scheduler.schedule(workflowTaskRequest())
+        assertRunsOnlyInMemoryOn(scheduler, otherNode)
+    }
+
+    private fun assertRunsOnlyInMemoryOn(
+        node: SchedulerExecutionQueue,
+        otherNode: SchedulerExecutionQueue,
+    ) {
+        assertEquals(1, node.getQueue(Task.Type.WORKFLOW).size())
+        assertEquals(0, otherNode.getQueue(Task.Type.WORKFLOW).size())
+        assertEquals(0, persistentScheduler.fetch<Any>(10).size(), "the persistent row must not be due while the task runs in memory")
+    }
+
+    private fun workflowTaskRequest(): ScheduleRequest<WorkflowInstance> {
+        val workflowInstance = TestUtils.getWorkflowInstance()
+        return ScheduleRequest.builder<WorkflowInstance>()
+            .id(workflowInstance.workflowId)
+            .dedupToken(workflowInstance.workflowId)
+            .type(Task.Type.WORKFLOW)
+            .payload(workflowInstance)
+            .honorActiveLeaseWhenOverwriting(true)
+            .build()
+    }
 }

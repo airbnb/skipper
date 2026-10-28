@@ -256,3 +256,49 @@ lets Skipper hibernate the instance and notify you on completion, rather than ho
 that will time out anyway. For the Kotlin-specific picture — why `launch { }` is a poor
 substitute, and how threads are held on each side of a call — see
 [Kotlin Coroutines](/docs/kotlin-coroutines/).
+
+## Starting child workflows
+
+A workflow that starts other workflows from its workflow method starts them on its own execution
+thread, so whatever a start throws escapes the parent's workflow method. There, an exception Skipper
+doesn't recognize is taken for a bug in your workflow code and ends the parent in `ERROR` for good.
+But a start writes the child to the workflow store and the scheduler, and a timeout on one of those
+writes is no bug. In a fan-out that starts thousands of children, one such blip would end the whole
+parent.
+
+Mark the invocation with `.asChildOf(this)`:
+
+```kotlin
+@WorkflowMethod
+open fun issueAll(requests: List<IssueRequest>) {
+  for (request in requests) {
+    workflowFactory.builder<IssueWorkflow>(IssueWorkflow.idFor(request))
+      .callbackHandler(IssueCallbackHandler::class.java)
+      .asChildOf(this)
+      .build()
+      .issue(request)
+  }
+}
+```
+
+`asChildOf` records the parent's id on the child (the same as `.parentWorkflowId(id)`), and an
+invocation with a parent id sorts out what its start throws:
+
+1. **An error Skipper has already classified** — `NonRetryableError`, `RetryableError` and the
+   like — is rethrown unchanged.
+2. **A request Skipper rejected as invalid** (`IllegalArgumentException`, `ValidationError`) is
+   rethrown unchanged too, and still fails the parent: running it again would only repeat it.
+3. **Anything else**, such as a store or scheduler timeout, is rethrown as Skipper's internal error,
+   the same one its own stores and schedulers throw when a statement fails. The parent runs again
+   after `taskUnexpectedErrorRetryDelay` (30 seconds by default) and starts the child again under
+   the same id. Children it already started aren't duplicated, because the id is an idempotency
+   key. A child whose instance was written but whose task wasn't gets scheduled on that retry, even
+   with `createExistingWorkflowIsNoop` on. It runs once `schedulerTaskLeaseDuration` has passed
+   (8 minutes by default), so a first start that was only slow can't end up running the child
+   alongside it. This applies to every exception Skipper doesn't recognize, programming errors
+   such as a `NullPointerException` from a store included. The retries stop after
+   `schedulerTaskMaxRetries` (100 by default). The parent then stays in `TRANSIENT_ERROR`, which
+   the admin UI's Retry accepts once the cause is fixed.
+
+Only the start is covered: waiting for a child's result, and the child's own failures, reach the
+parent as before.

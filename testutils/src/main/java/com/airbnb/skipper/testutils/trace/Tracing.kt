@@ -19,7 +19,9 @@ import java.util.UUID
  *
  * Only the stock JDBC backends are traced. A test that plugs in its own store or scheduler is
  * usually steering an interleaving by blocking inside a call, and the recorder's lock, held across
- * each call, would stall the rest of the engine behind it and change what the test exercises.
+ * each call, would stall the rest of the engine behind it and change what the test exercises. A
+ * test that only wraps them, for example to make a call fail, can call this on the stock factories
+ * itself and wrap the traced ones: a call its wrapper fails never reaches the trace.
  */
 object Tracing {
     const val DIR_PROPERTY = "skipper.trace.dir"

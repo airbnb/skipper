@@ -2,7 +2,7 @@
 (***************************************************************************************)
 (* How the Skipper engine drives one workflow instance to completion, as a transition *)
 (* system over the durable store (workflow row, timer rows, scheduler task rows) and  *)
-(* the processes that touch it: scheduler workers, the caller of startWorkflow, a     *)
+(* the processes that touch it: scheduler workers, the callers of startWorkflow, a    *)
 (* signal sender and an operator working the DLQ.                                     *)
 (*                                                                                     *)
 (* The property under test: once a workflow is created it eventually settles in a     *)
@@ -31,7 +31,12 @@ CONSTANTS
     BumpOnHonoredLease, \* FeatureGate BUMP_TASK_VERSION_ON_HONORED_LEASE (default on)
     InMemoryStart,      \* startWorkflow may take the in-process path (synchronous start)
     SignalInMemory,     \* signals take the in-process path: FORCE_SIGNAL_WORKFLOW_EXEC_IN_SCHEDULER off
-    MaxStartCalls,      \* startWorkflow calls the caller makes, beyond retries after a failure
+    MaxStartCalls,      \* startWorkflow calls each caller makes, beyond retries after a failure
+    Callers,            \* startWorkflow callers, each in its own JVM with its own in-memory queue
+    RecoverAfterLease,  \* a start that finds the workflow stranded schedules it after a lease (FALSE:
+                        \* like any other start, which only calibrates start_race_unguarded)
+    NoLongPauses,       \* no start stalls between its two writes, and no in-memory copy waits in its
+                        \* queue, for as long as a lease
     UserFailures,       \* the workflow body may fail: transient, non-retryable, retries exhausted
     FreeBody            \* the body's outcome is unconstrained (trace validation runs real workflows)
 
@@ -51,6 +56,7 @@ ASSUME /\ Workers # {}
        /\ NoopOnExisting \in BOOLEAN /\ BumpOnHonoredLease \in BOOLEAN /\ UserFailures \in BOOLEAN
        /\ InMemoryStart \in BOOLEAN /\ SignalInMemory \in BOOLEAN /\ FreeBody \in BOOLEAN
        /\ MaxStartCalls \in Nat \ {0}
+       /\ Callers # {} /\ RecoverAfterLease \in BOOLEAN /\ NoLongPauses \in BOOLEAN
 
 -----------------------------------------------------------------------------------------
 (* Task ids. The WORKFLOW task's id is the workflow id; TIMER task k belongs to wait k. *)
@@ -78,8 +84,8 @@ VARIABLES
     tm,       \* timer rows: k -> NONE | ACTIVE | EXPIRED | CANCELLED
     row,      \* scheduler task rows: id -> [st: NONE|PENDING|RUNNING|FAILED, ra, ver, rc]
     wk,       \* per-worker local state (see IdleW)
-    cpc,      \* startWorkflow caller: ready (a call is due) | sched | done
-    lq,       \* the caller JVM's in-memory queue: {} or {held snapshot}
+    cpc,      \* startWorkflow caller c: ready (a call is due) | sched | recover | done
+    lq,       \* caller c's JVM's in-memory queue: {} or {held snapshot}
     spc,      \* signal sender: idle | exec | sched
     sRead,    \* workflow version the in-flight signal read
     sigSent, faults, renewals, requeues, starts
@@ -94,7 +100,8 @@ TypeOK ==
     /\ row \in [TaskIds -> [st: {"NONE", "PENDING", "RUNNING", "FAILED"}, ra: Nat, ver: Nat, rc: Nat]]
     /\ \A p \in Workers : wk[p].pc \in {"idle", "dlq", "wf_exec", "wf_run", "wf_persist", "wf_timers",
                                         "wf_rearm", "tm_exec", "tm_sched", "finish"}
-    /\ cpc \in {"ready", "sched", "done"}
+    /\ cpc \in [Callers -> {"ready", "sched", "recover", "done"}]
+    /\ starts \in [Callers -> Nat]
     /\ spc \in {"idle", "exec", "sched"}
 
 -----------------------------------------------------------------------------------------
@@ -102,6 +109,12 @@ TypeOK ==
 
 Live(t) == row[t].st \in {"PENDING", "RUNNING"}
 Queued(t) == row[t].st \in {"PENDING", "RUNNING", "FAILED"}   \* FAILED = in the DLQ
+
+(* Every in-memory copy of the workflow task, in any caller's JVM.                     *)
+InMemoryCopies == UNION {lq[c] : c \in Callers}
+
+(* The JVM signals run in. Its in-memory queue is one of the callers'.                 *)
+SignalNode == CHOOSE c \in Callers : TRUE
 
 (* Task.hasActiveLease: PENDING or RUNNING with run_after <= now + lease.               *)
 ActiveLease(r) == r.st \in {"PENDING", "RUNNING"} /\ r.ra # LATER
@@ -124,7 +137,7 @@ Sched(t, ra, honor) == SchedReq(t, ra, honor, BumpOnHonoredLease)
 (* as a counter, and states that differ only in how many leases came before merge.       *)
 NewLease ==
     LET used == {FirstLease - 1} \cup {row[t].ra : t \in TaskIds}
-                \cup {wk[p].held.ra : p \in Workers} \cup {h.ra : h \in lq}
+                \cup {wk[p].held.ra : p \in Workers} \cup {h.ra : h \in InMemoryCopies}
     IN 1 + (CHOOSE m \in used : \A u \in used : u <= m)
 
 (* The holder of task t's lease is still working and will renew or finish it.          *)
@@ -211,11 +224,12 @@ Fetch(p) ==
                      !.att = TRUE])
     /\ UNCHANGED <<wf, tm, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
-(* A consumer takes the in-memory copy startWorkflow queued in this JVM.               *)
+(* A consumer takes the in-memory copy startWorkflow queued in its JVM.                *)
 Take(p) ==
-    /\ wk[p].pc = "idle" /\ lq # {}
-    /\ \E h \in lq : SetW(p, [IdleW EXCEPT !.pc = "wf_exec", !.held = h, !.att = TRUE])
-    /\ lq' = {}
+    /\ wk[p].pc = "idle"
+    /\ \E c \in Callers : \E h \in lq[c] :
+         /\ SetW(p, [IdleW EXCEPT !.pc = "wf_exec", !.held = h, !.att = TRUE])
+         /\ lq' = [lq EXCEPT ![c] = {}]
     /\ UNCHANGED <<wf, tm, row, cpc, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* Scheduler.markAsFailed, versioned; a lost race is swallowed and the row left alone.  *)
@@ -383,8 +397,17 @@ Renew(p) ==
 -----------------------------------------------------------------------------------------
 (* Time. A lease whose holder is gone lapses; a backoff or timer comes due.             *)
 
+(* With NoLongPauses, a lease does not lapse while something that began within it is    *)
+(* still to happen: a start between its two writes, or an in-memory copy of that lease  *)
+(* waiting to be taken. The models that use it start from a fresh workflow, so every     *)
+(* workflow-task lease was granted after a pending start began.                          *)
+LeaseStillClaimed(t) ==
+    /\ NoLongPauses /\ t = WF
+    /\ \/ \E c \in Callers : cpc[c] = "sched"
+       \/ \E h \in InMemoryCopies : h.ra = row[WF].ra
+
 ExpireFree(t) ==
-    /\ Live(t) /\ row[t].ra >= FirstLease /\ ~LiveHolder(t)
+    /\ Live(t) /\ row[t].ra >= FirstLease /\ ~LiveHolder(t) /\ ~LeaseStillClaimed(t)
     /\ row' = [row EXCEPT ![t].ra = DUE]
     /\ UNCHANGED <<wf, tm, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
@@ -394,48 +417,67 @@ Tick(t) ==
     /\ UNCHANGED <<wf, tm, wk, cpc, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 -----------------------------------------------------------------------------------------
-(* Environment: the caller of startWorkflow, a signal sender, an operator.              *)
+(* Environment: the callers of startWorkflow, a signal sender, an operator.             *)
+
+(* A RUNNING workflow with no task row: the start that wrote it never scheduled it, or  *)
+(* has not yet (SkipperEngine.isStranded). The store writes a new workflow as RUNNING.   *)
+Stranded == wf.st = "RUNNING" /\ row[WF].st = "NONE"
 
 (* SkipperEngine.startWorkflow, part 1: createWorkflow, or on EntityAlreadyExists       *)
 (* return the existing instance without scheduling (terminal, or the no-op gate is on,  *)
-(* except RETRIES_EXHAUSTED which is always re-run).                                    *)
-StartCreate ==
-    /\ cpc = "ready"
+(* except RETRIES_EXHAUSTED which is always re-run). A stranded workflow is scheduled    *)
+(* even with the no-op gate on; the instance read and its task lookup are one step here. *)
+StartCreate(c) ==
+    /\ cpc[c] = "ready"
     /\ IF ~wf.ex
        THEN /\ wf' = [ex |-> TRUE, st |-> "RUNNING", ver |-> 1, sig |-> 0]
-            /\ cpc' = "sched"
+            /\ cpc' = [cpc EXCEPT ![c] = "sched"]
        ELSE /\ UNCHANGED wf
-            /\ cpc' = IF (wf.st \in Terminal \/ NoopOnExisting) /\ wf.st # "RETRIES_EXHAUSTED"
-                      THEN "done" ELSE "sched"
+            /\ cpc' = [cpc EXCEPT ![c] =
+                    IF wf.st = "RETRIES_EXHAUSTED" \/ ~(wf.st \in Terminal \/ NoopOnExisting) THEN "sched"
+                    ELSE IF Stranded THEN IF RecoverAfterLease THEN "recover" ELSE "sched"
+                    ELSE "done"]
     /\ UNCHANGED <<tm, row, wk, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* SchedulerExecutionQueue.schedule for a due workflow task: persist a leased backstop  *)
-(* row and queue the task in this JVM, unless it is already queued here. The queued     *)
-(* copy carries the workflow instance as it is now (wv): the handler runs on that        *)
-(* payload instead of reading the store again.                                          *)
-InMemorySchedule ==
-    \/ /\ lq = {}
+(* row and queue the task in JVM n, unless it is already queued there. It queues the     *)
+(* copy even when the row write honoured someone else's lease. The queued copy carries   *)
+(* the workflow instance as it is now (wv): the handler runs on that payload instead of  *)
+(* reading the store again.                                                              *)
+InMemorySchedule(n) ==
+    \/ /\ lq[n] = {}
        /\ LET r == Sched(WF, NewLease, TRUE) IN
             /\ row' = [row EXCEPT ![WF] = r]
-            /\ lq' = {[id |-> WF, ver |-> r.ver, ra |-> r.ra, rc |-> 0, rerun |-> FALSE, wv |-> wf.ver]}
-    \/ /\ lq # {}
+            /\ lq' = [lq EXCEPT ![n] =
+                    {[id |-> WF, ver |-> r.ver, ra |-> r.ra, rc |-> 0, rerun |-> FALSE, wv |-> wf.ver]}]
+    \/ /\ lq[n] # {}
        /\ UNCHANGED <<row, lq>>
 
 (* Part 2: scheduleExecution, a separate transaction. Async goes to the persistent      *)
 (* scheduler; in-process execution persists a leased backstop row and queues the task   *)
 (* in this JVM (SchedulerExecutionQueue.schedule).                                      *)
-StartSched ==
-    /\ cpc = "sched"
-    /\ cpc' = "done"
+StartSched(c) ==
+    /\ cpc[c] = "sched"
+    /\ cpc' = [cpc EXCEPT ![c] = "done"]
     /\ \/ /\ row' = [row EXCEPT ![WF] = Sched(WF, DUE, TRUE)]
           /\ UNCHANGED <<lq>>
-       \/ InMemoryStart /\ InMemorySchedule
+       \/ InMemoryStart /\ InMemorySchedule(c)
     /\ UNCHANGED <<wf, tm, wk, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
+(* Part 2 for a stranded workflow (SchedulerExecutionQueue.scheduleAfterLease): only the *)
+(* backstop row, due after a lease, and no in-memory copy. Its start may only be slow    *)
+(* and about to schedule in memory: whichever row write comes first, the other honours   *)
+(* its lease, and the only copy that runs is the one queued against it.                  *)
+StartRecover(c) ==
+    /\ cpc[c] = "recover"
+    /\ cpc' = [cpc EXCEPT ![c] = "done"]
+    /\ row' = [row EXCEPT ![WF] = Sched(WF, NewLease, TRUE)]
+    /\ UNCHANGED <<wf, tm, wk, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
+
 (* The caller invokes the workflow method again (a sync caller reading its result).     *)
-StartAgain ==
-    /\ cpc = "done" /\ starts < MaxStartCalls
-    /\ cpc' = "ready" /\ starts' = starts + 1
+StartAgain(c) ==
+    /\ cpc[c] = "done" /\ starts[c] < MaxStartCalls
+    /\ cpc' = [cpc EXCEPT ![c] = "ready"] /\ starts' = [starts EXCEPT ![c] = @ + 1]
     /\ UNCHANGED <<wf, tm, row, wk, lq, spc, sRead, sigSent, faults, renewals, requeues>>
 
 (* SkipperEngine.runSignal: read, run the signal method, persist state and RUNNING      *)
@@ -461,7 +503,7 @@ SignalSched ==
     /\ IF ~SignalInMemory
        THEN /\ row' = [row EXCEPT ![WF] = Sched(WF, DUE, TRUE)]
             /\ UNCHANGED <<lq>>
-       ELSE InMemorySchedule
+       ELSE InMemorySchedule(SignalNode)
     /\ UNCHANGED <<wf, tm, wk, cpc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* Scheduler.requeueFailedTask from the admin DLQ view.                                 *)
@@ -479,9 +521,9 @@ Crash(p) ==
     /\ SetW(p, IdleW)
     /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
-LoseLocalQueue ==
-    /\ lq # {} /\ Fault("crash")
-    /\ lq' = {}
+LoseLocalQueue(c) ==
+    /\ lq[c] # {} /\ Fault("crash")
+    /\ lq' = [lq EXCEPT ![c] = {}]
     /\ UNCHANGED <<wf, tm, row, wk, cpc, spc, sRead, sigSent, renewals, requeues, starts>>
 
 HandlerTimeout(p) ==
@@ -508,9 +550,9 @@ StoreError(p) ==
     /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 (* startWorkflow throws after the row exists; the caller is expected to retry.          *)
-StartFail ==
-    /\ cpc \in {"sched", "done"} /\ wf.ex /\ Fault("caller_fail")
-    /\ cpc' = "ready"
+StartFail(c) ==
+    /\ cpc[c] \in {"sched", "recover", "done"} /\ wf.ex /\ Fault("caller_fail")
+    /\ cpc' = [cpc EXCEPT ![c] = "ready"]
     /\ UNCHANGED <<wf, tm, row, wk, lq, spc, sRead, sigSent, renewals, requeues, starts>>
 
 SignalFail ==
@@ -524,8 +566,8 @@ Init ==
     /\ tm = [k \in Timers |-> "NONE"]
     /\ row = [t \in TaskIds |-> NoRow]
     /\ wk = [p \in Workers |-> IdleW]
-    /\ cpc = "ready" /\ lq = {} /\ spc = "idle" /\ sRead = 0
-    /\ sigSent = 0 /\ faults = 0 /\ renewals = 0 /\ requeues = 0 /\ starts = 1
+    /\ cpc = [c \in Callers |-> "ready"] /\ lq = [c \in Callers |-> {}] /\ spc = "idle" /\ sRead = 0
+    /\ sigSent = 0 /\ faults = 0 /\ renewals = 0 /\ requeues = 0 /\ starts = [c \in Callers |-> 1]
 
 WorkerStep(p) ==
     \/ Fetch(p) \/ Take(p) \/ MarkFailed(p) \/ WfRead(p) \/ WfRun(p) \/ WfPersist(p) \/ WfTimers(p)
@@ -534,9 +576,9 @@ WorkerStep(p) ==
 Next ==
     \/ \E p \in Workers : WorkerStep(p) \/ Renew(p) \/ Crash(p) \/ HandlerTimeout(p) \/ StoreError(p)
     \/ \E t \in TaskIds : ExpireFree(t) \/ Tick(t) \/ ExpireEarly(t) \/ Requeue(t)
-    \/ StartCreate \/ StartSched \/ StartFail \/ StartAgain
+    \/ \E c \in Callers : StartCreate(c) \/ StartSched(c) \/ StartRecover(c) \/ StartFail(c) \/ StartAgain(c)
+                         \/ LoseLocalQueue(c)
     \/ SignalStart \/ SignalPersist \/ SignalSched \/ SignalFail
-    \/ LoseLocalQueue
 
 (* Workers keep working, time passes, the caller retries until a call succeeds, and a   *)
 (* signal call that started runs to its end. Faults, renewals, new signals and          *)
@@ -544,7 +586,7 @@ Next ==
 Fairness ==
     /\ \A p \in Workers : WF_vars(WorkerStep(p))
     /\ \A t \in TaskIds : WF_vars(ExpireFree(t)) /\ WF_vars(Tick(t))
-    /\ WF_vars(StartCreate) /\ WF_vars(StartSched)
+    /\ \A c \in Callers : WF_vars(StartCreate(c)) /\ WF_vars(StartSched(c)) /\ WF_vars(StartRecover(c))
     /\ WF_vars(SignalPersist) /\ WF_vars(SignalSched)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
@@ -557,8 +599,8 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 (* or a timer task whose timer already fired and which will schedule the workflow.      *)
 WfDriven ==
     \/ Queued(WF)
-    \/ lq # {}
-    \/ cpc \in {"ready", "sched"}
+    \/ InMemoryCopies # {}
+    \/ \E c \in Callers : cpc[c] \in {"ready", "sched", "recover"}
     \/ spc = "sched"
     \/ \E k \in Timers : tm[k] = "EXPIRED" /\ Queued(k)
 
@@ -589,6 +631,14 @@ SchedulesTimer(p, k) ==
 TimerSchedulesKeepLeases ==
     [][\A p \in Workers, k \in Timers :
          SchedulesTimer(p, k) /\ ActiveLease(row[k]) => row'[k] = row[k]]_vars
+
+(* Worker p is running the workflow task: from loading the instance to its final write.  *)
+RunsWorkflow(p) ==
+    wk[p].held.id = WF /\ wk[p].pc \in {"wf_exec", "wf_run", "wf_persist", "wf_timers", "wf_rearm", "finish"}
+
+(* At most one execution of the workflow at a time. Two at once would run the same       *)
+(* actions concurrently; Skipper's retries assume a workflow's runs follow one another.  *)
+NoOverlappingRuns == \A p, q \in Workers : RunsWorkflow(p) /\ RunsWorkflow(q) => p = q
 
 (* Terminal states are absorbing.                                                       *)
 TerminalIsStable == [][wf.st \in Terminal => wf'.st = wf.st]_vars

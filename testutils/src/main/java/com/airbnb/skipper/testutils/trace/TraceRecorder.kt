@@ -7,6 +7,7 @@ import com.airbnb.skipper.internal.storage.WorkflowStore
 import java.io.BufferedWriter
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -155,16 +156,30 @@ class TraceRecorder internal constructor(
          */
         internal fun calledFrom(methods: List<String>): Boolean = callSite().firstOrNull() in methods
 
-        /** The engine methods that made the call, innermost first: what the checker maps to a model action. */
+        /**
+         * The engine methods that made the call, innermost first: what the checker maps to a model action.
+         * A store or scheduler wrapped around the traced one, such as a test's fault injector, passes
+         * calls through to it, so its frames are skipped and the engine method behind it is the caller.
+         */
         private fun callSite(): List<String> =
             Thread.currentThread().stackTrace
                 .filter { f -> f.className.startsWith("com.airbnb.skipper.") && EXCLUDED_PREFIXES.none { f.className.startsWith(it) } }
+                .dropWhile { f -> isBackendWrapper(f.className) }
                 .map { f -> f.className.substringAfterLast('.') + "." + f.methodName }
                 .take(8)
+
+        private val backendWrappers = ConcurrentHashMap<String, Boolean>()
+
+        private fun isBackendWrapper(className: String): Boolean =
+            backendWrappers.computeIfAbsent(className) {
+                val cls = runCatching { Class.forName(it, false, TraceRecorder::class.java.classLoader) }.getOrNull()
+                cls != null && (WorkflowStore::class.java.isAssignableFrom(cls) || Scheduler::class.java.isAssignableFrom(cls))
+            }
 
         /** The frames of the test that started the runtime, for finding the test a trace came from. */
         private fun origin(): List<String> =
             Thread.currentThread().stackTrace
+                .filterNot { f -> isBackendWrapper(f.className) }
                 .map { f -> f.className.substringAfterLast('.') + "." + f.methodName }
                 .filter { it.contains("Test") || it.contains("Example") }
                 .take(4)

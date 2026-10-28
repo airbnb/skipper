@@ -25,6 +25,9 @@ the spec has drifted and needs updating, or the code has a bug.
    - Only the stock SQLite and MySQL backends are wrapped. Tests that plug in their own store or
      scheduler steer interleavings by blocking inside calls, and the recorder's lock would change
      what they exercise.
+   - A test that only wraps the stock backends, to make a call fail, can install tracing beneath its
+     wrapper (`ChildWorkflowStartFailureTest` does). A call the wrapper fails never reaches the trace,
+     and the recorder skips the wrapper's frames when it works out which engine method made a call.
 2. **Conversion.** `trace_to_tla.py` splits each file by workflow and turns each write into the
    model action it corresponds to (the `ACTIONS` table).
    - State is reduced to model values. Task ids become 0 for the workflow task and 1..n for timers.
@@ -37,7 +40,8 @@ the spec has drifted and needs updating, or the code has a bug.
 3. **Checking.** [`SkipperTrace.tla`](SkipperTrace.tla) replays one workflow's events against the
    model.
    - A step either consumes the next event, taking its action and landing exactly on its snapshot,
-     or is silent. A silent step is a model step that changes no durable state: a lease lapsing,
+     or is silent. A start that found the workflow already there is a step too, although it
+     writes nothing: what that start does next depends on what it found. A silent step is a model step that changes no durable state: a lease lapsing,
      time passing, a worker's local bookkeeping. The logged reads can't happen silently.
    - The workflow body is left free (`FreeBody`), except in how a real body can run. It replays its
      waits in order and may stop anywhere, and it suspends only inside `waitUntil`, on a timer it
@@ -113,10 +117,13 @@ is scheduled while its timer is still `ACTIVE`, which the model says can't happe
 that is exactly what should prompt either a spec update, if the new order is intended, or a
 rethink.
 
-Current results on the traced suites: 90 of 90 in-scope workflow runs accepted, 113 skipped, and
-442 of 442 mutants rejected, in about 7 minutes with 8 parallel checks. Of the skips, 95 are tests
-that write to the store directly; the rest use compensation (14), execution timeouts (2),
-cancellation (1) or rewind (1).
+Current results on the traced suites: 110 of 110 in-scope workflow runs accepted, 121 skipped, and
+540 of 540 mutants rejected. Of the skips, 96 are tests that write to the store directly; the rest
+use compensation (17), cancellation (5), execution timeouts (2) or rewind (1).
+
+The stranded-start recovery of airbnb/skipper#46 is covered the same way. With the engine changed
+back to scheduling a stranded child like any other start, the recorded run of
+`ChildWorkflowStartFailureTest`'s stranded child is rejected at that schedule.
 
 ## What it has found so far
 

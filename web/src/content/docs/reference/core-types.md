@@ -52,6 +52,7 @@ Starting and addressing workflows. See [Invoking Workflows](/docs/invoking-workf
 | `.requestContext(payload)` | Opaque, persisted per-request payload surfaced to middleware. |
 | `.parentWorkflowId(id)` | Link this instance to a parent workflow. |
 | `.build(): T` | Build the workflow handle. |
+| `.asChildOf(parent)` | Start this workflow as a child of `parent`, from `parent`'s workflow method: records the parent's id, and a store or scheduler failure while starting it retries the parent instead of failing it. See [Starting child workflows](/docs/invoking-workflows/#starting-child-workflows). |
 
 ## Lifecycle callbacks — `WorkflowCallbackHandler`
 

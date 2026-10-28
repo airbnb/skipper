@@ -248,6 +248,92 @@ class SkipperEngineTest {
         verify(mockScheduler, times(0)).schedule<Any>(any())
     }
 
+    /**
+     * An earlier start wrote the instance, then failed to schedule it. Starting it again schedules it
+     * even though starting an existing workflow is a no-op, or it would never run. It schedules it after
+     * a lease, so an earlier start that is only slow can still run it in memory without a second copy.
+     */
+    @Test
+    fun testStartWorkflowWhenWorkflowExistsWithoutATaskSchedulesItDespiteCreationNoop() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP))
+            .thenReturn(true)
+        whenever(mockWorkflowStore.createWorkflow(any())).thenThrow(EntityAlreadyExists())
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(runningInstance()))
+        whenever(mockScheduler.getTask<WorkflowInstance>("test-workflow-id")).thenReturn(Option.none())
+        whenever(mockScheduler.scheduleAfterLease(any<ScheduleRequest<WorkflowInstance>>()))
+            .thenReturn(getTestTask(getWorkflowInstance()))
+
+        skipperEngine.startWorkflow(
+            RunRequest.builder()
+                .workflowId("test-workflow-id")
+                .workflowClass(Workflow::class.java)
+                .input("test")
+                .workflowMethod("test-method")
+                .requestContext(REQUEST_CONTEXT)
+                .extraRequestData(ExtraRequestData())
+                .runAsync(true)
+                .build(),
+        )
+
+        verify(mockScheduler).scheduleAfterLease(
+            argThat<ScheduleRequest<WorkflowInstance>> {
+                id == "test-workflow-id" && type == Task.Type.WORKFLOW && isHonorActiveLeaseWhenOverwriting
+            },
+        )
+        verify(mockScheduler, times(0)).schedule<Any>(any())
+    }
+
+    @Test
+    fun testStartWorkflowWhenRunningWorkflowExistsWithATaskAndCreationIsNoopDoesNotScheduleIt() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP))
+            .thenReturn(true)
+        whenever(mockWorkflowStore.createWorkflow(any())).thenThrow(EntityAlreadyExists())
+        whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(runningInstance()))
+        whenever(mockScheduler.getTask<WorkflowInstance>("test-workflow-id"))
+            .thenReturn(Option.of(getTestTask(runningInstance())))
+
+        skipperEngine.startWorkflow(
+            RunRequest.builder()
+                .workflowId("test-workflow-id")
+                .workflowClass(Workflow::class.java)
+                .input("test")
+                .workflowMethod("test-method")
+                .requestContext(REQUEST_CONTEXT)
+                .extraRequestData(ExtraRequestData())
+                .build(),
+        )
+
+        verify(mockScheduler, times(0)).schedule<Any>(any())
+    }
+
+    /** A WAITING instance has no task until a signal or timer wakes it, so its task is not looked up. */
+    @Test
+    fun testStartWorkflowWhenWaitingWorkflowExistsAndCreationIsNoopDoesNotLookUpItsTask() {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP))
+            .thenReturn(true)
+        whenever(mockWorkflowStore.createWorkflow(any())).thenThrow(EntityAlreadyExists())
+        whenever(mockWorkflowStore.getWorkflow(any<String>()))
+            .thenReturn(
+                Option.of(TestUtils.getWorkflowInstance().toBuilder().status(WorkflowInstance.Status.WAITING).build()),
+            )
+
+        skipperEngine.startWorkflow(
+            RunRequest.builder()
+                .workflowId("test-workflow-id")
+                .workflowClass(Workflow::class.java)
+                .input("test")
+                .workflowMethod("test-method")
+                .requestContext(REQUEST_CONTEXT)
+                .extraRequestData(ExtraRequestData())
+                .build(),
+        )
+
+        verify(mockScheduler, times(0)).getTask<Any>(any())
+        verify(mockScheduler, times(0)).schedule<Any>(any())
+    }
+
+    private fun runningInstance(): WorkflowInstance = TestUtils.getWorkflowInstance().toBuilder().status(WorkflowInstance.Status.RUNNING).build()
+
     @Test
     fun testStartWorkflowWhenRetriesAreExhaustedIgnoresRequestCreationNoop() {
         val instance =
