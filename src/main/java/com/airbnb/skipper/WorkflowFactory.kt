@@ -338,7 +338,9 @@ open class WorkflowFactory
          *    error Skipper's own stores and schedulers throw when a statement fails. The parent runs
          *    again after the configured unexpected-error delay and starts the child again under the
          *    same id. If the failed attempt already wrote the child but not its task, that start
-         *    schedules it.
+         *    schedules it. This includes bugs such as a NullPointerException from a store. Those
+         *    retries stop at the scheduler's max retries, leaving the parent in TRANSIENT_ERROR to be
+         *    retried once the bug is fixed, rather than in ERROR.
          *
          * Only the start is covered. Waiting for a child's result happens afterwards, and the child's
          * own failures reach the parent as before.

@@ -250,7 +250,8 @@ class SkipperEngineTest {
 
     /**
      * An earlier start wrote the instance, then failed to schedule it. Starting it again schedules it
-     * even though starting an existing workflow is a no-op, or it would never run.
+     * even though starting an existing workflow is a no-op, or it would never run. It schedules it after
+     * a lease, so an earlier start that is only slow can still run it in memory without a second copy.
      */
     @Test
     fun testStartWorkflowWhenWorkflowExistsWithoutATaskSchedulesItDespiteCreationNoop() {
@@ -259,7 +260,7 @@ class SkipperEngineTest {
         whenever(mockWorkflowStore.createWorkflow(any())).thenThrow(EntityAlreadyExists())
         whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(runningInstance()))
         whenever(mockScheduler.getTask<WorkflowInstance>("test-workflow-id")).thenReturn(Option.none())
-        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>()))
+        whenever(mockScheduler.scheduleAfterLease(any<ScheduleRequest<WorkflowInstance>>()))
             .thenReturn(getTestTask(getWorkflowInstance()))
 
         skipperEngine.startWorkflow(
@@ -274,7 +275,12 @@ class SkipperEngineTest {
                 .build(),
         )
 
-        verify(mockScheduler).schedule(argThat<ScheduleRequest<WorkflowInstance>> { id == "test-workflow-id" && type == Task.Type.WORKFLOW })
+        verify(mockScheduler).scheduleAfterLease(
+            argThat<ScheduleRequest<WorkflowInstance>> {
+                id == "test-workflow-id" && type == Task.Type.WORKFLOW && isHonorActiveLeaseWhenOverwriting
+            },
+        )
+        verify(mockScheduler, times(0)).schedule<Any>(any())
     }
 
     @Test

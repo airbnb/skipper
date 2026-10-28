@@ -293,7 +293,12 @@ invocation with a parent id sorts out what its start throws:
    after `taskUnexpectedErrorRetryDelay` (30 seconds by default) and starts the child again under
    the same id. Children it already started aren't duplicated, because the id is an idempotency
    key. A child whose instance was written but whose task wasn't gets scheduled on that retry, even
-   with `createExistingWorkflowIsNoop` on.
+   with `createExistingWorkflowIsNoop` on. It runs once `schedulerTaskLeaseDuration` has passed
+   (8 minutes by default), so a first start that was only slow can't end up running the child
+   alongside it. This applies to every exception Skipper doesn't recognize, programming errors
+   such as a `NullPointerException` from a store included. The retries stop after
+   `schedulerTaskMaxRetries` (100 by default). The parent then stays in `TRANSIENT_ERROR`, which
+   the admin UI's Retry accepts once the cause is fixed.
 
 Only the start is covered: waiting for a child's result, and the child's own failures, reach the
 parent as before.

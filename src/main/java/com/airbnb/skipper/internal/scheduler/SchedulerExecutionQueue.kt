@@ -124,6 +124,25 @@ open class SchedulerExecutionQueue
             return newTask
         }
 
+        /**
+         * Schedule a task in the persistent scheduler only, due once a lease from now has passed.
+         *
+         * This is the same row the in-memory path writes as its fallback, so it reads as an active lease
+         * to any other schedule of the same task. Paired with a concurrent in-memory schedule of that
+         * task, whichever writes the row first, the task runs once:
+         * 1. If the in-memory schedule writes first, this call honours its lease and enqueues nothing.
+         * 2. If this call writes first, the in-memory schedule honours this row's lease and runs the task
+         *    in memory, as it would have with its own row.
+         * 3. If nothing else schedules the task, the persistent scheduler delivers it after the lease.
+         */
+        open fun <T> scheduleAfterLease(request: ScheduleRequest<T>): Task<T> =
+            persistentScheduler.schedule(
+                request.toBuilder()
+                    .runAfter(now.instant().plus(leaseDuration))
+                    .payload(null)
+                    .build(),
+            )
+
         /** The persisted task with [taskId], if any. Every scheduled task is persisted, in-memory ones too. */
         open fun <T> getTask(taskId: String): Option<Task<T>> = persistentScheduler.getTask(taskId)
 

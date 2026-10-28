@@ -126,6 +126,7 @@ class ChildWorkflowStartFailureTest {
         val deps = TestRuntime()
         `when`(deps.featureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP)).thenReturn(createExistingWorkflowIsNoop)
         deps.config.taskUnexpectedErrorRetryDelay = Duration.ofMillis(200)
+        deps.config.schedulerTaskLeaseDuration = Duration.ofSeconds(1)
         deps.config.workflowStore = ComponentFactory { FaultyStore(SqliteWorkflowStore.Factory().create(it), storeFault) }
         deps.config.scheduler = ComponentFactory { FaultyScheduler(SqliteScheduler.Factory().create(it), schedulerFault) }
         val runtime = deps.runtime
@@ -184,8 +185,8 @@ class ChildWorkflowStartFailureTest {
     @Test
     fun schedulerTimeoutWhileSchedulingAChildRunsTheChildWhenCreatingAnExistingWorkflowIsNoop() {
         val parentId = "fan-out-${System.nanoTime()}"
-        // The gate's default. The retried start finds the child CREATED with no task, so it schedules the
-        // child instead of returning it as it is.
+        // The gate's default. The retried start finds the child RUNNING with no task, so it schedules the
+        // child, due after the lease, instead of returning it as it is.
         val fault = Fault(childId(parentId, 2)) { TimeoutException("injected timeout inserting the child's task") }
         start(schedulerFault = fault, createExistingWorkflowIsNoop = true)
         startParent(parentId)
