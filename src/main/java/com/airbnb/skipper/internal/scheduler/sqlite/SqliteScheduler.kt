@@ -78,8 +78,11 @@ class SqliteScheduler
 
         override fun <T> schedule(request: ScheduleRequest<T>): Task<T> = scheduleWithOutcome(request).task
 
+        // Only the honour-lease branch below sets leaseHonored; every other path leaves the false it starts at.
         override fun <T> scheduleWithOutcome(request: ScheduleRequest<T>): ScheduleOutcome<T> {
+            var leaseHonored = false
             return transactionManager.execute { conn ->
+                leaseHonored = false // the transaction may run this block again
                 val existingTask: Option<Task<T>> = getTaskForUpdate(request.id)
                 if (existingTask.isDefined) {
                     // Update if the task already exists
@@ -92,6 +95,7 @@ class SqliteScheduler
                     var runAfter =
                         (request.runAfter ?: Instant.EPOCH).truncatedTo(ChronoUnit.MILLIS)
                     if (shouldHonorLease) {
+                        leaseHonored = true
                         runAfter = existingTask.get().runAfter
                         log.info(
                             "task with id: {} has an active lease, runAfter is not being overridden." +
@@ -100,9 +104,9 @@ class SqliteScheduler
                             runAfter
                         )
                         if (!request.isBumpVersionWhenHonoringLease) {
-                            return@execute ScheduleOutcome(existingTask.get(), leaseHonored = true)
+                            return@execute existingTask.get()
                         }
-                        return@execute ScheduleOutcome(recordRerunRequest(conn, existingTask.get()), leaseHonored = true)
+                        return@execute recordRerunRequest(conn, existingTask.get())
                     }
                     log.info(
                         "task with id: {} is being overwritten. runAfter={}. hasActiveLease={}." +
@@ -152,7 +156,7 @@ class SqliteScheduler
                                 if (rowsUpdated != 1) {
                                     throw OptimisticLockingError("failed to update task with id: " + request.id)
                                 }
-                                return@execute ScheduleOutcome(overwrittenTask, leaseHonored = false)
+                                return@execute overwrittenTask
                             }
                         }
                     } catch (e: SQLException) {
@@ -189,21 +193,19 @@ class SqliteScheduler
                             if (rowsInserted != 1) {
                                 throw InternalError("failed to insert new task with id: " + request.id)
                             }
-                            val inserted =
-                                Task.builder<T>()
-                                    .id(request.id)
-                                    .createdAt(now)
-                                    .runAfter(runAfter)
-                                    .retryCount(0)
-                                    .payload(request.payload)
-                                    .dedupToken(request.dedupToken)
-                                    .type(request.type)
-                                    .status(Task.Status.PENDING)
-                                    .executionTimeout(Duration.ofSeconds(request.executionTimeout.seconds))
-                                    .shouldRefreshPayload(true)
-                                    .version(1)
-                                    .build()
-                            return@execute ScheduleOutcome(inserted, leaseHonored = false)
+                            return@execute Task.builder<T>()
+                                .id(request.id)
+                                .createdAt(now)
+                                .runAfter(runAfter)
+                                .retryCount(0)
+                                .payload(request.payload)
+                                .dedupToken(request.dedupToken)
+                                .type(request.type)
+                                .status(Task.Status.PENDING)
+                                .executionTimeout(Duration.ofSeconds(request.executionTimeout.seconds))
+                                .shouldRefreshPayload(true)
+                                .version(1)
+                                .build()
                         }
                     }
                 } catch (e: SQLException) {
@@ -212,7 +214,7 @@ class SqliteScheduler
                     }
                     throw InternalError("unable to insert new task with id: " + request.id, e)
                 }
-            }
+            }.let { ScheduleOutcome(it, leaseHonored) }
         }
 
         override fun <T> fetch(limit: Int): List<Task<T>> = transactionManager.retryOnTransientLockContention { fetchOnce(limit) }
