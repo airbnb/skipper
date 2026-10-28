@@ -60,10 +60,16 @@ open class SchedulerExecutionQueue
          * important benefits like being able to wait on Future contained in the task payload, which
          * would be impossible through a regular scheduler.
          *
+         * A due task is not queued in memory in two cases, and then nothing completes a Future in
+         * this request's payload:
+         * 1. A copy is already queued in this JVM.
+         * 2. The task's row is leased and the request honours that lease
+         *    ([ScheduleRequest.isHonorActiveLeaseWhenOverwriting]). The lease holder runs the task.
+         *
          * @param request The request to schedule a task.
-         * @return The scheduled task.
+         * @return The scheduled task, and whether a copy carrying this request's payload was queued.
          */
-        open fun <T> schedule(request: ScheduleRequest<T>): Task<T> {
+        open fun <T> schedule(request: ScheduleRequest<T>): Scheduled<T> {
             val shouldExecuteInTheFuture =
                 request.runAfter != null && request.runAfter.isAfter(now.instant())
             if (!request.inMemoryExecutionEnabled || shouldExecuteInTheFuture) {
@@ -75,13 +81,15 @@ open class SchedulerExecutionQueue
                     request.id,
                     request.runAfter,
                 )
-                return persistentScheduler.schedule(
-                    // We are going to clear the payload to avoid serialization issues and because the
-                    // handler can dereference the payload by the id and hydrate it.
-                    // The payload will have to anyways be refreshed by the handler because it could
-                    // be stale.
-                    request.toBuilder().payload(null).build(),
-                )
+                val persistedTask: Task<T> =
+                    persistentScheduler.schedule(
+                        // We are going to clear the payload to avoid serialization issues and because the
+                        // handler can dereference the payload by the id and hydrate it.
+                        // The payload will have to anyways be refreshed by the handler because it could
+                        // be stale.
+                        request.toBuilder().payload(null).build(),
+                    )
+                return Scheduled(persistedTask, queuedInMemory = false)
             }
             var newTask: Task<T> =
                 // This task will go directly to the blocking queue, so let's not have the handler
@@ -100,28 +108,44 @@ open class SchedulerExecutionQueue
                     .status(Task.Status.PENDING)
                     .shouldRefreshPayload(false)
                     .build()
-            if (!getQueue(newTask.type).contains(newTask.id)) {
-                val persistedTask: Task<T> =
-                    persistentScheduler.schedule(
-                        // We are going to clear the payload to avoid serialization issues and because
-                        // the handler can dereference the payload by the id and hydrate it.
-                        // The payload will have to anyways be refreshed by the handler because it could
-                        // be stale.
-                        request.toBuilder()
-                            .runAfter(now.instant().plus(leaseDuration))
-                            .payload(null)
-                            .build(),
-                    )
-                // We need the task to contain the version so that updates or removals down the line
-                // don't fail with optimistic locking errors.
-                newTask = // for lease renewal purposes
-                    newTask.toBuilder()
-                        .version(persistedTask.version)
-                        .runAfter(persistedTask.runAfter)
-                        .build()
-                add(newTask)
+            if (getQueue(newTask.type).contains(newTask.id)) {
+                return Scheduled(newTask, queuedInMemory = false)
             }
-            return newTask
+            val outcome: ScheduleOutcome<T> =
+                persistentScheduler.scheduleWithOutcome(
+                    // We are going to clear the payload to avoid serialization issues and because
+                    // the handler can dereference the payload by the id and hydrate it.
+                    // The payload will have to anyways be refreshed by the handler because it could
+                    // be stale.
+                    request.toBuilder()
+                        .runAfter(now.instant().plus(leaseDuration))
+                        .payload(null)
+                        .build(),
+                )
+            if (outcome.leaseHonored) {
+                // The row has an active lease (Task.hasActiveLease): a worker fetched it, an in-memory
+                // copy is queued against it in some JVM (this one included), or it simply comes due
+                // within a lease. A copy here could run alongside whoever runs the row. A holder still
+                // working reruns the task when it finishes if the honoured write bumped the version
+                // (ScheduleRequest.isBumpVersionWhenHonoringLease); otherwise the row is delivered
+                // when it comes due or its lease lapses.
+                log.info(
+                    "task row is leased, leaving the task to the lease holder instead of queueing it in memory." +
+                        " taskId={}. runAfter={}",
+                    request.id,
+                    outcome.task.runAfter,
+                )
+                return Scheduled(outcome.task, queuedInMemory = false)
+            }
+            // We need the task to contain the version so that updates or removals down the line
+            // don't fail with optimistic locking errors.
+            newTask = // for lease renewal purposes
+                newTask.toBuilder()
+                    .version(outcome.task.version)
+                    .runAfter(outcome.task.runAfter)
+                    .build()
+            add(newTask)
+            return Scheduled(newTask, queuedInMemory = true)
         }
 
         /**
@@ -131,8 +155,8 @@ open class SchedulerExecutionQueue
          * to any other schedule of the same task. Paired with a concurrent in-memory schedule of that
          * task, whichever writes the row first, the task runs once:
          * 1. If the in-memory schedule writes first, this call honours its lease and enqueues nothing.
-         * 2. If this call writes first, the in-memory schedule honours this row's lease and runs the task
-         *    in memory, as it would have with its own row.
+         * 2. If this call writes first, the in-memory schedule honours this row's lease and queues no
+         *    copy, so the persistent scheduler delivers the task after the lease.
          * 3. If nothing else schedules the task, the persistent scheduler delivers it after the lease.
          */
         open fun <T> scheduleAfterLease(request: ScheduleRequest<T>): Task<T> =
@@ -166,3 +190,11 @@ open class SchedulerExecutionQueue
             private val log = LoggerFactory.getLogger(SchedulerExecutionQueue::class.java)
         }
     }
+
+/** What [SchedulerExecutionQueue.schedule] did with a request. */
+data class Scheduled<T>(
+    /** The task as scheduled: the in-memory copy when one was queued, else the persisted row. */
+    val task: Task<T>,
+    /** A copy carrying the request's payload waits in this JVM's queue and will run here. */
+    val queuedInMemory: Boolean,
+)

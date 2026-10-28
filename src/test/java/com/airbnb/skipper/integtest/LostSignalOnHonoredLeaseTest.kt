@@ -12,6 +12,8 @@ import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.SkipperSchedulerManager
 import com.airbnb.skipper.internal.api.RunRequest
+import com.airbnb.skipper.internal.scheduler.ScheduleOutcome
+import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
 import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
@@ -64,6 +66,9 @@ class LostSignalOnHonoredLeaseTest {
             }
             delegate.remove(task)
         }
+
+        // Kotlin's `by` delegation skips Java default methods; forward it so the store reports honoured leases.
+        override fun <T> scheduleWithOutcome(request: ScheduleRequest<T>): ScheduleOutcome<T> = delegate.scheduleWithOutcome(request)
     }
 
     open class ApprovalWorkflow : Workflow() {

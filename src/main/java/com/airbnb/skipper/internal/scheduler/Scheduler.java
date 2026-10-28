@@ -22,6 +22,25 @@ public interface Scheduler {
   <T> Task<T> schedule(ScheduleRequest<T> request);
 
   /**
+   * Same as {@link #schedule}, and also reports whether the write honoured an active lease instead
+   * of replacing the row.
+   *
+   * <p>The in-memory execution path needs this: a task whose row is leased elsewhere must not also
+   * run in this JVM. The lease check and the write must be atomic, so only the implementation can
+   * tell. The default reports no lease honoured, which keeps the in-memory path as it was for an
+   * implementation that does not override this. A wrapper around another scheduler must forward
+   * this as well as {@link #schedule}: Kotlin's {@code by} delegation does not forward Java default
+   * methods.
+   *
+   * @param request The request to schedule a task.
+   * @return The task as scheduled, and whether a lease was honoured.
+   * @param <T> The type of payload.
+   */
+  default <T> ScheduleOutcome<T> scheduleWithOutcome(ScheduleRequest<T> request) {
+    return new ScheduleOutcome<>(schedule(request), false);
+  }
+
+  /**
    * Fetches elements from the queue that are ready to be delivered.
    *
    * <p>This method will only get tasks whose `runAfter` is in the past AND that don't have an

@@ -1,6 +1,7 @@
 package com.airbnb.skipper.testutils.trace
 
 import com.airbnb.skipper.internal.cluster.BucketRange
+import com.airbnb.skipper.internal.scheduler.ScheduleOutcome
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
@@ -14,7 +15,16 @@ internal class TracingScheduler(
     private val delegate: Scheduler,
     private val recorder: TraceRecorder,
 ) : Scheduler {
-    override fun <T> schedule(request: ScheduleRequest<T>): Task<T> =
+    override fun <T> schedule(request: ScheduleRequest<T>): Task<T> = recordSchedule(request) { delegate.schedule(request) }
+
+    override fun <T> scheduleWithOutcome(request: ScheduleRequest<T>): ScheduleOutcome<T> =
+        recordSchedule(request) { delegate.scheduleWithOutcome(request) }
+
+    /** Both schedule calls are the same write to the model. */
+    private fun <T, R> recordSchedule(
+        request: ScheduleRequest<T>,
+        call: () -> R,
+    ): R =
         recorder.record(
             "schedule",
             mapOf(
@@ -25,7 +35,8 @@ internal class TracingScheduler(
                 "bumpVersion" to request.isBumpVersionWhenHonoringLease,
             ),
             { listOf(touched(request.type, request.id)) },
-        ) { delegate.schedule(request) }
+            call,
+        )
 
     override fun <T> fetch(limit: Int): List<Task<T>> = recordFetch { delegate.fetch(limit) }
 

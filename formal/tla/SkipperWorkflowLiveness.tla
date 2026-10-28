@@ -35,8 +35,9 @@ CONSTANTS
     Callers,            \* startWorkflow callers, each in its own JVM with its own in-memory queue
     RecoverAfterLease,  \* a start that finds the workflow stranded schedules it after a lease (FALSE:
                         \* like any other start, which only calibrates start_race_unguarded)
-    NoLongPauses,       \* no start stalls between its two writes, and no in-memory copy waits in its
-                        \* queue, for as long as a lease
+    NoLongPauses,       \* no in-memory copy waits in its queue for as long as a lease
+    InMemoryHonorsLease,\* the in-memory path queues no copy when its backstop write honoured a lease
+                        \* (FALSE: it queues one anyway, which only calibrates inmem_overlap_unguarded)
     UserFailures,       \* the workflow body may fail: transient, non-retryable, retries exhausted
     FreeBody            \* the body's outcome is unconstrained (trace validation runs real workflows)
 
@@ -57,6 +58,7 @@ ASSUME /\ Workers # {}
        /\ InMemoryStart \in BOOLEAN /\ SignalInMemory \in BOOLEAN /\ FreeBody \in BOOLEAN
        /\ MaxStartCalls \in Nat \ {0}
        /\ Callers # {} /\ RecoverAfterLease \in BOOLEAN /\ NoLongPauses \in BOOLEAN
+       /\ InMemoryHonorsLease \in BOOLEAN
 
 -----------------------------------------------------------------------------------------
 (* Task ids. The WORKFLOW task's id is the workflow id; TIMER task k belongs to wait k. *)
@@ -119,13 +121,17 @@ SignalNode == CHOOSE c \in Callers : TRUE
 (* Task.hasActiveLease: PENDING or RUNNING with run_after <= now + lease.               *)
 ActiveLease(r) == r.st \in {"PENDING", "RUNNING"} /\ r.ra # LATER
 
+(* A schedule of task t that honours active leases finds one: it will not replace the    *)
+(* row (Scheduler.scheduleWithOutcome's leaseHonored).                                  *)
+HonorsLease(t, honor) == honor /\ ActiveLease(row[t])
+
 (* Scheduler.schedule for task t: insert, or overwrite resetting status and retry count;*)
 (* when honouring an active lease, leave the row alone or (bump) bump only its version  *)
 (* so the holder's final versioned write fails and it reruns the task. The lease check  *)
 (* and the write are one transaction (JDBC) or one versioned write.                     *)
 SchedReq(t, ra, honor, bump) ==
     IF row[t].st = "NONE" THEN [st |-> "PENDING", ra |-> ra, ver |-> 1, rc |-> 0]
-    ELSE IF honor /\ ActiveLease(row[t])
+    ELSE IF HonorsLease(t, honor)
          THEN IF bump THEN [row[t] EXCEPT !.ver = @ + 1] ELSE row[t]
          ELSE [st |-> "PENDING", ra |-> ra, ver |-> row[t].ver + 1, rc |-> 0]
 
@@ -397,14 +403,13 @@ Renew(p) ==
 -----------------------------------------------------------------------------------------
 (* Time. A lease whose holder is gone lapses; a backoff or timer comes due.             *)
 
-(* With NoLongPauses, a lease does not lapse while something that began within it is    *)
-(* still to happen: a start between its two writes, or an in-memory copy of that lease  *)
-(* waiting to be taken. The models that use it start from a fresh workflow, so every     *)
-(* workflow-task lease was granted after a pending start began.                          *)
+(* With NoLongPauses, a lease does not lapse while an in-memory copy of that lease waits *)
+(* to be taken. A start may stall between its two writes for as long as it likes: the   *)
+(* in-memory schedule that ends it honours whatever lease it finds and then queues no   *)
+(* copy.                                                                                *)
 LeaseStillClaimed(t) ==
     /\ NoLongPauses /\ t = WF
-    /\ \/ \E c \in Callers : cpc[c] = "sched"
-       \/ \E h \in InMemoryCopies : h.ra = row[WF].ra
+    /\ \E h \in InMemoryCopies : h.ra = row[WF].ra
 
 ExpireFree(t) ==
     /\ Live(t) /\ row[t].ra >= FirstLease /\ ~LiveHolder(t) /\ ~LeaseStillClaimed(t)
@@ -440,16 +445,18 @@ StartCreate(c) ==
     /\ UNCHANGED <<tm, row, wk, lq, spc, sRead, sigSent, faults, renewals, requeues, starts>>
 
 (* SchedulerExecutionQueue.schedule for a due workflow task: persist a leased backstop  *)
-(* row and queue the task in JVM n, unless it is already queued there. It queues the     *)
-(* copy even when the row write honoured someone else's lease. The queued copy carries   *)
-(* the workflow instance as it is now (wv): the handler runs on that payload instead of  *)
-(* reading the store again.                                                              *)
+(* row and queue the task in JVM n, unless it is already queued there, or the row write  *)
+(* honoured an active lease: the lease holder (a worker, or a copy queued against that   *)
+(* row in some JVM) runs it, and reruns it after its final write if the honoured write   *)
+(* bumped the version. The queued copy carries the workflow instance as it is now (wv):  *)
+(* the handler runs on that payload instead of reading the store again.                  *)
 InMemorySchedule(n) ==
     \/ /\ lq[n] = {}
        /\ LET r == Sched(WF, NewLease, TRUE) IN
             /\ row' = [row EXCEPT ![WF] = r]
-            /\ lq' = [lq EXCEPT ![n] =
-                    {[id |-> WF, ver |-> r.ver, ra |-> r.ra, rc |-> 0, rerun |-> FALSE, wv |-> wf.ver]}]
+            /\ lq' = IF InMemoryHonorsLease /\ HonorsLease(WF, TRUE) THEN lq
+                     ELSE [lq EXCEPT ![n] =
+                       {[id |-> WF, ver |-> r.ver, ra |-> r.ra, rc |-> 0, rerun |-> FALSE, wv |-> wf.ver]}]
     \/ /\ lq[n] # {}
        /\ UNCHANGED <<row, lq>>
 

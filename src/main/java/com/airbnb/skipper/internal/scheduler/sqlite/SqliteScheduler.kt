@@ -12,6 +12,7 @@ import com.airbnb.skipper.internal.InternalError
 import com.airbnb.skipper.internal.cluster.BucketPartitioner
 import com.airbnb.skipper.internal.cluster.BucketRange
 import com.airbnb.skipper.internal.common.SneakyThrow
+import com.airbnb.skipper.internal.scheduler.ScheduleOutcome
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
@@ -75,8 +76,13 @@ class SqliteScheduler
         // every SQL literal below interpolates this instead of hard-coding a fixed table name.
         private val schedulerTasksTable: String = tablePrefix + "scheduler_tasks"
 
-        override fun <T> schedule(request: ScheduleRequest<T>): Task<T> {
+        override fun <T> schedule(request: ScheduleRequest<T>): Task<T> = scheduleWithOutcome(request).task
+
+        // Only the honour-lease branch below sets leaseHonored; every other path leaves the false it starts at.
+        override fun <T> scheduleWithOutcome(request: ScheduleRequest<T>): ScheduleOutcome<T> {
+            var leaseHonored = false
             return transactionManager.execute { conn ->
+                leaseHonored = false // the transaction may run this block again
                 val existingTask: Option<Task<T>> = getTaskForUpdate(request.id)
                 if (existingTask.isDefined) {
                     // Update if the task already exists
@@ -89,6 +95,7 @@ class SqliteScheduler
                     var runAfter =
                         (request.runAfter ?: Instant.EPOCH).truncatedTo(ChronoUnit.MILLIS)
                     if (shouldHonorLease) {
+                        leaseHonored = true
                         runAfter = existingTask.get().runAfter
                         log.info(
                             "task with id: {} has an active lease, runAfter is not being overridden." +
@@ -207,7 +214,7 @@ class SqliteScheduler
                     }
                     throw InternalError("unable to insert new task with id: " + request.id, e)
                 }
-            }
+            }.let { ScheduleOutcome(it, leaseHonored) }
         }
 
         override fun <T> fetch(limit: Int): List<Task<T>> = transactionManager.retryOnTransientLockContention { fetchOnce(limit) }
