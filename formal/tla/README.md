@@ -98,7 +98,7 @@ CI runs the same script in `.github/workflows/formal.yml` (job `tla-model-check`
 `formal/` changes. It keeps TLC's output as the `tlc-output` run artifact. The job isn't a required
 check.
 
-## Results (main at 619a628, plus airbnb/skipper#40's timer re-arm, #46's stranded-start recovery and #PRNUM's in-memory lease check)
+## Results (main at 619a628, plus airbnb/skipper#40's timer re-arm, #46's stranded-start recovery and #47's in-memory lease check)
 
 | Model | Scenario | Result |
 |---|---|---|
@@ -113,9 +113,9 @@ check.
 | `lease_faults` | a lease lapses under a live holder, 2 workers | **stuck forever** |
 | `signal_schedule` | a signal call fails before scheduling | `RunningIsDriven` violated; liveness holds only through the wait timer |
 | `start_race` | two in-process starts from different JVMs, either may fail after creating the row; `NoLongPauses` | ok |
-| `start_race_recover_in_memory` | as above, with the stranded start scheduled like any other start | ok (since #PRNUM) |
+| `start_race_recover_in_memory` | as above, with the stranded start scheduled like any other start | ok (since #47) |
 | `start_race_unguarded` | as above, and the in-memory copy queued even when its backstop write honoured a lease | `NoOverlappingRuns` violated (calibration) |
-| `inmem_overlap` | two JVMs start a running workflow in process (`CREATE_EXISTING_WORKFLOW_IS_NOOP` off), and a signal takes the in-process path; `NoLongPauses` | ok (fixed in #PRNUM) |
+| `inmem_overlap` | two JVMs start a running workflow in process (`CREATE_EXISTING_WORKFLOW_IS_NOOP` off), and a signal takes the in-process path; `NoLongPauses` | ok (fixed in #47) |
 | `inmem_overlap_unguarded` | as above, with the in-memory copy queued even when its backstop write honoured a lease | `NoOverlappingRuns` violated (calibration) |
 | `rearm_overlap` | a timer task goes missing and a lease lapses, so two executions schedule the same timer's task; checks `TimerSchedulesKeepLeases` only | ok |
 
@@ -193,7 +193,7 @@ The findings behind these results:
    - If that call fails, the workflow is `RUNNING` with no task. Only the wait timer rescues it.
 
 5. **An in-memory copy can run next to the holder of the lease its backstop write honoured.** Fixed
-   in airbnb/skipper#PRNUM.
+   in airbnb/skipper#47.
    - `SchedulerExecutionQueue.schedule` writes the backstop row honouring an active lease, then
      queued an in-memory copy whatever that write did.
    - When the row was leased by a worker, or by a copy queued against it in another JVM, the new

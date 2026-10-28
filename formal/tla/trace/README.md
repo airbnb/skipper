@@ -125,7 +125,7 @@ The stranded-start recovery of airbnb/skipper#46 is covered the same way. With t
 back to scheduling a stranded child like any other start, the recorded run of
 `ChildWorkflowStartFailureTest`'s stranded child is rejected at that schedule.
 
-So is the in-memory lease check of airbnb/skipper#PRNUM. With the engine changed back to queueing an
+So is the in-memory lease check of airbnb/skipper#47. With the engine changed back to queueing an
 in-memory copy when its backstop write honoured a lease, the recorded run of
 `InMemoryScheduleOnLeasedTaskTest` is rejected at the second run's first read.
 
