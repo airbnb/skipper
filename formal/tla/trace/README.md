@@ -117,13 +117,17 @@ is scheduled while its timer is still `ACTIVE`, which the model says can't happe
 that is exactly what should prompt either a spec update, if the new order is intended, or a
 rethink.
 
-Current results on the traced suites: 110 of 110 in-scope workflow runs accepted, 121 skipped, and
-540 of 540 mutants rejected. Of the skips, 96 are tests that write to the store directly; the rest
+Current results on the traced suites: 111 of 111 in-scope workflow runs accepted, 122 skipped, and
+545 of 545 mutants rejected. Of the skips, 97 are tests that write to the store directly; the rest
 use compensation (17), cancellation (5), execution timeouts (2) or rewind (1).
 
 The stranded-start recovery of airbnb/skipper#46 is covered the same way. With the engine changed
 back to scheduling a stranded child like any other start, the recorded run of
 `ChildWorkflowStartFailureTest`'s stranded child is rejected at that schedule.
+
+So is the in-memory lease check of airbnb/skipper#PRNUM. With the engine changed back to queueing an
+in-memory copy when its backstop write honoured a lease, the recorded run of
+`InMemoryScheduleOnLeasedTaskTest` is rejected at the second run's first read.
 
 ## What it has found so far
 

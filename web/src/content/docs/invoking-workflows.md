@@ -169,6 +169,11 @@ By default a workflow runs in-process and is also persisted as a safety net. Cal
 `.runAsync()` hands it entirely to the persistent scheduler instead, so the work happens on
 whichever host picks it up.
 
+An in-process call never runs a second copy of an instance that is already running, on this host
+or another. Starting an existing instance with `createExistingWorkflowIsNoop` off leaves it to the
+copy that is running, and the call reads the result from storage, as a `.runAsync()` call does,
+polling for up to `resultPollingTimeLimit`.
+
 Neither choice, on its own, makes the *call* return early. For that, add `.detached()` — the
 workflow method then needs no special return type, because a result-less method is enough:
 

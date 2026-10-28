@@ -37,8 +37,8 @@ the workflow again.
   handler, and make the final versioned remove or reschedule
   (`SkipperSchedulerManager.finishTask`).
 - One or more `startWorkflow` callers, each in its own JVM with its own in-memory queue.
-- The in-process `startWorkflow` path, which writes a backstop row and keeps an in-memory copy of
-  the task in the caller's JVM.
+- The in-process `startWorkflow` and signal paths, which write a backstop row and keep an in-memory
+  copy of the task in the caller's JVM, unless that write honoured an active lease.
 - The start that finds a workflow stranded (`RUNNING` with no task row) and schedules it only in
   the persistent scheduler, due after a lease (`StartRecover`).
 - The workflow body, abstracted to `NWaits` calls to `waitUntil(cond, timeout)` followed by a
@@ -52,9 +52,10 @@ them. The fault kinds are switched on per model: worker/JVM crash, handler timeo
 expiry, a store error after the workflow row committed, `startWorkflow` failing after creating the
 row, and a signal call failing before it schedules.
 
-`NoLongPauses` is an assumption some models make: no start stalls between its two writes, and no
-in-memory copy waits in its queue, for as long as a lease. Without it, an in-memory copy can outlive
-its lease and run next to the backstop row's delivery, which `inmem_start` already records.
+`NoLongPauses` is an assumption some models make: no in-memory copy waits in its queue for as long
+as a lease. Without it, an in-memory copy can outlive its lease and run next to the backstop row's
+delivery, which `inmem_start` already records. A start may stall between its two writes for any
+time: the in-memory schedule that ends it honours whatever lease it finds (finding 5).
 
 Not modelled yet: compensation, execution timeouts, cancellation, child workflows, persisted-signal
 replay, task partitioning, several workflows sharing workers.
@@ -97,7 +98,7 @@ CI runs the same script in `.github/workflows/formal.yml` (job `tla-model-check`
 `formal/` changes. It keeps TLC's output as the `tlc-output` run artifact. The job isn't a required
 check.
 
-## Results (main at 619a628, plus airbnb/skipper#40's timer re-arm and #46's stranded-start recovery)
+## Results (main at 619a628, plus airbnb/skipper#40's timer re-arm, #46's stranded-start recovery and #PRNUM's in-memory lease check)
 
 | Model | Scenario | Result |
 |---|---|---|
@@ -112,7 +113,10 @@ check.
 | `lease_faults` | a lease lapses under a live holder, 2 workers | **stuck forever** |
 | `signal_schedule` | a signal call fails before scheduling | `RunningIsDriven` violated; liveness holds only through the wait timer |
 | `start_race` | two in-process starts from different JVMs, either may fail after creating the row; `NoLongPauses` | ok |
-| `start_race_unguarded` | as above, with the stranded start scheduled like any other start | `NoOverlappingRuns` violated (calibration) |
+| `start_race_recover_in_memory` | as above, with the stranded start scheduled like any other start | ok (since #PRNUM) |
+| `start_race_unguarded` | as above, and the in-memory copy queued even when its backstop write honoured a lease | `NoOverlappingRuns` violated (calibration) |
+| `inmem_overlap` | two JVMs start a running workflow in process (`CREATE_EXISTING_WORKFLOW_IS_NOOP` off), and a signal takes the in-process path; `NoLongPauses` | ok (fixed in #PRNUM) |
+| `inmem_overlap_unguarded` | as above, with the in-memory copy queued even when its backstop write honoured a lease | `NoOverlappingRuns` violated (calibration) |
 | `rearm_overlap` | a timer task goes missing and a lease lapses, so two executions schedule the same timer's task; checks `TimerSchedulesKeepLeases` only | ok |
 
 `NoOverlappingRuns` is checked in every model except `inmem_start`, `lease_faults` and
@@ -145,6 +149,8 @@ The findings behind these results:
      other honours its lease, and only one copy runs. `start_race` checks it, and trace
      validation checks the engine against it on a recorded stranded child
      (`ChildWorkflowStartFailureTest`).
+   - Step 4 is finding 5. With that fixed, the recovering start no longer needs a path of its
+     own: `start_race_recover_in_memory` schedules it like any other start, and only one copy runs.
 
 2. **A `WAITING` workflow can end up with a timer that never fires.** Fixed in airbnb/skipper#40.
    - The timer row is written in the same transaction as `WAITING`
@@ -185,3 +191,28 @@ The findings behind these results:
    - The signal persists `RUNNING`, then schedules the workflow task in a separate call
      (`SkipperEngine.kt:485` / `:492`, then `:507`).
    - If that call fails, the workflow is `RUNNING` with no task. Only the wait timer rescues it.
+
+5. **An in-memory copy can run next to the holder of the lease its backstop write honoured.** Fixed
+   in airbnb/skipper#PRNUM.
+   - `SchedulerExecutionQueue.schedule` writes the backstop row honouring an active lease, then
+     queued an in-memory copy whatever that write did.
+   - When the row was leased by a worker, or by a copy queued against it in another JVM, the new
+     copy ran alongside it. Three paths get there:
+     - an in-process start of a workflow that is already running, with
+       `CREATE_EXISTING_WORKFLOW_IS_NOOP` off;
+     - an in-process signal (`FORCE_SIGNAL_WORKFLOW_EXEC_IN_SCHEDULER` off), including one sent
+       while this JVM's own copy is running;
+     - a start that stalls between its two writes for longer than a lease, racing the start that
+       recovers it (finding 1).
+   - `inmem_overlap_unguarded` finds it in 8 steps: a worker fetches one start's row, the other JVM's
+     in-memory schedule honours that lease and still queues a copy, and a second worker takes it.
+   - The repair: the scheduler reports whether it honoured a lease (`Scheduler.scheduleWithOutcome`),
+     and the queue then keeps no copy. A holder still running reruns the task after its final write,
+     through the version bump that `BUMP_TASK_VERSION_ON_HONORED_LEASE` records. A row nobody holds
+     is delivered when it comes due or its lease lapses. `inmem_overlap` checks it, liveness
+     included. `NoLongPauses` no longer has to assume a start never stalls.
+   - What remains is the copy that waits in its queue past its lease (finding 3): `inmem_start` with
+     `NoOverlappingRuns` added still fails, by a lease lapsing under a queued copy.
+   - Trace validation checks the engine against it on a recorded in-process signal sent during an
+     in-process run (`InMemoryScheduleOnLeasedTaskTest`). With the engine changed back to queueing
+     the copy, that run is rejected at the second run's first read.

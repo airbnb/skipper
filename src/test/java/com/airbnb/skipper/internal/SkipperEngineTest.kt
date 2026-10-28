@@ -21,6 +21,7 @@ import com.airbnb.skipper.internal.TestUtils.getWorkflowInstance
 import com.airbnb.skipper.internal.api.PersistedSignal
 import com.airbnb.skipper.internal.api.RunRequest
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
+import com.airbnb.skipper.internal.scheduler.Scheduled
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.SchedulerExecutionQueue
 import com.airbnb.skipper.internal.scheduler.Task
@@ -82,6 +83,9 @@ class SkipperEngineTest {
     fun setUp() {
         mockWorkflowStore = mock()
         mockScheduler = mock()
+        // Tests that do not stub scheduling still get a task that runs in memory, as on an idle row.
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>()))
+            .thenReturn(Scheduled(getTestTask(getWorkflowInstance()), queuedInMemory = true))
         mockClock = mock()
         mockWorkflowExecutor = mock()
         mockPersistentScheduler = mock()
@@ -109,7 +113,7 @@ class SkipperEngineTest {
     fun testStartWorkflowWhenWorkflowDoesNotExist() {
         whenever(mockWorkflowStore.createWorkflow(any())).thenReturn(TestUtils.getWorkflowInstance())
         val task = getTestTask(getWorkflowInstance())
-        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(task)
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(Scheduled(task, queuedInMemory = true))
         whenever(mockWorkflowStore.createWorkflow(any())).thenReturn(TestUtils.getWorkflowInstance())
         val result =
             skipperEngine.startWorkflow(
@@ -141,7 +145,7 @@ class SkipperEngineTest {
     fun testStartWorkflowWhenWorkflowDoesntExistAndRunAsync() {
         whenever(mockWorkflowStore.createWorkflow(any())).thenReturn(TestUtils.getWorkflowInstance())
         val task = getTestTask(getWorkflowInstance())
-        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(task)
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(Scheduled(task, queuedInMemory = true))
         whenever(mockWorkflowStore.createWorkflow(any())).thenReturn(TestUtils.getWorkflowInstance())
         val result =
             skipperEngine.startWorkflow(
@@ -172,6 +176,28 @@ class SkipperEngineTest {
         assertTrue(error.cause is ResultUnavailable)
     }
 
+    /** The task's row is leased elsewhere, so no copy runs here to complete the caller's future. */
+    @Test
+    fun testStartWorkflowInProcessNotQueuedInMemoryMakesTheResultUnavailable() {
+        whenever(mockWorkflowStore.createWorkflow(any())).thenReturn(TestUtils.getWorkflowInstance())
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>()))
+            .thenReturn(Scheduled(getTestTask(getWorkflowInstance()), queuedInMemory = false))
+        val result =
+            skipperEngine.startWorkflow(
+                RunRequest.builder()
+                    .workflowId("test-workflow-id")
+                    .workflowClass(Workflow::class.java)
+                    .input("test")
+                    .workflowMethod("test-method")
+                    .requestContext(REQUEST_CONTEXT)
+                    .extraRequestData(EXTRA_REQUEST_DATA)
+                    .build(),
+            )
+        verify(mockScheduler).schedule(argThat<ScheduleRequest<WorkflowInstance>> { inMemoryExecutionEnabled })
+        val error = assertThrows(CompletionException::class.java) { result.result.join() }
+        assertTrue(error.cause is ResultUnavailable)
+    }
+
     @Test
     @Throws(Exception::class)
     fun testStartWorkflowWhenWorkflowExists() {
@@ -181,7 +207,7 @@ class SkipperEngineTest {
         whenever(mockWorkflowStore.getWorkflow(any<String>()))
             .thenReturn(Option.of(TestUtils.getWorkflowInstance()))
         val task = getTestTask(getWorkflowInstance())
-        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(task)
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(Scheduled(task, queuedInMemory = true))
         val result =
             skipperEngine.startWorkflow(
                 RunRequest.builder()
@@ -206,7 +232,7 @@ class SkipperEngineTest {
         whenever(mockWorkflowStore.getWorkflow(any<String>()))
             .thenReturn(Option.of(TestUtils.getWorkflowInstance()))
         val task = getTestTask(getWorkflowInstance())
-        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(task)
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(Scheduled(task, queuedInMemory = true))
         val result =
             skipperEngine.startWorkflow(
                 RunRequest.builder()
@@ -343,7 +369,7 @@ class SkipperEngineTest {
         whenever(mockWorkflowStore.createWorkflow(any())).thenThrow(EntityAlreadyExists())
         whenever(mockWorkflowStore.getWorkflow(any<String>())).thenReturn(Option.of(instance))
         val task = getTestTask(getWorkflowInstance())
-        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(task)
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(Scheduled(task, queuedInMemory = true))
 
         val result =
             skipperEngine.startWorkflow(
@@ -421,7 +447,7 @@ class SkipperEngineTest {
         whenever(mockWorkflowStore.getWorkflow(any<String>()))
             .thenReturn(Option.of(TestUtils.getWorkflowInstance()))
         val task = getTestTask(getWorkflowInstance())
-        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(task)
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(Scheduled(task, queuedInMemory = true))
         val error =
             assertThrows(IllegalArgumentException::class.java) {
                 skipperEngine.startWorkflow(
@@ -444,7 +470,7 @@ class SkipperEngineTest {
         whenever(mockWorkflowStore.getWorkflow(any<String>()))
             .thenReturn(Option.of(TestUtils.getWorkflowInstance()))
         val task = getTestTask(getWorkflowInstance())
-        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(task)
+        whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>())).thenReturn(Scheduled(task, queuedInMemory = true))
         whenever(mockWorkflowStore.createWorkflow(any())).thenReturn(TestUtils.getWorkflowInstance())
         skipperEngine.cloneWorkflowInstance("test-workflow-id", "new-workflow-id", REQUEST_CONTEXT)
         val captor = argumentCaptor<WorkflowCreationRequest>()
@@ -865,7 +891,7 @@ class SkipperEngineTest {
         whenever(mockWorkflowStore.updateWorkflow(any())).thenReturn(cancelled)
         whenever(mockScheduler.schedule(any<ScheduleRequest<WorkflowInstance>>()))
             .thenThrow(RuntimeException("scheduler down"))
-            .thenReturn(getTestTask(cancelled))
+            .thenReturn(Scheduled(getTestTask(cancelled), queuedInMemory = false))
 
         assertThrows(RuntimeException::class.java) { skipperEngine.cancelWorkflow(instance.workflowId, "first") }
         skipperEngine.cancelWorkflow(instance.workflowId, "retry")

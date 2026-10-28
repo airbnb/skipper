@@ -12,6 +12,7 @@ import com.airbnb.skipper.internal.InternalError
 import com.airbnb.skipper.internal.cluster.BucketPartitioner
 import com.airbnb.skipper.internal.cluster.BucketRange
 import com.airbnb.skipper.internal.common.SneakyThrow
+import com.airbnb.skipper.internal.scheduler.ScheduleOutcome
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
@@ -62,7 +63,9 @@ class MySqlScheduler
         // every SQL literal below interpolates this instead of hard-coding a fixed table name.
         private val schedulerTasksTable: String = tablePrefix + "scheduler_tasks"
 
-        override fun <T> schedule(request: ScheduleRequest<T>): Task<T> =
+        override fun <T> schedule(request: ScheduleRequest<T>): Task<T> = scheduleWithOutcome(request).task
+
+        override fun <T> scheduleWithOutcome(request: ScheduleRequest<T>): ScheduleOutcome<T> =
             transactionManager.execute { conn ->
                 val existingTask: Option<Task<T>> = getTaskForUpdate(request.id)
                 if (existingTask.isDefined) {
@@ -86,9 +89,9 @@ class MySqlScheduler
                             runAfter,
                         )
                         if (!request.isBumpVersionWhenHonoringLease) {
-                            return@execute existingTask.get()
+                            return@execute ScheduleOutcome(existingTask.get(), leaseHonored = true)
                         }
-                        return@execute recordRerunRequest(conn, existingTask.get())
+                        return@execute ScheduleOutcome(recordRerunRequest(conn, existingTask.get()), leaseHonored = true)
                     }
                     log.info(
                         "task with id: {} is being overwritten. runAfter={}. hasActiveLease={}." +
@@ -137,7 +140,7 @@ class MySqlScheduler
                                         "failed to update task with id: " + request.id,
                                     )
                                 }
-                                return@execute overwrittenTask
+                                return@execute ScheduleOutcome(overwrittenTask, leaseHonored = false)
                             }
                         }
                     } catch (e: SQLException) {
@@ -177,19 +180,21 @@ class MySqlScheduler
                             if (rowsInserted != 1) {
                                 throw InternalError("failed to insert new task with id: " + request.id)
                             }
-                            return@execute Task.builder<T>()
-                                .id(request.id)
-                                .createdAt(now)
-                                .runAfter(runAfter)
-                                .retryCount(0)
-                                .payload(request.payload)
-                                .dedupToken(request.dedupToken)
-                                .type(request.type)
-                                .status(Task.Status.PENDING)
-                                .executionTimeout(Duration.ofSeconds(request.executionTimeout.seconds))
-                                .shouldRefreshPayload(true)
-                                .version(1)
-                                .build()
+                            val inserted =
+                                Task.builder<T>()
+                                    .id(request.id)
+                                    .createdAt(now)
+                                    .runAfter(runAfter)
+                                    .retryCount(0)
+                                    .payload(request.payload)
+                                    .dedupToken(request.dedupToken)
+                                    .type(request.type)
+                                    .status(Task.Status.PENDING)
+                                    .executionTimeout(Duration.ofSeconds(request.executionTimeout.seconds))
+                                    .shouldRefreshPayload(true)
+                                    .version(1)
+                                    .build()
+                            return@execute ScheduleOutcome(inserted, leaseHonored = false)
                         }
                     }
                 } catch (e: SQLException) {

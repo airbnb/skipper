@@ -10,6 +10,7 @@ import com.airbnb.skipper.WorkflowMethod
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.SkipperSchedulerManager
 import com.airbnb.skipper.internal.api.RunRequest
+import com.airbnb.skipper.internal.scheduler.ScheduleOutcome
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
@@ -78,6 +79,13 @@ class ChildWorkflowStartFailureTest {
                 fault?.maybeThrow(request.id)
             }
             return delegate.schedule(request)
+        }
+
+        override fun <T> scheduleWithOutcome(request: ScheduleRequest<T>): ScheduleOutcome<T> {
+            if (request.type == Task.Type.WORKFLOW) {
+                fault?.maybeThrow(request.id)
+            }
+            return delegate.scheduleWithOutcome(request)
         }
     }
 

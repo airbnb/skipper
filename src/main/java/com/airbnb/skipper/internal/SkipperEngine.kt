@@ -209,8 +209,31 @@ open class SkipperEngine
             workflowInstance: WorkflowInstance,
             inMemoryExecution: Boolean
         ) {
-            scheduler.schedule(
-                executionRequest(workflowInstance).inMemoryExecutionEnabled(inMemoryExecution).build()
+            val scheduled =
+                scheduler.schedule(
+                    executionRequest(workflowInstance).inMemoryExecutionEnabled(inMemoryExecution).build()
+                )
+            if (inMemoryExecution && !scheduled.queuedInMemory) {
+                markResultUnavailable(workflowInstance)
+            }
+        }
+
+        /**
+         * The in-process path queued no copy of [workflowInstance] in this JVM: one is already queued
+         * here, or the task's row is leased and the lease holder runs it. Nothing here will complete
+         * the instance's result future, so fail it the way a runAsync start does, and a synchronous
+         * caller reads the result from the store instead of waiting forever.
+         */
+        private fun markResultUnavailable(workflowInstance: WorkflowInstance) {
+            log.info(
+                "workflow was not queued in memory, its result is not available in this process. workflowId={}",
+                workflowInstance.workflowId
+            )
+            workflowInstance.result.completeExceptionally(
+                ResultUnavailable(
+                    "this future cannot be used to wait on the workflow result because this call did not" +
+                        " queue the workflow to run in this process"
+                )
             )
         }
 
@@ -531,21 +554,25 @@ open class SkipperEngine
                     updatedWorkflowInstance.workflowId,
                     inMemoryExecutionEnabled
                 )
-                scheduler.schedule(
-                    // We don't want this execution to happen immediately in the same process, instead, we
-                    // will force this to go through the scheduler and be executed as soon as possible.
-                    ScheduleRequest.builder<WorkflowInstance>()
-                        .id(workflowInstance.workflowId)
-                        .dedupToken(workflowInstance.workflowId)
-                        .payload(updatedWorkflowInstance)
-                        .type(Task.Type.WORKFLOW)
-                        .inMemoryExecutionEnabled(inMemoryExecutionEnabled)
-                        .honorActiveLeaseWhenOverwriting(true)
-                        .bumpVersionWhenHonoringLease(
-                            featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE)
-                        )
-                        .build()
-                )
+                val scheduled =
+                    scheduler.schedule(
+                        // We don't want this execution to happen immediately in the same process, instead, we
+                        // will force this to go through the scheduler and be executed as soon as possible.
+                        ScheduleRequest.builder<WorkflowInstance>()
+                            .id(workflowInstance.workflowId)
+                            .dedupToken(workflowInstance.workflowId)
+                            .payload(updatedWorkflowInstance)
+                            .type(Task.Type.WORKFLOW)
+                            .inMemoryExecutionEnabled(inMemoryExecutionEnabled)
+                            .honorActiveLeaseWhenOverwriting(true)
+                            .bumpVersionWhenHonoringLease(
+                                featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE)
+                            )
+                            .build()
+                    )
+                if (inMemoryExecutionEnabled && !scheduled.queuedInMemory) {
+                    markResultUnavailable(updatedWorkflowInstance)
+                }
                 eventPublisher.publishEvent(
                     Event.create(Event.Type.SIGNAL_COMPLETED, request.workflowId)
                 )

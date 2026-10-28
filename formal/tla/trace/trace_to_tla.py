@@ -218,6 +218,7 @@ def model_files(workflow, header):
         "Callers": "{c1}",
         "RecoverAfterLease": True,
         "NoLongPauses": False,
+        "InMemoryHonorsLease": True,
     }
     fmt = lambda v: ("TRUE" if v else "FALSE") if isinstance(v, bool) else str(v)
     cfg = "SPECIFICATION TraceSpec\nCONSTANTS\n"

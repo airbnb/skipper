@@ -265,6 +265,33 @@ abstract class BaseSchedulerTest {
     }
 
     @Test
+    fun testScheduleWithOutcomeReportsAnHonouredLease() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val request =
+            ScheduleRequest.builder<String>()
+                .id("test")
+                .payload("payload")
+                .type(Task.Type.WORKFLOW)
+                .dedupToken("test")
+                .honorActiveLeaseWhenOverwriting(true)
+                .build()
+        assertFalse(scheduler().scheduleWithOutcome(request).leaseHonored, "an insert honours nothing")
+        val leased: Task<String> = scheduler().fetch<String>(10).get(0)
+
+        val honoured = scheduler().scheduleWithOutcome(request)
+        assertTrue(honoured.leaseHonored)
+        assertEquals(leased.version, honoured.task.version)
+        assertEquals(leased.runAfter, honoured.task.runAfter)
+        val bumped = scheduler().scheduleWithOutcome(request.toBuilder().bumpVersionWhenHonoringLease(true).build())
+        assertTrue(bumped.leaseHonored)
+        assertEquals(leased.version + 1, bumped.task.version)
+
+        val overwritten = scheduler().scheduleWithOutcome(request.toBuilder().honorActiveLeaseWhenOverwriting(false).build())
+        assertFalse(overwritten.leaseHonored, "a request that does not honour leases overwrites the row")
+        assertEquals(Instant.EPOCH, overwritten.task.runAfter)
+    }
+
+    @Test
     fun testMarkJobAsFailed() {
         val t1 = Instant.EPOCH
         whenever(mockClock.instant()).thenReturn(t1)
