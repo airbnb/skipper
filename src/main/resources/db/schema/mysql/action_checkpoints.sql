@@ -1,0 +1,20 @@
+CREATE TABLE `${tablePrefix}action_checkpoints` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `owner` varchar(255) NOT NULL,
+  `workflow_id` varchar(255) NOT NULL,
+  `action_class` varchar(255) NOT NULL,
+  `action_method` varchar(255) NOT NULL,
+  `iteration` int NOT NULL,
+  `execution_start_time` datetime(3) NOT NULL,
+  `execution_end_time` datetime(3) DEFAULT NULL,
+  `is_success` tinyint(1) NOT NULL DEFAULT '0',
+  `result` text DEFAULT NULL,
+  `result_is_async` tinyint(1) NOT NULL DEFAULT '0',
+  `error` text DEFAULT NULL,
+  `is_transient` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` datetime(3) NOT NULL,
+  `input` text DEFAULT NULL,
+  `checkpoint_name` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  INDEX `${tablePrefix}action_checkpoint_index_by_workflow_id` (`owner`, `workflow_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
