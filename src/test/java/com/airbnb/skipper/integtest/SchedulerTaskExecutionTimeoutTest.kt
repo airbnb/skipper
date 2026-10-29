@@ -16,6 +16,7 @@ import com.airbnb.skipper.testutils.TestRuntime
 import com.airbnb.skipper.util.ExtraRequestData
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -37,12 +38,10 @@ class SchedulerTaskExecutionTimeoutTest {
     private lateinit var manager: SkipperSchedulerManager
 
     private fun start(executionTimeout: Duration) {
-        SlowActions.executions.set(0)
-        SlowActions.inFlight.set(0)
-        SlowActions.maxInFlight.set(0)
-        SlowActions.release = CountDownLatch(1)
         val deps = TestRuntime()
         deps.config.schedulerTaskLeaseDuration = LEASE
+        // Renew well before the lease runs out, but not on every check.
+        deps.config.leaseRenewalGracePeriod = Duration.ofSeconds(2)
         deps.config.schedulerTaskExecutionTimeout = executionTimeout
         whenever(deps.featureGate.isEnabled(FeatureGate.Keys.AUTOMATIC_LEASE_RENEWAL)).thenReturn(true)
         val runtime = deps.runtime
@@ -54,42 +53,51 @@ class SchedulerTaskExecutionTimeoutTest {
 
     @AfterEach
     fun tearDown() {
-        SlowActions.release.countDown()
+        SlowActions.probes.values.forEach { it.release.countDown() }
         if (::manager.isInitialized) manager.forceStop()
     }
 
     @Test
     fun stepLongerThanItsLeaseRunsOnceWithinTheTimeout() {
         start(executionTimeout = Duration.ofSeconds(30))
-        val helper = TestHelper(engine, scheduler, startSlowWorkflow())
-        helper.waitForCondition { SlowActions.executions.get() == 1 }
+        val id = startSlowWorkflow()
+        val probe = SlowActions.probes.getValue(id)
+        val helper = TestHelper(engine, scheduler, id)
+        helper.waitForCondition { probe.executions.get() == 1 }
 
-        Thread.sleep(LEASE.multipliedBy(2).plusSeconds(1).toMillis())
-        assertEquals(1, SlowActions.executions.get(), "the step must not run again while it is within the timeout")
+        // Wait until renewals push the lease expiry more than two leases past where it stood when the step
+        // started. By then the step has outlived its original lease by a full lease.
+        val firstExpiry = scheduler.getTask<Any>(id).get().runAfter
+        helper.waitForCondition { scheduler.getTask<Any>(id).get().runAfter > firstExpiry.plus(LEASE.multipliedBy(2)) }
+        assertEquals(1, probe.executions.get(), "the step must not run again while it is within the timeout")
 
-        SlowActions.release.countDown()
+        probe.release.countDown()
         helper.waitForWorkflowToReachStatus(setOf(WorkflowInstance.Status.COMPLETED), maxAttempts = 200)
-        assertEquals(1, SlowActions.executions.get())
-        assertEquals(1, SlowActions.maxInFlight.get())
+        assertEquals(1, probe.executions.get())
+        assertEquals(1, probe.maxInFlight.get())
     }
 
     @Test
     fun stepOutlastingTheTimeoutRunsAgain() {
         start(executionTimeout = Duration.ofSeconds(1))
-        val helper = TestHelper(engine, scheduler, startSlowWorkflow())
+        val id = startSlowWorkflow()
+        val probe = SlowActions.probes.getValue(id)
+        val helper = TestHelper(engine, scheduler, id)
 
         // The second run starts while the first is still running.
-        helper.waitForCondition({ SlowActions.maxInFlight.get() == 2 }, maxAttempts = 200)
-        assertEquals(2, SlowActions.executions.get())
+        helper.waitForCondition { probe.maxInFlight.get() == 2 }
+        assertEquals(2, probe.executions.get())
     }
 
     private fun startSlowWorkflow(): String {
         val id = "slow-${System.nanoTime()}"
+        SlowActions.probes[id] = SlowActions.Probe()
         engine.startWorkflow(
             RunRequest.builder()
                 .workflowId(id)
                 .workflowClass(SlowWorkflow::class.java)
                 .workflowMethod("run")
+                .input(id)
                 .requestContext(TestRequestContext.builder().build())
                 .extraRequestData(ExtraRequestData())
                 .runAsync(true)
@@ -102,35 +110,40 @@ class SchedulerTaskExecutionTimeoutTest {
         private val actions = actions(SlowActions::class.java)
 
         @WorkflowMethod
-        open fun run(): CompletableFuture<String> {
-            actions.slowStep()
+        open fun run(id: String): CompletableFuture<String> {
+            actions.slowStep(id)
             return CompletableFuture.completedFuture("done")
         }
     }
 
     open class SlowActions : Actions() {
         @Execute
-        open fun slowStep(): String {
-            executions.incrementAndGet()
-            maxInFlight.accumulateAndGet(inFlight.incrementAndGet(), ::maxOf)
+        open fun slowStep(id: String): String {
+            val probe = probes.getValue(id)
+            probe.executions.incrementAndGet()
+            probe.maxInFlight.accumulateAndGet(probe.inFlight.incrementAndGet(), ::maxOf)
             try {
-                check(release.await(30, TimeUnit.SECONDS)) { "test never released the slow action" }
+                check(probe.release.await(30, TimeUnit.SECONDS)) { "test never released the slow action" }
             } finally {
-                inFlight.decrementAndGet()
+                probe.inFlight.decrementAndGet()
             }
             return "ok"
         }
 
-        companion object {
+        /** Counters for one workflow, so runs left over from an earlier test cannot touch them. */
+        class Probe {
             val executions = AtomicInteger()
             val inFlight = AtomicInteger()
             val maxInFlight = AtomicInteger()
+            val release = CountDownLatch(1)
+        }
 
-            @Volatile var release = CountDownLatch(1)
+        companion object {
+            val probes = ConcurrentHashMap<String, Probe>()
         }
     }
 
     private companion object {
-        val LEASE: Duration = Duration.ofSeconds(2)
+        val LEASE: Duration = Duration.ofSeconds(3)
     }
 }
