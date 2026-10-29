@@ -31,6 +31,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -181,6 +182,43 @@ class SkipperSchedulerManagerTest {
         verify(mockScheduler, times(0)).markAsFailed<Any>(any(), any())
         verify(mockScheduler, times(0)).rescheduleForRetry<Any>(any(), any())
         assertEquals(0, leaseManager.totalTasksInFlight)
+    }
+
+    @Test
+    fun testHandleWaitsForASlowHandlerInsteadOfGivingUp() {
+        whenever(featureGate.isEnabled(FeatureGate.Keys.AUTOMATIC_LEASE_RENEWAL)).thenReturn(true)
+        val mockScheduler = mock<Scheduler>()
+        val manager =
+            SkipperSchedulerManager(
+                schedulerQueue,
+                mockScheduler,
+                mock(),
+                mock(),
+                HashMap.of(Task.Type.WORKFLOW, mockTaskHandler),
+                metrics,
+                10,
+                leaseManager,
+                featureGate,
+                knobs,
+                SingleMemberClusterMembershipManager(),
+                BucketPartitioner(),
+                TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+                inactiveCancelWatcher(),
+            )
+        val handlerResult = CompletableFuture<Option<Instant>>()
+        whenever(mockTaskHandler.handle(any(), any())).thenReturn(handlerResult)
+        val task = getTestTask(getWorkflowInstance())
+
+        val handling = executor.submit { manager.handleTask(task) }
+        // However long the handler takes, the manager keeps waiting and does not finish the task.
+        Thread.sleep(500)
+        assertFalse(handling.isDone)
+        verify(mockScheduler, times(0)).remove<Any>(any())
+
+        handlerResult.complete(Option.none())
+        handling.get(5, TimeUnit.SECONDS)
+        verify(mockScheduler, times(1)).remove<WorkflowInstance>(eq(task))
+        verify(mockScheduler, times(0)).rescheduleForRetry<Any>(any(), any())
     }
 
     @ParameterizedTest

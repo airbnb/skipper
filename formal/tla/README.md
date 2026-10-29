@@ -48,9 +48,9 @@ the workflow again.
   tasks.
 
 Every action is one store transaction or one local step, so a fault can land between any two of
-them. The fault kinds are switched on per model: worker/JVM crash, handler timeout, early lease
-expiry, a store error after the workflow row committed, `startWorkflow` failing after creating the
-row, and a signal call failing before it schedules.
+them. The fault kinds are switched on per model: worker/JVM crash, early lease expiry, a store
+error after the workflow row committed, `startWorkflow` failing after creating the row, and a
+signal call failing before it schedules.
 
 `NoLongPauses` is an assumption some models make: no start stalls between its two writes, and no
 in-memory copy waits in its queue, for as long as a lease. Without it, an in-memory copy can outlive

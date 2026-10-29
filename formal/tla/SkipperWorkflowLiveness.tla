@@ -42,7 +42,6 @@ CONSTANTS
 
 FaultKinds == {
     "crash",        \* a worker or the caller's JVM dies; its local state is lost
-    "timeout",      \* handleTask stops waiting on the handler (execution timeout); the handler keeps running
     "early_expiry", \* a lease lapses while its holder is still working (GC pause, renewal starvation)
     "store_error",  \* a store write after the workflow row was persisted throws
     "caller_fail",  \* a startWorkflow call fails after the workflow row was created
@@ -526,11 +525,6 @@ LoseLocalQueue(c) ==
     /\ lq' = [lq EXCEPT ![c] = {}]
     /\ UNCHANGED <<wf, tm, row, wk, cpc, spc, sRead, sigSent, renewals, requeues, starts>>
 
-HandlerTimeout(p) ==
-    /\ wk[p].pc \notin {"idle", "dlq"} /\ wk[p].att /\ Fault("timeout")
-    /\ SetW(p, [wk[p] EXCEPT !.att = FALSE])
-    /\ UNCHANGED <<wf, tm, row, cpc, lq, spc, sRead, sigSent, renewals, requeues, starts>>
-
 ExpireEarly(t) ==
     /\ Live(t) /\ row[t].ra >= FirstLease /\ LiveHolder(t) /\ Fault("early_expiry")
     /\ row' = [row EXCEPT ![t].ra = DUE]
@@ -574,7 +568,7 @@ WorkerStep(p) ==
     \/ WfRearmCheck(p) \/ WfRearm(p) \/ TmExec(p) \/ TmSched(p) \/ Finish(p)
 
 Next ==
-    \/ \E p \in Workers : WorkerStep(p) \/ Renew(p) \/ Crash(p) \/ HandlerTimeout(p) \/ StoreError(p)
+    \/ \E p \in Workers : WorkerStep(p) \/ Renew(p) \/ Crash(p) \/ StoreError(p)
     \/ \E t \in TaskIds : ExpireFree(t) \/ Tick(t) \/ ExpireEarly(t) \/ Requeue(t)
     \/ \E c \in Callers : StartCreate(c) \/ StartSched(c) \/ StartRecover(c) \/ StartFail(c) \/ StartAgain(c)
                          \/ LoseLocalQueue(c)

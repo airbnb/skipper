@@ -13,7 +13,6 @@ internal class TaskTest {
             .createdAt(BASE_TIME)
             .dedupToken(TEST_DEDUP_TOKEN)
             .type(Task.Type.WORKFLOW)
-            .executionTimeout(TEST_EXECUTION_TIMEOUT)
             .build()
 
     @Test
@@ -92,7 +91,6 @@ internal class TaskTest {
     companion object {
         private const val TEST_ID = "test-id"
         private const val TEST_DEDUP_TOKEN = "test-dedup-token"
-        private val TEST_EXECUTION_TIMEOUT: Duration = Duration.ofMinutes(5)
         private val BASE_TIME: Instant = Instant.parse("2024-01-01T10:00:00Z")
     }
 }

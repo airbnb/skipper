@@ -105,7 +105,6 @@ class MySqlScheduler
                                 (request.runAfter ?: Instant.EPOCH).truncatedTo(ChronoUnit.MILLIS),
                             )
                             .payload(request.payload)
-                            .executionTimeout(Duration.ofMillis(request.executionTimeout.toMillis()))
                             .status(Task.Status.PENDING)
                             .retryCount(0)
                             .shouldRefreshPayload(true)
@@ -113,7 +112,7 @@ class MySqlScheduler
                             .build()
                     val updateSql =
                         "UPDATE $schedulerTasksTable SET run_after = ?, payload = ?," +
-                            " execution_timeout_secs = ?, status = ?, retry_count = ?," +
+                            " status = ?, retry_count = ?," +
                             " should_refresh_payload = ?, version = ? WHERE task_id = ? AND owner = ? AND" +
                             " version = ?"
                     try {
@@ -122,7 +121,6 @@ class MySqlScheduler
                                 var i = 0
                                 ps.setTimestamp(++i, Timestamp.from(overwrittenTask.runAfter))
                                 ps.setString(++i, serde.serialize(overwrittenTask.payload))
-                                ps.setLong(++i, overwrittenTask.executionTimeout.seconds)
                                 ps.setString(++i, overwrittenTask.status.name)
                                 ps.setInt(++i, overwrittenTask.retryCount)
                                 ps.setBoolean(++i, overwrittenTask.isShouldRefreshPayload)
@@ -166,7 +164,7 @@ class MySqlScheduler
                             ps.setString(++i, serde.serialize(request.payload))
                             ps.setString(++i, request.type.name)
                             ps.setString(++i, request.dedupToken)
-                            ps.setLong(++i, request.executionTimeout.seconds)
+                            ps.setLong(++i, Scheduler.LEGACY_EXECUTION_TIMEOUT_SECS)
                             ps.setString(++i, Task.Status.PENDING.name)
                             ps.setInt(++i, 0) // retry_count
                             ps.setBoolean(++i, true) // should_refresh_payload
@@ -186,7 +184,6 @@ class MySqlScheduler
                                 .dedupToken(request.dedupToken)
                                 .type(request.type)
                                 .status(Task.Status.PENDING)
-                                .executionTimeout(Duration.ofSeconds(request.executionTimeout.seconds))
                                 .shouldRefreshPayload(true)
                                 .version(1)
                                 .build()
@@ -624,7 +621,6 @@ class MySqlScheduler
                     .dedupToken(rs.getString("dedup_token"))
                     .type(Task.Type.valueOf(rs.getString("type")))
                     .status(Task.Status.valueOf(rs.getString("status")))
-                    .executionTimeout(Duration.ofSeconds(rs.getInt("execution_timeout_secs").toLong()))
                     .shouldRefreshPayload(rs.getBoolean("should_refresh_payload"))
                     .version(rs.getInt("version"))
                     .build()

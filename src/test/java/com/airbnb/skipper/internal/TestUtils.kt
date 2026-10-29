@@ -44,7 +44,6 @@ object TestUtils {
             .dedupToken("test-dedup-token")
             .createdAt(Instant.now())
             .runAfter(Instant.EPOCH)
-            .executionTimeout(Duration.ofSeconds(30))
             .build()
 
     @JvmStatic
@@ -59,7 +58,6 @@ object TestUtils {
             .dedupToken("test-dedup-token")
             .createdAt(Instant.now())
             .runAfter(Instant.EPOCH)
-            .executionTimeout(Duration.ofSeconds(30))
             .build()
 
     @JvmStatic

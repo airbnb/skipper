@@ -9,6 +9,17 @@ import java.time.Instant;
 public interface Scheduler {
 
   /**
+   * Value written to the {@code execution_timeout_secs} column of new task rows.
+   *
+   * <p>Skipper no longer reads that column: a task runs for as long as its handler needs, and a
+   * worker that dies loses the task through lease expiry. Older Skipper versions still read it as a
+   * hard wait limit, so new rows keep the value they used to get (5 minutes). Without it, an older
+   * node sharing the store during a rolling upgrade would read the column's default of 0 and give
+   * up on every task immediately.
+   */
+  long LEGACY_EXECUTION_TIMEOUT_SECS = 300;
+
+  /**
    * Enqueue a new task to the scheduler.
    *
    * <p>The implementation must guarantee that the task will NOT be available for fetching before

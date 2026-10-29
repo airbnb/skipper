@@ -1,6 +1,5 @@
 package com.airbnb.skipper.internal.scheduler
 
-import java.time.Duration
 import java.time.Instant
 
 /** Represent the data required to schedule the execution of a new task. */
@@ -27,8 +26,6 @@ data class ScheduleRequest<T> internal constructor(
      * past, the task will be executed immediately.
      */
     val runAfter: Instant?,
-    /** The maximum amount of time the task is allowed to run before being considered timeout. */
-    val executionTimeout: Duration,
     /**
      * If true, the task will be executed in memory if and only if the runAfter is either null or
      * less or equal to the current time. If false, the task will be scheduled in the persistent
@@ -52,7 +49,6 @@ data class ScheduleRequest<T> internal constructor(
             .dedupToken(dedupToken)
             .payload(payload)
             .runAfter(runAfter)
-            .executionTimeout(executionTimeout)
             .inMemoryExecutionEnabled(inMemoryExecutionEnabled)
             .honorActiveLeaseWhenOverwriting(isHonorActiveLeaseWhenOverwriting)
             .bumpVersionWhenHonoringLease(isBumpVersionWhenHonoringLease)
@@ -63,7 +59,6 @@ data class ScheduleRequest<T> internal constructor(
         private var dedupToken: String? = null
         private var payload: T? = null
         private var runAfter: Instant? = null
-        private var executionTimeout: Duration = Duration.ofMinutes(5)
         private var inMemoryExecutionEnabled: Boolean = true
         private var honorActiveLeaseWhenOverwriting: Boolean = false
         private var bumpVersionWhenHonoringLease: Boolean = false
@@ -122,16 +117,6 @@ data class ScheduleRequest<T> internal constructor(
         }
 
         /**
-         * The maximum amount of time the task is allowed to run before being considered timeout.
-         *
-         * @return `this`.
-         */
-        fun executionTimeout(executionTimeout: Duration): ScheduleRequestBuilder<T> {
-            this.executionTimeout = executionTimeout
-            return this
-        }
-
-        /**
          * If true, the task will be executed in memory if and only if the runAfter is either null
          * or less or equal to the current time. If false, the task will be scheduled in the
          * persistent scheduler regardless of the runAfter value.
@@ -164,7 +149,6 @@ data class ScheduleRequest<T> internal constructor(
                     ?: throw NullPointerException("dedupToken is marked non-null but is null"),
                 payload,
                 runAfter,
-                executionTimeout,
                 inMemoryExecutionEnabled,
                 honorActiveLeaseWhenOverwriting,
                 bumpVersionWhenHonoringLease,
@@ -173,7 +157,6 @@ data class ScheduleRequest<T> internal constructor(
         override fun toString(): String =
             "ScheduleRequest.ScheduleRequestBuilder(type=$type, id=$id, dedupToken=$dedupToken" +
                 ", payload=$payload, runAfter=$runAfter" +
-                ", executionTimeout\$value=$executionTimeout" +
                 ", inMemoryExecutionEnabled\$value=$inMemoryExecutionEnabled" +
                 ", honorActiveLeaseWhenOverwriting\$value=$honorActiveLeaseWhenOverwriting" +
                 ", bumpVersionWhenHonoringLease\$value=$bumpVersionWhenHonoringLease)"

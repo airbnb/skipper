@@ -800,7 +800,6 @@ class WorkflowExecutionTaskHandlerTest {
                             .type(Task.Type.TIMER)
                             .payload(timer)
                             .createdAt(Instant.EPOCH)
-                            .executionTimeout(Duration.ofSeconds(30))
                             .build(),
                     )
                 } else {

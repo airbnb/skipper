@@ -31,7 +31,6 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
@@ -591,10 +590,14 @@ class SkipperSchedulerManager
                 val handler = taskHandlers.get(task.type).get()
                 log.debug("handling '{}' task: {}", handler, task.id)
                 try {
+                    // Wait for as long as the handler needs. There is deliberately no time limit: giving
+                    // up on a handler does not stop it, so a limit would only drop the lease and let
+                    // another worker run the same task alongside the one still in progress. A worker
+                    // that dies stops renewing the lease, and the task is picked up again once it expires.
                     val rescheduleTime: Option<Instant> =
                         handler
                             .handle(task, taskHandlerExecutor)
-                            .get(task.executionTimeout.seconds, TimeUnit.SECONDS)
+                            .get()
                     if (rescheduleTime.isDefined) {
                         log.info("rescheduling task: {} to {}", task.id, rescheduleTime.get())
                         try {
@@ -621,10 +624,6 @@ class SkipperSchedulerManager
                     tags[RESULT_TAG] = "error"
                     tags[ERROR_TAG] = e.javaClass.simpleName
                     log.warn("task execution interrupted. task={}", task, e)
-                } catch (e: TimeoutException) {
-                    tags[RESULT_TAG] = "error"
-                    tags[ERROR_TAG] = e.javaClass.simpleName
-                    log.warn("task execution timed out. task={}", task, e)
                 } catch (e: Throwable) {
                     // This is the last line of defense in case scheduler failed to remove or reschedule
                     // the task. We will treat that the same way we'd treat a crash and let the

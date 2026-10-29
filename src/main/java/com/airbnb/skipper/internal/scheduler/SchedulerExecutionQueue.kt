@@ -90,7 +90,6 @@ open class SchedulerExecutionQueue
                 // the payload is stale.
                 Task.builder<T>()
                     .id(request.id)
-                    .executionTimeout(Duration.ofMinutes(5))
                     .runAfter(Instant.EPOCH)
                     .createdAt(now.instant())
                     .dedupToken(request.dedupToken)

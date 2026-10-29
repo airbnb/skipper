@@ -14,7 +14,6 @@ data class Task<TYPE>(
     val type: Type,
     val status: Status,
     val statusMessage: String?,
-    val executionTimeout: Duration,
     val isShouldRefreshPayload: Boolean,
     val version: Int,
 ) {
@@ -60,7 +59,6 @@ data class Task<TYPE>(
             .type(type)
             .status(status)
             .statusMessage(statusMessage)
-            .executionTimeout(executionTimeout)
             .shouldRefreshPayload(isShouldRefreshPayload)
             .version(version)
 
@@ -74,7 +72,6 @@ data class Task<TYPE>(
         private var type: Type? = null
         private var status: Status = Status.PENDING
         private var statusMessage: String? = null
-        private var executionTimeout: Duration? = null
         private var shouldRefreshPayload: Boolean = true
         private var version: Int = 0
 
@@ -153,14 +150,6 @@ data class Task<TYPE>(
         /**
          * @return `this`.
          */
-        fun executionTimeout(executionTimeout: Duration): TaskBuilder<TYPE> {
-            this.executionTimeout = executionTimeout
-            return this
-        }
-
-        /**
-         * @return `this`.
-         */
         fun shouldRefreshPayload(shouldRefreshPayload: Boolean): TaskBuilder<TYPE> {
             this.shouldRefreshPayload = shouldRefreshPayload
             return this
@@ -187,10 +176,6 @@ data class Task<TYPE>(
                 type ?: throw NullPointerException("type is marked non-null but is null"),
                 status,
                 statusMessage,
-                executionTimeout
-                    ?: throw NullPointerException(
-                        "executionTimeout is marked non-null but is null",
-                    ),
                 shouldRefreshPayload,
                 version,
             )
@@ -199,7 +184,6 @@ data class Task<TYPE>(
             "Task.TaskBuilder(id=$id, createdAt=$createdAt, runAfter\$value=$runAfter" +
                 ", retryCount=$retryCount, payload=$payload, dedupToken=$dedupToken, type=$type" +
                 ", status\$value=$status, statusMessage=$statusMessage" +
-                ", executionTimeout=$executionTimeout" +
                 ", shouldRefreshPayload\$value=$shouldRefreshPayload, version\$value=$version)"
     }
 

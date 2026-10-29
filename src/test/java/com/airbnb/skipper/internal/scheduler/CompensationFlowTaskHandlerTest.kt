@@ -285,7 +285,6 @@ class CompensationFlowTaskHandlerTest {
             .dedupToken("compensation-$taskIdSuffix")
             .createdAt(Instant.EPOCH)
             .runAfter(Instant.EPOCH)
-            .executionTimeout(Duration.ofMinutes(5))
             .build()
 
     private fun createTestWorkflowInstance(status: WorkflowInstance.Status): WorkflowInstance =
