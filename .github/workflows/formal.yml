@@ -20,9 +20,14 @@
 #                    rather than failing the job. The recorded traces and TLC's output are stored as
 #                    run artifacts.
 #
-# Both jobs run when the model, the engine, or the test harness changes; nothing else can move a
-# verdict. Neither is a required check: the main branch ruleset requires `jvm-build` only, and a
-# path-filtered check cannot be required without leaving other pull requests waiting on it.
+#   formal           Fan-in, and the check the main branch ruleset requires. Red when either job
+#                    above failed or was cancelled, green otherwise.
+#
+# The workflow starts on every pull request, because a required check must always report: one
+# behind a trigger path filter never starts on an unrelated pull request, which then waits on it
+# forever. Instead the `changes` job decides whether the model, the engine, or the test harness
+# changed (nothing else can move a verdict) and the two checking jobs are skipped when not, which
+# leaves `formal` green in seconds.
 #
 # TLC is pinned to a release and its checksum verified, so a new TLA+ release cannot change a
 # verdict without a change here.
@@ -32,19 +37,7 @@ name: formal
 on:
   push:
     branches: [main]
-    paths:
-      - "formal/**"
-      - "src/main/**"
-      - "testutils/**"
-      - "build.gradle.kts"
-      - ".github/workflows/formal.yml"
   pull_request:
-    paths:
-      - "formal/**"
-      - "src/main/**"
-      - "testutils/**"
-      - "build.gradle.kts"
-      - ".github/workflows/formal.yml"
   workflow_dispatch:
 
 permissions:
@@ -59,7 +52,35 @@ env:
   TLA_TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      formal: ${{ steps.diff.outputs.formal }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          # The pull request's base, or the commit main was at before this push. Empty on a
+          # manual run, which always checks.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          paths='^(formal/|src/main/|testutils/|build\.gradle\.kts$|\.github/workflows/formal\.yml$)'
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "no base commit to diff against; checking"
+            echo formal=true >>"$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE" HEAD | grep -qE "$paths"; then
+            echo formal=true >>"$GITHUB_OUTPUT"
+          else
+            echo "nothing the formal checks cover changed; skipping them"
+            echo formal=false >>"$GITHUB_OUTPUT"
+          fi
+
   tla-model-check:
+    needs: changes
+    if: needs.changes.outputs.formal == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -92,6 +113,8 @@ jobs:
           if-no-files-found: ignore
 
   trace-validation:
+    needs: changes
+    if: needs.changes.outputs.formal == 'true'
     runs-on: ubuntu-latest
     # Each trace has its own time budget (TRACE_BUDGET); this only catches a job that hangs.
     timeout-minutes: 60
@@ -144,3 +167,18 @@ jobs:
             ${{ runner.temp }}/trace-check/**/tlc.out
             ${{ runner.temp }}/trace-check/*.jsonl
           if-no-files-found: ignore
+
+  formal:
+    needs: [changes, tla-model-check, trace-validation]
+    # always(): without it a failed need skips this job, and GitHub counts a skipped required
+    # check as passing. A need skipped because nothing relevant changed is fine.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All formal checks passed or were not needed
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "formal job results: $results"
+          for r in $results; do
+            case "$r" in success|skipped) ;; *) exit 1 ;; esac
+          done

@@ -46,7 +46,8 @@
 #   jvm-build     Fan-in. The main branch ruleset requires the status check `jvm-build`, and this
 #                 job succeeds only when every matrix entry, format-check, coverage, mutation and
 #                 examples have. One required check keeps the whole matrix merge-gating without
-#                 listing each entry in the repository rules.
+#                 listing each entry in the repository rules. It runs even when a need fails, so
+#                 a failure reports red rather than skipped (a skipped required check passes).
 #
 #   web-build     Builds the Astro documentation site in web/ and stores it as a run artifact.
 #                 Nothing else in the build compiles the site, so without this a broken doc
@@ -420,10 +421,18 @@ jobs:
 
   jvm-build:
     needs: [jvm-build-jackson, format-check, coverage, mutation, examples]
+    # always(): without it a failed need skips this job, and GitHub counts a skipped required
+    # check as passing, so the fan-in would let a red build merge.
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: All gating jobs passed
-        run: echo "jvm-build matrix, format-check, coverage, mutation and examples passed"
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "gating job results: $results"
+          for r in $results; do
+            if [ "$r" != success ]; then exit 1; fi
+          done
 
   web-build:
     runs-on: ubuntu-latest

@@ -94,8 +94,8 @@ their expectation. So when a fix lands and its model starts passing, update that
 or to a temp dir if that isn't set.
 
 CI runs the same script in `.github/workflows/formal.yml` (job `tla-model-check`) whenever
-`formal/` changes. It keeps TLC's output as the `tlc-output` run artifact. The job isn't a required
-check.
+the model, the engine or the test harness changes. It keeps TLC's output as the `tlc-output` run
+artifact. Its result feeds `formal`, the fan-in check the main branch ruleset requires.
 
 ## Results (main at 619a628, plus airbnb/skipper#40's timer re-arm and #46's stranded-start recovery)
 
