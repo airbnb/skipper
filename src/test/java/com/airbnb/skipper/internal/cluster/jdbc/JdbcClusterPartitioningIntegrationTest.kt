@@ -163,6 +163,7 @@ class JdbcClusterPartitioningIntegrationTest {
                 HashMap.of(Task.Type.WORKFLOW, handler),
                 runtime.metrics.get(),
                 10,
+                Duration.ofMinutes(5),
                 deps.leaseRenewalManager,
                 deps.featureGate,
                 runtime.knobs.get(),

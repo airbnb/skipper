@@ -81,6 +81,13 @@ class SkipperConfig(
     var clusterMemberName: String? = null,
     /** This is the time each task has to finish processing before it is considered staled and is retried. */
     var schedulerTaskLeaseDuration: Duration = Duration.ofMinutes(8),
+    /**
+     * How long the scheduler waits for one task, such as a workflow run up to its next wait or its end.
+     * After that the run keeps going, but its lease is no longer renewed. Once the lease runs out, the
+     * task runs again, alongside the first run if that is still going. Set this above your longest run.
+     * It is counted in whole seconds.
+     */
+    var schedulerTaskExecutionTimeout: Duration = Duration.ofMinutes(5),
     /** The maximum number of times a task can be retried before it is considered failed. */
     var schedulerTaskMaxRetries: Int = 100,
     /** The time to wait before retrying a task that failed unexpectedly. */

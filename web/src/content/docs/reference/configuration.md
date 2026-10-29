@@ -18,6 +18,8 @@ See [Quickstart](/docs/quickstart/) and [Storage Backends](/docs/storage/).
 | `clusterMembershipManager` | `ClusterMembershipManager` factory. Defaults to a single-member manager that leaves task partitioning off; set `JdbcClusterMembershipManager.MySqlFactory()` (or `.SqliteFactory(path)`) so instances sharing a store each fetch a disjoint partition of the ready tasks — see [Scaling Out & Task Partitioning](/docs/scaling-out/). |
 | `clusterHeartBeatInterval` | How often a cluster-aware membership manager refreshes this instance's heartbeat (default 10 s). Members silent for 60 s are dropped. |
 | `clusterMemberName` | This instance's identifier in the cluster membership table; `null` (the default) uses the local hostname. Set it when several instances run on one host. |
+| `schedulerTaskLeaseDuration` | How long a task is leased to the instance running it (default 8 min). If the lease runs out, the task is run again. See [Long-running workflow runs](#long-running-workflow-runs). |
+| `schedulerTaskExecutionTimeout` | How long the scheduler waits for one task, such as a workflow reaching its next wait, before it stops waiting and stops renewing the task's lease (default 5 min, counted in whole seconds). Set it above the longest a workflow runs between waits. See [Long-running workflow runs](#long-running-workflow-runs). |
 | `gracefulShutdownTimeout` | How long `stop()` waits for in-flight tasks before forcing shutdown (default 30 s). |
 | `featureGate` | `FeatureGate` factory. The default enables every key except the `DISABLE_*` kill switches; see the `FeatureGate.Keys` KDoc for what each gates. |
 | `injector` | `SkipperInjector` used to instantiate your workflow, action, and callback classes; `SimpleInjector.builder()` lets you bind the collaborators actions need. |
@@ -47,6 +49,31 @@ config.setShouldIsolateTenant(rawTenant -> isDevEnvironment);
 The predicate receives the raw (unsuffixed) tenant and is evaluated on every read, so it always
 reflects the current value. The suffix is generated once per config instance and then stays
 stable, so reads are consistent for the life of the config.
+
+## Long-running workflow runs
+
+A workflow runs as one scheduler task from one wait to the next, including the actions it calls on
+the way. Timers and compensations also run as scheduler tasks, so the settings below apply to them
+too. While a task runs, the instance holds a lease on it for `schedulerTaskLeaseDuration`. With the
+`automatic_lease_renewal` feature gate on (the default), the lease is renewed shortly before it runs
+out, for as long as the scheduler is waiting on the task.
+
+The scheduler waits at most `schedulerTaskExecutionTimeout`. After that it stops waiting and stops
+renewing the lease, but the run is not cancelled. When the lease runs out, up to
+`schedulerTaskLeaseDuration` later, the task runs again. This happens even if the first run has
+finished by then. If it has not, the two runs overlap. So:
+
+- set `schedulerTaskExecutionTimeout` above the longest a workflow runs between waits;
+- keep `automatic_lease_renewal` on: without it the lease is never renewed, and any run longer than
+  `schedulerTaskLeaseDuration` is run again whatever the timeout.
+
+```kotlin
+config.schedulerTaskExecutionTimeout = Duration.ofMinutes(30)
+```
+
+```java
+config.setSchedulerTaskExecutionTimeout(Duration.ofMinutes(30));
+```
 
 ## `SkipperRuntime`
 
