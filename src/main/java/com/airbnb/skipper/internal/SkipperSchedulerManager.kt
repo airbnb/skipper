@@ -5,6 +5,7 @@ import com.airbnb.skipper.Knobs
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.OptimisticLockingError
 import com.airbnb.skipper.SkipperAnnotationNames.GRACEFUL_SHUTDOWN_TIMEOUT
+import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_TASK_EXECUTION_TIMEOUT
 import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_TASK_HANDLER_POOL
 import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_TASK_MAX_RETRIES
 import com.airbnb.skipper.SkipperAnnotationNames.SKIPPER_MAIN_THREAD_POOL
@@ -62,6 +63,7 @@ class SkipperSchedulerManager
         private val taskHandlers: Map<Task.Type, TaskHandler>,
         private val metrics: Metrics,
         @param:Named(SCHEDULER_TASK_MAX_RETRIES) private val maxRetries: Int,
+        @param:Named(SCHEDULER_TASK_EXECUTION_TIMEOUT) private val taskExecutionTimeout: Duration,
         private val leaseManager: LeaseRenewalManager,
         private val featureGate: FeatureGate,
         private val knobs: Knobs,
@@ -594,7 +596,7 @@ class SkipperSchedulerManager
                     val rescheduleTime: Option<Instant> =
                         handler
                             .handle(task, taskHandlerExecutor)
-                            .get(task.executionTimeout.seconds, TimeUnit.SECONDS)
+                            .get(taskExecutionTimeout.seconds, TimeUnit.SECONDS)
                     if (rescheduleTime.isDefined) {
                         log.info("rescheduling task: {} to {}", task.id, rescheduleTime.get())
                         try {

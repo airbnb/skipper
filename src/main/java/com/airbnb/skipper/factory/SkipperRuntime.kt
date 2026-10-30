@@ -387,6 +387,7 @@ class SkipperRuntime
                 taskHandlers,
                 metrics.get(),
                 config.schedulerTaskMaxRetries,
+                config.schedulerTaskExecutionTimeout,
                 leaseRenewalManager.get(),
                 featureGate.get(),
                 knobs.get(),

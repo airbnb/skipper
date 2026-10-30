@@ -65,6 +65,7 @@ class SkipperSchedulerManagerFinishTaskTest {
                 HashMap.of(Task.Type.WORKFLOW, handler, Task.Type.TIMER, handler),
                 runtime.metrics.get(),
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 deps.featureGate,
                 runtime.knobs.get(),

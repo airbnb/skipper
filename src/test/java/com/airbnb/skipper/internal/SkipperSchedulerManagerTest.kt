@@ -23,6 +23,7 @@ import io.vavr.control.Option
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.Optional
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
@@ -95,6 +96,7 @@ class SkipperSchedulerManagerTest {
                 handlers,
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -133,6 +135,7 @@ class SkipperSchedulerManagerTest {
                 handlers,
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -164,6 +167,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.of(Task.Type.WORKFLOW, mockTaskHandler),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -183,6 +187,45 @@ class SkipperSchedulerManagerTest {
         assertEquals(0, leaseManager.totalTasksInFlight)
     }
 
+    /**
+     * The scheduler waits for the configured timeout, even an effectively infinite one, not the one
+     * stored on the task.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = ["PT3S", "FOREVER"])
+    fun testHandleWaitsForTheConfiguredTimeout(configured: String) {
+        val timeout = if (configured == "FOREVER") ChronoUnit.FOREVER.duration else Duration.parse(configured)
+        val mockScheduler = mock<Scheduler>()
+        val manager =
+            SkipperSchedulerManager(
+                schedulerQueue,
+                mockScheduler,
+                mock(),
+                mock(),
+                HashMap.of(Task.Type.WORKFLOW, mockTaskHandler),
+                metrics,
+                10,
+                timeout,
+                leaseManager,
+                featureGate,
+                knobs,
+                SingleMemberClusterMembershipManager(),
+                BucketPartitioner(),
+                TEST_GRACEFUL_SHUTDOWN_TIMEOUT,
+                inactiveCancelWatcher(),
+            )
+        // Finishes after the task's own 1s timeout but well within the configured one.
+        whenever(mockTaskHandler.handle(any(), any())).thenReturn(
+            CompletableFuture.supplyAsync(
+                { Option.none<Instant>() },
+                CompletableFuture.delayedExecutor(1500, TimeUnit.MILLISECONDS),
+            ),
+        )
+        val task = getTestTask(getWorkflowInstance()).toBuilder().executionTimeout(Duration.ofSeconds(1)).build()
+        manager.handleTask(task)
+        verify(mockScheduler, times(1)).remove<Any>(any())
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = [true, false])
     fun testHandleWhenRetryIsScheduled(leaseRenewalEnabled: Boolean) {
@@ -198,6 +241,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.of(Task.Type.WORKFLOW, mockTaskHandler),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -232,6 +276,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.of(Task.Type.WORKFLOW, mockTaskHandler),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -265,6 +310,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.empty(),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -299,6 +345,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.empty(),
                 metrics,
                 maxRetries,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -370,6 +417,7 @@ class SkipperSchedulerManagerTest {
             HashMap.empty(),
             metrics,
             10,
+            Duration.ofMinutes(5),
             leaseManager,
             featureGate,
             mockKnobs,
@@ -400,6 +448,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.empty(),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -448,6 +497,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.empty(),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -494,6 +544,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.empty(),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -531,6 +582,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.empty(),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
@@ -575,6 +627,7 @@ class SkipperSchedulerManagerTest {
                 HashMap.empty(),
                 metrics,
                 10,
+                Duration.ofMinutes(5),
                 leaseManager,
                 featureGate,
                 knobs,
