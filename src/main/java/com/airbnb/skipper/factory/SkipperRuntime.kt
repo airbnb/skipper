@@ -20,6 +20,7 @@ import com.airbnb.skipper.internal.InFlightCancelWatcher
 import com.airbnb.skipper.internal.NoOpEventPublisher
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.SkipperSchedulerManager
+import com.airbnb.skipper.internal.VersionGateEnforcer
 import com.airbnb.skipper.internal.WorkflowExecutor
 import com.airbnb.skipper.internal.cluster.BucketPartitioner
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
@@ -212,12 +213,17 @@ class SkipperRuntime
             WorkflowValidator(serde.get())
         }
 
+        val versionGateEnforcer: Provider<VersionGateEnforcer> = singleton {
+            VersionGateEnforcer(featureGate.get(), metrics.get())
+        }
+
         val internalDeps: Provider<SkipperInternalDeps> = singleton {
             SkipperInternalDeps(
                 actionExecutor = actionExecutor.get(),
                 skipperEngineProvider = skipperEngine,
                 contextPropagator = config.contextPropagator,
-                defaultRetryStrategy = config.defaultRetryStrategy
+                defaultRetryStrategy = config.defaultRetryStrategy,
+                versionGateEnforcer = versionGateEnforcer.get()
             )
         }
 

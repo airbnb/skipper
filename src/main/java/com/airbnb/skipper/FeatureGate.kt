@@ -93,5 +93,14 @@ interface FeatureGate {
          * [INFLIGHT_CANCELLATION_CHECKPOINTS], which stops actions that start after the cancel.
          */
         INFLIGHT_CANCELLATION_INTERRUPT("inflight_cancellation_interrupt", enabledByDefault = false),
+
+        /**
+         * When enabled, [Workflow.version] stops an instance whose stored version is outside
+         * `minVersion..maxVersion`. Below the range, the instance fails with a [NonRetryableError] and its
+         * compensations run. Above it, the instance is retried every five minutes until newer code resumes
+         * it or [SkipperConfig.schedulerTaskMaxRetries] is reached. Off by default. Mismatches are always
+         * logged and counted, so check the metric first.
+         */
+        ENFORCE_VERSION_GATE_RANGE("enforce_version_gate_range", enabledByDefault = false),
     }
 }

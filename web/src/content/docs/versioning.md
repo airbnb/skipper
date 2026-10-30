@@ -82,6 +82,30 @@ if (version("add-fraud-check", 1, 2) >= 2) {
 `version(changeId, minVersion, maxVersion)` returns `maxVersion` on a workflow's first
 execution (and persists it), and the persisted value on every subsequent resume.
 
+### Out-of-range versions on replay
+
+Raise `minVersion` only after every instance that stored an older version has finished. If you
+raise it too early, some instances replay with a version the code no longer handles. The reverse
+also happens. During a rolling deploy, or after a rollback, a host running older code can resume
+an instance that newer code started. That host sees a version above its `maxVersion`.
+
+When that happens, Skipper logs a WARN and increments the `versionGate.storedVersionOutOfRange`
+metric, tagged with `changeId`, `direction` (`below_min` or `above_max`) and `enforced`. Both fire
+on every replay of such an instance, so the metric counts replays, not instances.
+
+By default the instance then continues with the stored version. Enable the
+`enforce_version_gate_range` feature gate for an app to stop such instances instead:
+
+- **Below `minVersion`**: no host will handle the version again, so the instance fails with a
+  `NonRetryableError`. As with any other failure, its compensations then run.
+- **Above `maxVersion`**: the instance is retried every five minutes, and resumes once a host
+  running the newer code picks it up. The retries stop at the scheduler's `schedulerTaskMaxRetries`
+  limit. Each retry counts twice against it, so the default of 100 gives about four hours. The
+  instance then stays in `TRANSIENT_ERROR`, which the admin UI's Retry accepts once the newer code
+  is deployed.
+
+Watch the metric first, so turning the gate on does not fail instances you did not know about.
+
 ## Evolving state fields
 
 - **Adding** a nullable or primitive `@StateField` is safe — old state deserializes and the

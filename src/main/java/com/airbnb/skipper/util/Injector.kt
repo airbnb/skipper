@@ -4,11 +4,14 @@ package com.airbnb.skipper.util
 
 import com.airbnb.skipper.Actions
 import com.airbnb.skipper.ContextPropagator
+import com.airbnb.skipper.InMemoryFeatureGate
+import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.RetryStrategy
 import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.internal.ActionExecutor
 import com.airbnb.skipper.internal.SkipperEngine
+import com.airbnb.skipper.internal.VersionGateEnforcer
 import java.lang.reflect.Field
 import javax.inject.Provider
 
@@ -17,12 +20,16 @@ import javax.inject.Provider
  * base-class fields. These are set directly by the injection helpers below, so neither
  * [SkipperInjector] implementations nor consumers need to register them.
  */
-data class SkipperInternalDeps(
-    val actionExecutor: ActionExecutor,
-    val skipperEngineProvider: Provider<SkipperEngine>,
-    val contextPropagator: ContextPropagator,
-    val defaultRetryStrategy: RetryStrategy,
-)
+data class SkipperInternalDeps
+    @JvmOverloads
+    constructor(
+        val actionExecutor: ActionExecutor,
+        val skipperEngineProvider: Provider<SkipperEngine>,
+        val contextPropagator: ContextPropagator,
+        val defaultRetryStrategy: RetryStrategy,
+        // The default logs out-of-range versions but never enforces or counts them.
+        val versionGateEnforcer: VersionGateEnforcer = VersionGateEnforcer(InMemoryFeatureGate(), NoOpMetrics.INSTANCE),
+    )
 
 /**
  * Injects dependencies into the specified workflow instance and recursively into all its nested `Actions` objects.
@@ -33,6 +40,8 @@ data class SkipperInternalDeps(
  * set them**. This means:
  * - Guice consumers that override bindings (e.g. `TracingActionExecutor`) keep their overrides.
  * - [com.airbnb.skipper.SimpleInjector] consumers get working defaults without registering internal types.
+ *
+ * [Workflow]'s `versionGateEnforcer` is not `@Inject`, so it always comes from [internalDeps].
  */
 fun SkipperInjector.injectWorkflowMembers(
     workflowInstance: Any,
@@ -44,6 +53,7 @@ fun SkipperInjector.injectWorkflowMembers(
         setIfUninitialized(workflowInstance, "actionExecutor", internalDeps.actionExecutor)
         setIfUninitialized(workflowInstance, "skipperEngine", internalDeps.skipperEngineProvider.get())
         setIfUninitialized(workflowInstance, "contextPropagator", internalDeps.contextPropagator)
+        setIfUninitialized(workflowInstance, "versionGateEnforcer", internalDeps.versionGateEnforcer)
     }
 
     for (

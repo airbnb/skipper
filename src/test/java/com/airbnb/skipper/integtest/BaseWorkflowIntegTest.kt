@@ -70,9 +70,11 @@ import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.never
+import org.mockito.kotlin.timeout
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -93,6 +95,7 @@ abstract class BaseWorkflowIntegTest {
     open class SampleWorkflow : Workflow() {
         private val actions =
             actions<SampleActions>()
+        private val compensationActions = actions<CompensationActions>()
 
         @StateField
         var shouldProceed = false
@@ -277,6 +280,7 @@ abstract class BaseWorkflowIntegTest {
 
         @StateField var observedVersion = 0
         @StateField var observedBranch = ""
+        @StateField var observedEnforcedVersion = 0
 
         @WorkflowMethod(returnType = String::class)
         fun workflowWithVersionGate(): CompletableFuture<String> {
@@ -284,6 +288,20 @@ abstract class BaseWorkflowIntegTest {
                 version("payment-migration", minVersion = 1, maxVersion = currentMaxVersion)
             waitUntil({ false }, Duration.ofSeconds(1))
             return CompletableFuture.completedFuture("v$observedVersion")
+        }
+
+        // Like [workflowWithVersionGate], but both bounds come from mutable statics. A test changes
+        // them while the instance waits, to simulate a redeploy or a rollback. The step before the
+        // gate has a compensation, so a test can see whether compensations ran.
+        @WorkflowMethod(returnType = String::class)
+        fun workflowWithEnforcedVersionGate(): CompletableFuture<String> {
+            compensationActions.executeActionWithEventualCompensation("before-gate")
+            observedEnforcedVersion =
+                version("enforced-migration", minVersion = currentMinVersion, maxVersion = currentMaxVersion)
+            // One hour, so the timer fires only when the test calls fastForward. MutableClock follows
+            // wall-clock time, so a short timer could fire before the test changes the version bounds.
+            waitUntil({ false }, Duration.ofHours(1))
+            return CompletableFuture.completedFuture("v$observedEnforcedVersion")
         }
 
         @WorkflowMethod(returnType = String::class)
@@ -298,6 +316,10 @@ abstract class BaseWorkflowIntegTest {
             // executions of the same workflow method.
             @JvmStatic
             var currentMaxVersion: Int = 1
+
+            // Lets the enforcement tests raise minVersion, as a redeploy that drops an old branch would.
+            @JvmStatic
+            var currentMinVersion: Int = 1
         }
 
         @SignalMethod
@@ -2048,8 +2070,14 @@ abstract class BaseWorkflowIntegTest {
 
     @Nested
     inner class TestVersionGate : SuiteBase() {
+        // The isEnabled stub below reads this each time, so a test can set it to false instead of
+        // re-stubbing a mock the runtime is already calling.
+        @Volatile private var enforceVersionGate = true
+
         override fun customizeDeps(deps: TestRuntime) {
             deps.clock = MutableClock.getInstance(Clock.systemUTC())
+            whenever(deps.featureGate.isEnabled(FeatureGate.Keys.ENFORCE_VERSION_GATE_RANGE))
+                .thenAnswer { enforceVersionGate }
         }
 
         @Test
@@ -2117,6 +2145,133 @@ abstract class BaseWorkflowIntegTest {
             val newWorkflow = workflowFactory<SampleWorkflow>(newWorkflowId)
             val newResult = newWorkflow.workflowWithVersionGateBranching().get()
             assertThat(newResult).isEqualTo("new-branch")
+        }
+
+        /**
+         * With enforcement on, an instance whose stored version is now below minVersion fails on
+         * replay, and its completed actions are compensated.
+         */
+        @Test
+        fun testVersionGate_replayBelowMinVersion_failsInstanceAndCompensates() {
+            // Deploy 1: gate at [1, 1]. The instance persists version 1, then parks on the waitUntil.
+            SampleWorkflow.currentMinVersion = 1
+            SampleWorkflow.currentMaxVersion = 1
+            val v1 = workflowFactory<SampleWorkflow>(workflowId)
+            v1.workflowWithEnforcedVersionGate()
+            helper.expectWorkflowToWait()
+
+            val stored = workflowStore.getActionCheckpoints(workflowId).toJavaList()
+                .first { it.checkpointTag.checkpointName == "version:enforced-migration" }
+            assertThat(stored.result.get()).isEqualTo(1)
+
+            // Deploy 2: minVersion raised to 2 (the v1 branch was removed). Resuming replays the
+            // persisted 1, which the current code no longer supports.
+            SampleWorkflow.currentMinVersion = 2
+            SampleWorkflow.currentMaxVersion = 2
+            (deps.clock as MutableClock).fastForward(Duration.ofHours(1))
+
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            assertThat(workflowStore.getWorkflow(workflowId).get().flattenResult()?.error)
+                .isInstanceOf(NonRetryableError::class.java)
+                .hasMessageContaining("'enforced-migration'")
+                .hasMessageContaining("below the supported range 2..2")
+            verify(testClient).action("compensateEventualCheckpoint")
+        }
+
+        /**
+         * During a rolling deploy, a host running older code retries an instance that newer code
+         * started, instead of failing it. A host running the newer code then completes it.
+         */
+        @Test
+        fun testVersionGate_replayAboveMaxVersion_retriesUntilNewerCodeResumesIt() {
+            // New host: gate at [1, 2]. First execution persists maxVersion (2), then parks.
+            SampleWorkflow.currentMinVersion = 1
+            SampleWorkflow.currentMaxVersion = 2
+            val v2 =
+                workflowFactory<SampleWorkflow>(
+                    workflowId = workflowId,
+                    requestContext = null,
+                    callbackHandler = DemoCallbackHandler::class.java,
+                )
+            v2.workflowWithEnforcedVersionGate()
+            helper.expectWorkflowToWait()
+
+            val stored = workflowStore.getActionCheckpoints(workflowId).toJavaList()
+                .first { it.checkpointTag.checkpointName == "version:enforced-migration" }
+            assertThat(stored.result.get()).isEqualTo(2)
+
+            // An old host, which only knows maxVersion=1, resumes it.
+            SampleWorkflow.currentMaxVersion = 1
+            (deps.clock as MutableClock).fastForward(Duration.ofHours(1))
+
+            val retryError = argumentCaptor<Throwable>()
+            verify(callbackHandler, timeout(10_000)).onRetryableError(any(), retryError.capture())
+            assertThat(retryError.firstValue)
+                .isExactlyInstanceOf(RetryableError::class.java)
+                .hasMessageContaining("'enforced-migration'")
+                .hasMessageContaining("above the supported range 1..1")
+            // Wait for the five-minute retry to be scheduled before moving the clock. The task's lease
+            // also moves runAfter, but only by seconds.
+            helper.waitForCondition {
+                scheduler.getTask<Any>(workflowId).exists { it.runAfter.isAfter(deps.clock.instant().plus(Duration.ofMinutes(1))) }
+            }
+            assertThat(workflowStore.getWorkflow(workflowId).get().status).isEqualTo(WorkflowInstance.Status.TRANSIENT_ERROR)
+
+            // The fleet finishes upgrading; the next retry runs on code that knows version 2.
+            SampleWorkflow.currentMaxVersion = 2
+            (deps.clock as MutableClock).fastForward(Duration.ofMinutes(5))
+
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPLETED)
+            assertThat(workflowFactory<SampleWorkflow>(workflowId).workflowWithEnforcedVersionGate().get()).isEqualTo("v2")
+            verify(testClient, never()).action("compensateEventualCheckpoint")
+        }
+
+        /**
+         * No regression: an instance whose persisted version is still within the (widened) range
+         * replays normally and completes with its original version.
+         */
+        @Test
+        fun testVersionGate_replayWithinRange_completesNormally() {
+            // Deploy 1: gate at [1, 1]. Persists 1, parks.
+            SampleWorkflow.currentMinVersion = 1
+            SampleWorkflow.currentMaxVersion = 1
+            val v1 = workflowFactory<SampleWorkflow>(workflowId)
+            v1.workflowWithEnforcedVersionGate()
+            helper.expectWorkflowToWait()
+
+            // Deploy 2 widens the range to [1, 3]; the persisted 1 is still supported.
+            SampleWorkflow.currentMinVersion = 1
+            SampleWorkflow.currentMaxVersion = 3
+            (deps.clock as MutableClock).fastForward(Duration.ofHours(1))
+            helper.waitForWorkflowToComplete()
+
+            val resumed = workflowFactory<SampleWorkflow>(workflowId)
+            assertThat(resumed.workflowWithEnforcedVersionGate().get()).isEqualTo("v1")
+        }
+
+        /**
+         * With enforcement off, a below-minVersion replay does not throw. The instance completes with
+         * its stale stored version.
+         */
+        @Test
+        fun testVersionGate_replayBelowMinVersion_isDetectOnlyWhenEnforcementDisabled() {
+            enforceVersionGate = false
+
+            // Deploy 1: gate at [1, 1]. Persists 1, parks.
+            SampleWorkflow.currentMinVersion = 1
+            SampleWorkflow.currentMaxVersion = 1
+            val v1 = workflowFactory<SampleWorkflow>(workflowId)
+            v1.workflowWithEnforcedVersionGate()
+            helper.expectWorkflowToWait()
+
+            // Deploy 2: minVersion raised to 2. With enforcement off the stale 1 is used as before.
+            SampleWorkflow.currentMinVersion = 2
+            SampleWorkflow.currentMaxVersion = 2
+            (deps.clock as MutableClock).fastForward(Duration.ofHours(1))
+            helper.waitForWorkflowToComplete()
+
+            val resumed = workflowFactory<SampleWorkflow>(workflowId)
+            assertThat(resumed.workflowWithEnforcedVersionGate().get()).isEqualTo("v1")
         }
     }
 
