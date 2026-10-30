@@ -6,6 +6,7 @@ import java.time.Instant
 data class Event internal constructor(
     val type: Type,
     val workflowId: String,
+    /** Free-form details about the event. Rely on its format only where the event's [Type] documents it. */
     val description: String?,
     val time: Instant?
 ) {
@@ -30,6 +31,14 @@ data class Event internal constructor(
         COMPENSATION_ERROR,
         COMPENSATION_RETRYABLE_ERROR,
         ACTION_STARTED,
+
+        /**
+         * An action method finished without an error. Published once each time the method runs; a
+         * result replayed from a checkpoint publishes nothing. [Event.description] is
+         * `<ActionClass>.<method>` with the class's simple name, e.g. `PaymentActions.charge`. For a
+         * method that returns a `CompletableFuture`, or a Kotlin `suspend` method, the event comes
+         * when that result completes, and the description ends in ` (async)`.
+         */
         ACTION_COMPLETED,
         ACTION_FAILED,
         ACTION_REPLAY_FROM_CHECKPOINT,
