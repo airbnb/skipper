@@ -47,6 +47,26 @@ evolution-safe workflows.</p>
 <span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
 <p><code>version(changeId, minVersion, maxVersion)</code> returns <code>maxVersion</code> on a workflow’s first
 execution (and persists it), and the persisted value on every subsequent resume.</p>
+<h3 id="out-of-range-versions-on-replay">Out-of-range versions on replay</h3>
+<p>Raise <code>minVersion</code> only after every instance that stored an older version has finished. If you
+raise it too early, some instances replay with a version the code no longer handles. The reverse
+also happens. During a rolling deploy, or after a rollback, a host running older code can resume
+an instance that newer code started. That host sees a version above its <code>maxVersion</code>.</p>
+<p>When that happens, Skipper logs a WARN and increments the <code>versionGate.storedVersionOutOfRange</code>
+metric, tagged with <code>changeId</code>, <code>direction</code> (<code>below_min</code> or <code>above_max</code>) and <code>enforced</code>. Both fire
+on every replay of such an instance, so the metric counts replays, not instances.</p>
+<p>By default the instance then continues with the stored version. Enable the
+<code>enforce_version_gate_range</code> feature gate for an app to stop such instances instead:</p>
+<ul>
+<li><strong>Below <code>minVersion</code></strong>: no host will handle the version again, so the instance fails with a
+<code>NonRetryableError</code>. As with any other failure, its compensations then run.</li>
+<li><strong>Above <code>maxVersion</code></strong>: the instance is retried every five minutes, and resumes once a host
+running the newer code picks it up. The retries stop at the scheduler’s <code>schedulerTaskMaxRetries</code>
+limit. Each retry counts twice against it, so the default of 100 gives about four hours. The
+instance then stays in <code>TRANSIENT_ERROR</code>, which the admin UI’s Retry accepts once the newer code
+is deployed.</li>
+</ul>
+<p>Watch the metric first, so turning the gate on does not fail instances you did not know about.</p>
 <h2 id="evolving-state-fields">Evolving state fields</h2>
 <ul>
 <li><strong>Adding</strong> a nullable or primitive <code>@StateField</code> is safe — old state deserializes and the
