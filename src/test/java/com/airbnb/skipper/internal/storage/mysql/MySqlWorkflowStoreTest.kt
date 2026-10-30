@@ -12,6 +12,7 @@ import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.testutils.MySqlTestSetupExtension
 import com.airbnb.skipper.testutils.TestRuntime
 import java.time.Clock
+import java.time.Duration
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.extension.ExtendWith
 
@@ -44,7 +45,7 @@ class MySqlWorkflowStoreTest : BaseWorkflowStoreTest() {
         serde = runtime.serde.get()
         simplePojoSerde = SimplePojoSerde()
         clock = deps.clock
-        transactionManager = JdbcTransactionManager(deps.config.mySqlDataSource!!)
+        transactionManager = JdbcTransactionManager(deps.config.mySqlDataSource!!, Duration.ofSeconds(10))
     }
 
     override fun workflowStore(): WorkflowStore {
