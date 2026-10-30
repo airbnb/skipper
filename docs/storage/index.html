@@ -61,6 +61,12 @@ automatically. The simplest way is to point Flyway at the bundled migrations on 
 <span class="line"><span style="color:#E1E4E8">  .</span><span style="color:#B392F0">migrate</span><span style="color:#E1E4E8">()</span></span></code></pre>
 <p>If you manage schema changes with your own tooling, apply the <code>V*__*.sql</code> files from
 <code>db/migration</code> in order instead.</p>
+<p>If your tooling is declarative (you give it each table’s desired <code>CREATE TABLE</code> and it works out
+the changes), use <code>db/schema/mysql</code> instead. It holds each table’s <code>CREATE TABLE</code> as it stands
+after all the migrations, with the table prefix written as <code>${tablePrefix}</code>, as in the migration
+files. It leaves out <code>schema_migrations</code>, which only records which migrations ran. When you
+upgrade Skipper, read the release’s new migrations before you give your tool the new files. Your
+tool can work out added columns and indexes, but not a rename or a change to existing data.</p>
 <h3 id="running-multiple-instances">Running multiple instances</h3>
 <p>Several instances of your service can share one MySQL database. Leases keep any task from being
 processed twice, but by default every instance polls the whole scheduler queue and they compete
