@@ -4,6 +4,7 @@ import java.sql.Connection
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.function.Function
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -51,7 +52,7 @@ class JdbcTransactionManagerSqliteContentionTest {
                     conn.commit()
                 }
             }.also { it.start() }
-        locked.await()
+        assertTrue(locked.await(10, TimeUnit.SECONDS), "the holder took the write lock")
     }
 
     private fun countRows(manager: JdbcTransactionManager): Int =

@@ -98,21 +98,12 @@ class JdbcTransactionManager(
     }
 
     /**
-     * Runs [action], retrying it for up to [lockRetryBudget] when it fails with transient lock
-     * contention (see [isTransientLockContention]). Use it for work that gets its own connection
-     * from [getConnection] instead of running inside [execute], such as the schedulers' auto-commit
-     * fetches and the cluster membership reads. The same SQLite `SQLITE_LOCKED` / `SQLITE_BUSY`
-     * conditions that [execute] retries can hit any statement when several Skipper instances share
-     * one database; [action] must therefore be safe to re-run from the top (which holds for the
-     * versioned, optimistic writes Skipper issues: a repeat either finds the row already moved and
-     * skips it, or moves it once). Backends whose errors never match (e.g. MySQL) run [action]
-     * exactly once.
-     *
-     * Only retry work that has not yet produced a side effect the caller depends on seeing (e.g. a
-     * SELECT phase); a write phase should handle contention per statement instead, as the SQLite
-     * scheduler's lease loop does, so that nothing already written is dropped from the result.
-     *
-     * The budget starts at the first failure.
+     * Runs [action], retrying it when it fails with transient lock contention (see
+     * [isTransientLockContention]) for up to [lockRetryBudget], counted from the first failure.
+     * Use it for work that gets its own connection from [getConnection] instead of running inside
+     * [execute], such as the schedulers' auto-commit fetches and the cluster membership reads.
+     * [action] may run more than once, so wrap only work that is safe to repeat, such as a SELECT phase.
+     * A write phase should handle contention per statement instead, as the SQLite scheduler's lease loop does.
      */
     fun <T> retryOnTransientLockContention(action: Supplier<T>): T {
         var deadlineNanos: Long? = null
