@@ -624,17 +624,20 @@ abstract class Workflow {
      * 4. Eventually remove the gate entirely; the orphaned named checkpoint is harmlessly
      *    ignored on replay.
      *
-     * On replay, a stored version outside `[minVersion, maxVersion]` is logged at ERROR and counted.
-     * With [FeatureGate.Keys.ENFORCE_VERSION_GATE_MIN_VERSION] enabled, it also fails the instance
-     * with a [NonRetryableError].
+     * On replay, a stored version outside `[minVersion, maxVersion]` is logged at WARN and counted.
+     * With [FeatureGate.Keys.ENFORCE_VERSION_GATE_RANGE] enabled, a version below the range fails
+     * the instance, and a version above it is retried until newer code runs it or the scheduler's
+     * retry limit is reached.
      *
      * @param changeId stable identifier for this migration; persisted as the checkpoint name
      * @param minVersion the lowest version the current code is willing to handle (>= 1)
      * @param maxVersion the latest version known to the current code (>= [minVersion])
      * @return the active version: [maxVersion] on first execution, or the persisted value on replay
      * @throws IllegalArgumentException if `1 <= minVersion <= maxVersion` is violated
-     * @throws NonRetryableError if the persisted version is outside `[minVersion, maxVersion]` and
-     *   enforcement is enabled for the app
+     * @throws NonRetryableError if the persisted version is below [minVersion] and enforcement is
+     *   enabled for the app
+     * @throws RetryableError if the persisted version is above [maxVersion] and enforcement is
+     *   enabled for the app
      */
     protected final fun version(
         changeId: String,

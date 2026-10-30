@@ -4,6 +4,8 @@ package com.airbnb.skipper.util
 
 import com.airbnb.skipper.Actions
 import com.airbnb.skipper.ContextPropagator
+import com.airbnb.skipper.InMemoryFeatureGate
+import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.RetryStrategy
 import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Workflow
@@ -18,13 +20,16 @@ import javax.inject.Provider
  * base-class fields. These are set directly by the injection helpers below, so neither
  * [SkipperInjector] implementations nor consumers need to register them.
  */
-data class SkipperInternalDeps(
-    val actionExecutor: ActionExecutor,
-    val skipperEngineProvider: Provider<SkipperEngine>,
-    val contextPropagator: ContextPropagator,
-    val defaultRetryStrategy: RetryStrategy,
-    val versionGateEnforcer: VersionGateEnforcer,
-)
+data class SkipperInternalDeps
+    @JvmOverloads
+    constructor(
+        val actionExecutor: ActionExecutor,
+        val skipperEngineProvider: Provider<SkipperEngine>,
+        val contextPropagator: ContextPropagator,
+        val defaultRetryStrategy: RetryStrategy,
+        // The default logs out-of-range versions but never enforces or counts them.
+        val versionGateEnforcer: VersionGateEnforcer = VersionGateEnforcer(InMemoryFeatureGate(), NoOpMetrics.INSTANCE),
+    )
 
 /**
  * Injects dependencies into the specified workflow instance and recursively into all its nested `Actions` objects.

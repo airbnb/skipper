@@ -95,11 +95,12 @@ interface FeatureGate {
         INFLIGHT_CANCELLATION_INTERRUPT("inflight_cancellation_interrupt", enabledByDefault = false),
 
         /**
-         * When enabled, [Workflow.version] fails an instance with a [NonRetryableError] if its stored
-         * version is outside `minVersion..maxVersion`. The instance fails (status ERROR) and its
-         * compensations run, as for any other failure. Off by default. The mismatch is always logged and
-         * counted, so you can check the metric before turning this on.
+         * When enabled, [Workflow.version] stops an instance whose stored version is outside
+         * `minVersion..maxVersion`. Below the range, the instance fails with a [NonRetryableError] and its
+         * compensations run. Above it, the instance is retried every five minutes until newer code resumes
+         * it or [SkipperConfig.schedulerTaskMaxRetries] is reached. Off by default. Mismatches are always
+         * logged and counted, so check the metric first.
          */
-        ENFORCE_VERSION_GATE_MIN_VERSION("enforce_version_gate_min_version", enabledByDefault = false),
+        ENFORCE_VERSION_GATE_RANGE("enforce_version_gate_range", enabledByDefault = false),
     }
 }

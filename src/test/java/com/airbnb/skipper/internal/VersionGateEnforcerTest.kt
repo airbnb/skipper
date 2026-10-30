@@ -4,9 +4,10 @@ import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.InMemoryFeatureGate
 import com.airbnb.skipper.NoOpMetrics
 import com.airbnb.skipper.NonRetryableError
+import com.airbnb.skipper.RetryableError
 import com.airbnb.skipper.metrics.SkipperCounter
+import java.time.Duration
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.Test
 
@@ -45,7 +46,7 @@ class VersionGateEnforcerTest {
         enforce: Boolean,
         metrics: RecordingMetrics = RecordingMetrics()
     ): Pair<VersionGateEnforcer, RecordingMetrics> =
-        VersionGateEnforcer(InMemoryFeatureGate(mapOf(FeatureGate.Keys.ENFORCE_VERSION_GATE_MIN_VERSION to enforce)), metrics) to metrics
+        VersionGateEnforcer(InMemoryFeatureGate(mapOf(FeatureGate.Keys.ENFORCE_VERSION_GATE_RANGE to enforce)), metrics) to metrics
 
     @Test
     fun `in-range version passes with no metric`() {
@@ -73,7 +74,8 @@ class VersionGateEnforcerTest {
             .contains("payment-migration")
             .contains("wf-42")
             .contains("version 1")
-            .contains("2..2")
+            .contains("below the supported range 2..2")
+            .contains("minVersion was raised past it")
 
         assertThat(metrics.counters).hasSize(1)
         val counter = metrics.counters.single()
@@ -85,15 +87,19 @@ class VersionGateEnforcerTest {
             .containsEntry("enforced", "true")
     }
 
+    /** A too-new version is usually a deploy still rolling out, so the instance is retried, not failed. */
     @Test
-    fun `stored above maxVersion throws NonRetryableError when enforcement enabled (rollback)`() {
+    fun `stored above maxVersion throws RetryableError when enforcement enabled`() {
         val (enforcer, metrics) = enforcer(enforce = true)
-        assertThatThrownBy {
-            enforcer.enforce("wf-7", "rolled-back", storedVersion = 3, minVersion = 1, maxVersion = 2)
+        val thrown = catchThrowable {
+            enforcer.enforce("wf-7", "rolling-deploy", storedVersion = 3, minVersion = 1, maxVersion = 2)
         }
-            .isInstanceOf(NonRetryableError::class.java)
-            .hasMessageContaining("version 3")
-            .hasMessageContaining("1..2")
+        assertThat(thrown).isExactlyInstanceOf(RetryableError::class.java)
+        assertThat((thrown as RetryableError).getNextRetryDelay()).isEqualTo(Duration.ofMinutes(5))
+        assertThat(thrown.message)
+            .contains("version 3")
+            .contains("above the supported range 1..2")
+            .contains("rolling deploy")
 
         val counter = metrics.counters.single()
         assertThat(counter.tags)
@@ -126,6 +132,6 @@ class VersionGateEnforcerTest {
 
     @Test
     fun `enforcement is off unless an app enables it`() {
-        assertThat(InMemoryFeatureGate().isEnabled(FeatureGate.Keys.ENFORCE_VERSION_GATE_MIN_VERSION)).isFalse()
+        assertThat(InMemoryFeatureGate().isEnabled(FeatureGate.Keys.ENFORCE_VERSION_GATE_RANGE)).isFalse()
     }
 }

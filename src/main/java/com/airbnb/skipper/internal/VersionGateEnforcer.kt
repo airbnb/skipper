@@ -3,21 +3,24 @@ package com.airbnb.skipper.internal
 import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.NonRetryableError
+import com.airbnb.skipper.RetryableError
 import com.google.common.collect.ImmutableMap
+import java.time.Duration
 
 /**
  * Checks the version [com.airbnb.skipper.Workflow.version] returns against the range the current
- * code supports. An out-of-range version is always logged at ERROR and counted. When
- * [FeatureGate.Keys.ENFORCE_VERSION_GATE_MIN_VERSION] is enabled, it also throws
- * [NonRetryableError], because a retry would replay the same stored version.
+ * code supports. An out-of-range version is always logged at WARN and counted. When
+ * [FeatureGate.Keys.ENFORCE_VERSION_GATE_RANGE] is enabled, it also throws.
  */
 class VersionGateEnforcer(
     private val featureGate: FeatureGate,
     private val metrics: Metrics,
 ) {
     /**
-     * Logs at ERROR and counts a [storedVersion] outside `minVersion..maxVersion`. With enforcement
-     * enabled, it then throws [NonRetryableError].
+     * Logs at WARN and counts a [storedVersion] outside `minVersion..maxVersion`. With enforcement
+     * enabled, a version below the range throws [NonRetryableError], since no host will handle it
+     * again. A version above the range throws [RetryableError], so the instance is retried until a
+     * host running the newer code resumes it, or the scheduler's retry limit is reached.
      *
      * @param workflowId the instance being checked; used in the message only, never as a metric tag
      * @param changeId the version gate's stable identifier
@@ -36,8 +39,8 @@ class VersionGateEnforcer(
             return
         }
 
-        val enforced = featureGate.isEnabled(FeatureGate.Keys.ENFORCE_VERSION_GATE_MIN_VERSION)
-        val direction = if (storedVersion < minVersion) DIRECTION_BELOW_MIN else DIRECTION_ABOVE_MAX
+        val enforced = featureGate.isEnabled(FeatureGate.Keys.ENFORCE_VERSION_GATE_RANGE)
+        val belowMin = storedVersion < minVersion
         val message = buildMessage(workflowId, changeId, storedVersion, minVersion, maxVersion)
 
         metrics
@@ -46,7 +49,7 @@ class VersionGateEnforcer(
                     CHANGE_ID_TAG,
                     changeId,
                     DIRECTION_TAG,
-                    direction,
+                    if (belowMin) DIRECTION_BELOW_MIN else DIRECTION_ABOVE_MAX,
                     ENFORCED_TAG,
                     enforced.toString(),
                 ),
@@ -54,15 +57,22 @@ class VersionGateEnforcer(
                 STORED_VERSION_OUT_OF_RANGE,
             )
             .inc()
-        log.error(message)
+        log.warn(message)
 
-        if (enforced) {
+        if (!enforced) {
+            return
+        }
+        if (belowMin) {
             throw NonRetryableError(message)
         }
+        throw RetryableError(message, null, ABOVE_MAX_RETRY_DELAY)
     }
 
     companion object {
         private val log = org.slf4j.LoggerFactory.getLogger(VersionGateEnforcer::class.java)
+
+        /** How long an instance with a too-new version waits before it is tried again. */
+        private val ABOVE_MAX_RETRY_DELAY: Duration = Duration.ofMinutes(5)
 
         private const val METRIC_COMPONENT_NAME = "versionGate"
         private const val STORED_VERSION_OUT_OF_RANGE = "storedVersionOutOfRange"
@@ -72,17 +82,24 @@ class VersionGateEnforcer(
         private const val DIRECTION_BELOW_MIN = "below_min"
         private const val DIRECTION_ABOVE_MAX = "above_max"
 
-        /** The log and exception message for an out-of-range stored version. */
+        /** The log and exception message, with advice that fits the direction. */
         private fun buildMessage(
             workflowId: String,
             changeId: String,
             storedVersion: Int,
             minVersion: Int,
             maxVersion: Int,
-        ): String =
-            "version gate '$changeId' for workflow '$workflowId' recorded version $storedVersion," +
-                " but the current code only supports versions $minVersion..$maxVersion. Either" +
-                " minVersion was raised or the deploy was rolled back while this instance was in" +
-                " flight. Let such instances finish before narrowing the supported range."
+        ): String {
+            val prefix = "version gate '$changeId' for workflow '$workflowId' recorded version $storedVersion,"
+            val range = "$minVersion..$maxVersion"
+            return if (storedVersion < minVersion) {
+                "$prefix below the supported range $range. minVersion was raised past it while this" +
+                    " instance was in flight. Let such instances finish before raising minVersion."
+            } else {
+                "$prefix above the supported range $range. Newer code recorded this version. Either a" +
+                    " rolling deploy is still in progress, or a deploy was rolled back. Finish the" +
+                    " deploy, or roll forward, so a host running the newer code resumes this instance."
+            }
+        }
     }
 }
