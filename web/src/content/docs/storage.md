@@ -107,6 +107,13 @@ Flyway.configure()
 If you manage schema changes with your own tooling, apply the `V*__*.sql` files from
 `db/migration` in order instead.
 
+If your tooling is declarative (you give it each table's desired `CREATE TABLE` and it works out
+the changes), use `db/schema/mysql` instead. It holds each table's `CREATE TABLE` as it stands
+after all the migrations, with the table prefix written as `${tablePrefix}`, as in the migration
+files. It leaves out `schema_migrations`, which only records which migrations ran. When you
+upgrade Skipper, read the release's new migrations before you give your tool the new files. Your
+tool can work out added columns and indexes, but not a rename or a change to existing data.
+
 ### Running multiple instances
 
 Several instances of your service can share one MySQL database. Leases keep any task from being
