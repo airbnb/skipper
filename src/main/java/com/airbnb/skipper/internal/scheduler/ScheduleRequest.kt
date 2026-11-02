@@ -189,8 +189,7 @@ data class ScheduleRequest<T> internal constructor(
                 ", executionTimeout\$value=$executionTimeout" +
                 ", inMemoryExecutionEnabled\$value=$inMemoryExecutionEnabled" +
                 ", honorActiveLeaseWhenOverwriting\$value=$honorActiveLeaseWhenOverwriting" +
-                ", bumpVersionWhenHonoringLease\$value=$bumpVersionWhenHonoringLease" +
-                ", resetRetryCountWhenHonoringLease\$value=$resetRetryCountWhenHonoringLease)"
+                ", bumpVersionWhenHonoringLease\$value=$bumpVersionWhenHonoringLease)"
     }
 
     companion object {

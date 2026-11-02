@@ -1749,6 +1749,7 @@ abstract class BaseWorkflowIntegTest {
                     .build()
             )
             repeat(3) { scheduler.rescheduleForRetry(scheduler.getTask<Any>(workflowId).get(), dueSoon) }
+            assertThat(scheduler.getTask<Any>(workflowId).get().status).isEqualTo(Task.Status.PENDING)
 
             skipperEngine.cancelWorkflow(workflowId, "cancelled past max retries")
 
