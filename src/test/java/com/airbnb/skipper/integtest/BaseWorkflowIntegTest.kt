@@ -31,8 +31,10 @@ import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.SkipperSchedulerManager
 import com.airbnb.skipper.internal.api.PersistedSignal
 import com.airbnb.skipper.internal.api.WaitSignal
+import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.SchedulerExecutionQueue
+import com.airbnb.skipper.internal.scheduler.Task
 import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.internal.storage.WorkflowUpdateRequest
 import com.airbnb.skipper.internal.testutils.TestTypes
@@ -47,6 +49,7 @@ import com.google.inject.name.Named
 import io.vavr.control.Either
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
@@ -1713,6 +1716,41 @@ abstract class BaseWorkflowIntegTest {
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.WAITING)
 
             skipperEngine.cancelWorkflow(workflowId, "cancelled while waiting")
+
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            verify(testClient).action("compensateEventualCheckpoint")
+        }
+    }
+
+    @Nested
+    inner class TestCompensateOnCancelPastMaxRetries : SuiteBase() {
+        override fun customizeDeps(deps: TestRuntime) {
+            deps.clock = Clock.systemUTC()
+            deps.config.defaultCheckpointMode = CheckpointMode.EVENTUAL_CHECKPOINT
+            deps.config.schedulerTaskMaxRetries = 2
+        }
+
+        @Test
+        fun testCancelOfTaskPastMaxRetriesStillCompensates() {
+            // A cancel always gets the run that settles it, even when the task it keeps has used up
+            // its scheduler retries.
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
+            workflow.oneStepThenWait()
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.WAITING)
+            // The run's task is due within the lease window, so the cancel keeps it, and it has used up
+            // its scheduler retries.
+            val dueSoon = Instant.now().plusSeconds(2)
+            scheduler.schedule(
+                ScheduleRequest.builder<Any>()
+                    .id(workflowId)
+                    .dedupToken(workflowId)
+                    .type(Task.Type.WORKFLOW)
+                    .runAfter(dueSoon)
+                    .build()
+            )
+            repeat(3) { scheduler.rescheduleForRetry(scheduler.getTask<Any>(workflowId).get(), dueSoon) }
+
+            skipperEngine.cancelWorkflow(workflowId, "cancelled past max retries")
 
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
             verify(testClient).action("compensateEventualCheckpoint")
