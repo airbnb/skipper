@@ -438,6 +438,27 @@ class WorkflowExecutionTaskHandlerTest {
     }
 
     @Test
+    fun testTimedOutCompensatingInstanceIsNotTimedOut() {
+        // A compensating instance past its timeout is not moved to TIMEOUT, so the compensation can
+        // finish.
+        for (status in listOf(
+            WorkflowInstance.Status.COMPENSATION_IN_PROGRESS,
+            WorkflowInstance.Status.COMPENSATION_ERROR,
+        )) {
+            val workflowInstance = TestUtils.getWorkflowInstance().toBuilder()
+                .status(status)
+                .timeoutTime(Instant.EPOCH.minusSeconds(1))
+                .build()
+            whenever(mockWorkflowStore.getWorkflow(eq(workflowInstance.workflowId))).thenReturn(Option.of(workflowInstance))
+
+            val handleResult = taskHandler.handle(TestUtils.getTestTask(workflowInstance), executor).join()
+
+            assertTrue(handleResult.isEmpty, "status $status")
+        }
+        verify(mockWorkflowStore, never()).updateWorkflow(any())
+    }
+
+    @Test
     fun testCancelSettleRetriesWhenTheCompensationRequestFailsAndStaysCancelled() {
         val workflowInstance =
             TestUtils.getWorkflowInstance().toBuilder()
