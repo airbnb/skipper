@@ -51,7 +51,12 @@ locally.
 The UI — and the JSON API behind it — lets you:
 
 - View dashboard stats and search workflow instances by type and status.
-- Inspect a single instance's status and history — `GET /skipper/admin/workflows/{id}`.
+- Inspect a single instance's status and history — `GET /skipper/admin/workflows/{id}`. Its
+  **timeline** lays out everything that happened on one axis, like a browser's network
+  waterfall: each action and every retry attempt, the backoff between attempts and when the
+  next one is due, timer waits, signals, child workflows, and the workflow timeout. Idle
+  stretches are compressed by default so short actions and long waits are both readable; a
+  linear overview strip keeps the real proportions.
 - Cancel a running instance — `POST /skipper/admin/workflows/{id}/cancel`.
 - Review workflows that exhausted their retries and the scheduler **dead-letter queue**, and
   requeue stuck tasks.
