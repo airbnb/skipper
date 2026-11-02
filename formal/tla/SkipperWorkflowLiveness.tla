@@ -401,6 +401,14 @@ Renew(p) ==
 (* still to happen: a start between its two writes, or an in-memory copy of that lease  *)
 (* waiting to be taken. The models that use it start from a fresh workflow, so every     *)
 (* workflow-task lease was granted after a pending start began.                          *)
+(* The first part, a caller in sched, is what encodes the bound the stranded-start      *)
+(* recovery relies on: a slow first start reaches its schedule call within one lease.   *)
+(* Drop it and start_race fails NoOverlappingRuns: c2 recovers while c1 is paused, the  *)
+(* lease lapses, p1 fetches the row, c1's schedule honours p1's lease but still queues  *)
+(* an in-memory copy, and p2 takes it. The part is coarser than it needs to be: it      *)
+(* holds back the lapse of any workflow-task lease while any caller is in sched. That   *)
+(* is only exact under start_race's constants (no-op gate on, no user failures, fresh   *)
+(* workflow); a model that combines it with other settings may over-constrain time.     *)
 LeaseStillClaimed(t) ==
     /\ NoLongPauses /\ t = WF
     /\ \/ \E c \in Callers : cpc[c] = "sched"
@@ -426,7 +434,16 @@ Stranded == wf.st = "RUNNING" /\ row[WF].st = "NONE"
 (* SkipperEngine.startWorkflow, part 1: createWorkflow, or on EntityAlreadyExists       *)
 (* return the existing instance without scheduling (terminal, or the no-op gate is on,  *)
 (* except RETRIES_EXHAUSTED which is always re-run). A stranded workflow is scheduled    *)
-(* even with the no-op gate on; the instance read and its task lookup are one step here. *)
+(* even with the no-op gate on. The code looks up the task and then reads the instance   *)
+(* again; one step is faithful because only creation and SignalPersist move a workflow  *)
+(* into RUNNING:                                                                         *)
+(* 1. No signal persists between the two reads: RUNNING on the re-read means it was      *)
+(*    RUNNING at the lookup, so both reads see the state at the lookup.                  *)
+(* 2. A signal persists in between: the lookup saw a WAITING workflow with no task. The  *)
+(*    same outcome is this step taken between that SignalPersist and its SignalSched,    *)
+(*    which the model already explores; the check writes nothing, so it can move there.  *)
+(* The opposite order (instance, then task) is not one step: a first start can finish   *)
+(* the workflow and remove its task between the reads.                                   *)
 StartCreate(c) ==
     /\ cpc[c] = "ready"
     /\ IF ~wf.ex
@@ -466,8 +483,10 @@ StartSched(c) ==
 
 (* Part 2 for a stranded workflow (SchedulerExecutionQueue.scheduleAfterLease): only the *)
 (* backstop row, due after a lease, and no in-memory copy. Its start may only be slow    *)
-(* and about to schedule in memory: whichever row write comes first, the other honours   *)
-(* its lease, and the only copy that runs is the one queued against it.                  *)
+(* and about to schedule in memory: if that start schedules within one lease of this    *)
+(* write, whichever row write comes first, the other honours its lease, and the only     *)
+(* copy that runs is the one queued against it. A longer pause can still overlap two     *)
+(* runs; NoLongPauses (LeaseStillClaimed) is what rules that out.                        *)
 StartRecover(c) ==
     /\ cpc[c] = "recover"
     /\ cpc' = [cpc EXCEPT ![c] = "done"]
