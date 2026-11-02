@@ -520,10 +520,7 @@ class AdminResource
         ) {
             try {
                 // For WORKFLOW type tasks, cancel the workflow which will also remove the task
-                workflowsService.cancelWorkflows(
-                    java.util.Arrays.asList(taskId),
-                    "Cancelled via DLQ admin interface",
-                )
+                skipperEngine.cancelWorkflow(taskId, "Cancelled via DLQ admin interface")
             } catch (
                 @Suppress("TooGenericExceptionCaught") e: Throwable
             ) {

@@ -10,11 +10,13 @@ import com.example.adminjson.Payout
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.time.Instant
+import javax.ws.rs.WebApplicationException
 import javax.ws.rs.core.MediaType
 import javax.ws.rs.core.Response
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -79,6 +81,19 @@ class AdminResourceJsonTest {
         val search = json(admin.searchWorkflows(null, null, null, null, null, 50, null))
         assertTrue(search["workflows"].any { it["workflow_id"].asText() == WORKFLOW_ID }, search.toString())
         assertTrue(search.has("next_cursor"), search.toString())
+    }
+
+    @Test
+    fun cancelWorkflowFromTaskReportsFailureForTerminalWorkflow() {
+        val error = assertThrows(WebApplicationException::class.java) { admin.cancelWorkflowFromTask(WORKFLOW_ID) }
+        assertTrue(error.response.entity.toString().contains("terminal state"), error.response.entity.toString())
+        assertEquals(WorkflowInstance.Status.COMPLETED, runtime.workflowStore.get().getWorkflow(WORKFLOW_ID).get().status)
+    }
+
+    @Test
+    fun cancelWorkflowFromTaskReportsFailureForUnknownTask() {
+        val error = assertThrows(WebApplicationException::class.java) { admin.cancelWorkflowFromTask("no-such-task") }
+        assertTrue(error.response.entity.toString().contains("not found"), error.response.entity.toString())
     }
 
     @Test
