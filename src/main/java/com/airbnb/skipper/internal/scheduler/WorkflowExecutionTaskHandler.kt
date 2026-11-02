@@ -135,6 +135,19 @@ class WorkflowExecutionTaskHandler
                     String.format("retries: %s", task.retryCount),
                 ),
             )
+            if (workflowInstance.status.isCompensationInProgress() ||
+                workflowInstance.status == WorkflowInstance.Status.COMPENSATION_COMPLETED
+            ) {
+                // A late timer, signal or execution timeout can start a run after compensation has
+                // begun or finished. There is nothing to execute here. Moving the instance to TIMEOUT
+                // would stop the compensation, so end the task.
+                log.info(
+                    "workflow instance with id={} is {}; nothing to execute",
+                    workflowInstance.workflowId,
+                    workflowInstance.status,
+                )
+                return CompletableFuture.completedFuture(Option.none())
+            }
             if (workflowInstance.isTimeoutEligible(now.instant())) {
                 // If the workflow is eligible for a timeout, we will handle it here and return
                 // immediately. Only workflows that are in a non-terminal state OR have timed out will
@@ -148,19 +161,6 @@ class WorkflowExecutionTaskHandler
                     val timeoutResult = handleWorkflowTimeout(workflowInstance)
                     return CompletableFuture.completedFuture(timeoutResult)
                 }
-            }
-            if (workflowInstance.status.isCompensationInProgress() ||
-                workflowInstance.status == WorkflowInstance.Status.COMPENSATION_COMPLETED
-            ) {
-                // A late timer or signal can start a run after compensation has begun or finished.
-                // There is nothing to execute, and saving a result under these statuses would be
-                // rejected, so end the task here.
-                log.info(
-                    "workflow instance with id={} is {}; nothing to execute",
-                    workflowInstance.workflowId,
-                    workflowInstance.status,
-                )
-                return CompletableFuture.completedFuture(Option.none())
             }
             if (workflowInstance.status == WorkflowInstance.Status.TIMEOUT) {
                 // If the workflow is already in a timeout state, we won't attempt to execute it.

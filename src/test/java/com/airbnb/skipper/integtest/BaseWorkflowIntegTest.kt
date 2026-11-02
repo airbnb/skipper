@@ -52,6 +52,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.LockSupport
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -1790,6 +1791,72 @@ abstract class BaseWorkflowIntegTest {
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.TIMEOUT)
             // Verify that there are no tasks scheduled for the workflow instance
             assertEquals(0, scheduler.realSize())
+        }
+    }
+
+    @Nested
+    inner class TestExecutionTimeoutDuringCompensation : SuiteBase() {
+        private val compensationFails = AtomicBoolean(true)
+
+        override fun customizeDeps(deps: TestRuntime) {
+            deps.clock = Clock.systemUTC()
+            deps.config.workflowOptions = WorkflowOptions(executionTimeout = Duration.ofSeconds(5))
+            deps.config.defaultCheckpointMode = CheckpointMode.EVENTUAL_CHECKPOINT
+            deps.config.compensationRetryStrategy = FixedRetryStrategy(Duration.ZERO, 1_000)
+            deps.config.taskUnexpectedErrorRetryDelay = Duration.ofMillis(200)
+            doAnswer {
+                if (compensationFails.get()) throw RetryableError("compensation unavailable")
+                null
+            }.whenever(testClient).action("compensateEventualCheckpoint")
+        }
+
+        /**
+         * Holds the compensation in COMPENSATION_IN_PROGRESS until the execution timeout has been
+         * handled, then asserts the compensation was left running and finishes without a timeout.
+         */
+        private fun assertTimeoutDoesNotStopCompensation() {
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_IN_PROGRESS)
+            assertThat(scheduler.getTask<Any>("$workflowId:timeout").isDefined).isTrue()
+            helper.waitForCondition({ scheduler.getTask<Any>("$workflowId:timeout").isEmpty }, 100, 100)
+            helper.waitForExecutionFlowToFinish()
+            assertThat(workflowStore.getWorkflow(workflowId).get().status)
+                .isEqualTo(WorkflowInstance.Status.COMPENSATION_IN_PROGRESS)
+
+            compensationFails.set(false)
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            verify(callbackHandler, times(1)).onCompensationCompleted(any())
+            verify(callbackHandler, never()).onWorkflowTimeout(any())
+        }
+
+        @Test
+        fun testTimeoutDuringErrorCompensationLetsItFinish() {
+            // A failed workflow whose timeout passes mid-compensation still finishes compensating,
+            // and is never reported as timed out.
+            val workflow = workflowFactory<CompensationWorkflow>(
+                workflowId = workflowId,
+                requestContext = TestRequestContext.getCurrentRequestContext(),
+                callbackHandler = DemoCallbackHandler::class.java
+            )
+            assertThrows<NonRetryableError> { workflow.workflowWithEventualCheckpointCompensation() }
+
+            assertTimeoutDoesNotStopCompensation()
+        }
+
+        @Test
+        fun testTimeoutDuringCancelCompensationLetsItFinish() {
+            // A cancelled workflow whose timeout passes mid-compensation still finishes compensating,
+            // and is never reported as timed out.
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(
+                workflowId = workflowId,
+                requestContext = TestRequestContext.getCurrentRequestContext(),
+                callbackHandler = DemoCallbackHandler::class.java
+            )
+            workflow.oneStepThenWait()
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.WAITING)
+            skipperEngine.cancelWorkflow(workflowId, "cancelled while waiting")
+
+            assertTimeoutDoesNotStopCompensation()
+            verify(callbackHandler, times(1)).onCancelled(any(), any())
         }
     }
 
