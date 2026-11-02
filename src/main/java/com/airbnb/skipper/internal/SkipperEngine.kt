@@ -541,9 +541,7 @@ open class SkipperEngine
                         .type(Task.Type.WORKFLOW)
                         .inMemoryExecutionEnabled(inMemoryExecutionEnabled)
                         .honorActiveLeaseWhenOverwriting(true)
-                        .bumpVersionWhenHonoringLease(
-                            featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE)
-                        )
+                        .bumpVersionWhenHonoringLease(false)
                         .build()
                 )
                 eventPublisher.publishEvent(
