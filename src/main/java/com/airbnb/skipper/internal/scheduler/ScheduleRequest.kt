@@ -44,6 +44,11 @@ data class ScheduleRequest<T> internal constructor(
      * `FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE`; ignored when no lease is honoured.
      */
     val isBumpVersionWhenHonoringLease: Boolean = false,
+    /**
+     * When [isHonorActiveLeaseWhenOverwriting] applies, also reset the kept task's retry count to zero,
+     * so it does not run out of retries before it runs again. Ignored when no lease is honoured.
+     */
+    val isResetRetryCountWhenHonoringLease: Boolean = false,
 ) {
     fun toBuilder(): ScheduleRequestBuilder<T> =
         ScheduleRequestBuilder<T>()
@@ -56,6 +61,7 @@ data class ScheduleRequest<T> internal constructor(
             .inMemoryExecutionEnabled(inMemoryExecutionEnabled)
             .honorActiveLeaseWhenOverwriting(isHonorActiveLeaseWhenOverwriting)
             .bumpVersionWhenHonoringLease(isBumpVersionWhenHonoringLease)
+            .resetRetryCountWhenHonoringLease(isResetRetryCountWhenHonoringLease)
 
     class ScheduleRequestBuilder<T> internal constructor() {
         private var type: Task.Type? = null
@@ -67,6 +73,7 @@ data class ScheduleRequest<T> internal constructor(
         private var inMemoryExecutionEnabled: Boolean = true
         private var honorActiveLeaseWhenOverwriting: Boolean = false
         private var bumpVersionWhenHonoringLease: Boolean = false
+        private var resetRetryCountWhenHonoringLease: Boolean = false
 
         /**
          * @return `this`.
@@ -156,6 +163,11 @@ data class ScheduleRequest<T> internal constructor(
             return this
         }
 
+        fun resetRetryCountWhenHonoringLease(resetRetryCountWhenHonoringLease: Boolean): ScheduleRequestBuilder<T> {
+            this.resetRetryCountWhenHonoringLease = resetRetryCountWhenHonoringLease
+            return this
+        }
+
         fun build(): ScheduleRequest<T> =
             ScheduleRequest(
                 type ?: throw NullPointerException("type is marked non-null but is null"),
@@ -168,6 +180,7 @@ data class ScheduleRequest<T> internal constructor(
                 inMemoryExecutionEnabled,
                 honorActiveLeaseWhenOverwriting,
                 bumpVersionWhenHonoringLease,
+                resetRetryCountWhenHonoringLease,
             )
 
         override fun toString(): String =

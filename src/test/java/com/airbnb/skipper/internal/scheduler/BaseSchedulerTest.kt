@@ -265,6 +265,54 @@ abstract class BaseSchedulerTest {
     }
 
     @Test
+    fun testScheduleWhenHonorActiveLeaseIsActiveResetsRetryCountWhenRequested() {
+        // A kept task keeps its retry count unless the request asks to reset it. Its version, run
+        // time and status stay as they were either way.
+        val t1 = Instant.EPOCH
+        val retryAt = t1.plusMillis(500)
+        whenever(mockClock.instant()).thenReturn(t1)
+        scheduler()
+            .schedule(
+                ScheduleRequest.builder<String>()
+                    .id("test")
+                    .payload("payload")
+                    .type(Task.Type.WORKFLOW)
+                    .dedupToken("test")
+                    .runAfter(t1)
+                    .build()
+            )
+        scheduler().rescheduleForRetry(scheduler().fetch<String>(10).get(0), retryAt)
+        val retrying: Task<String> = scheduler().getTask<String>("test").get()
+        assertTrue(retrying.retryCount > 0)
+        assertTrue(retrying.hasActiveLease(mockClock.instant(), leaseDuration))
+
+        for (resetRetryCount in listOf(false, true)) {
+            val kept =
+                scheduler()
+                    .schedule(
+                        ScheduleRequest.builder<String>()
+                            .id("test")
+                            .payload("payload2")
+                            .type(Task.Type.WORKFLOW)
+                            .dedupToken("test")
+                            .honorActiveLeaseWhenOverwriting(true)
+                            .resetRetryCountWhenHonoringLease(resetRetryCount)
+                            .build()
+                    )
+            val stored: Task<String> = scheduler().getTask<String>("test").get()
+            val expectedRetryCount = if (resetRetryCount) 0 else retrying.retryCount
+            for (task in listOf(kept, stored)) {
+                assertEquals(expectedRetryCount, task.retryCount)
+                assertEquals(retrying.version, task.version)
+                assertEquals(retrying.runAfter, task.runAfter)
+                assertEquals(retrying.status, task.status)
+            }
+        }
+        whenever(mockClock.instant()).thenReturn(retryAt)
+        assertEquals(0, scheduler().fetch<String>(10).get(0).retryCount)
+    }
+
+    @Test
     fun testMarkJobAsFailed() {
         val t1 = Instant.EPOCH
         whenever(mockClock.instant()).thenReturn(t1)
