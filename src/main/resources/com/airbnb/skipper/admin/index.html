@@ -1188,8 +1188,10 @@ Workflows list view
     });
   }
 
-  function rewindToCheckpoint(workflowId, actionClass, actionMethod, iteration, checkpointName) {
-    if (!confirm('Rewind this workflow to the selected checkpoint?\n\nThis will:\n- Set the workflow status to RUNNING\n- DELETE this checkpoint and every checkpoint after it\n- Re-execute the workflow from this point\n\nThis operation CANNOT be undone.')) {
+  // `deleted`, when given, spells out which checkpoints the rewind removes (see the timeline's rewindImpact).
+  function rewindToCheckpoint(workflowId, actionClass, actionMethod, iteration, checkpointName, deleted) {
+    if (!confirm('Rewind this workflow to the selected checkpoint?\n\nThis will:\n- Set the workflow status to RUNNING\n- DELETE this checkpoint and every checkpoint after it\n- Re-execute the workflow from this point\n\n' +
+        (deleted ? deleted + '\n\n' : '') + 'This operation CANNOT be undone.')) {
       return;
     }
     let params = 'actionClass=' + encodeURIComponent(actionClass) +
@@ -1812,7 +1814,15 @@ Workflows list view
       if (focusCp.isSuccessful && focusCp.result !== null && focusCp.result !== undefined) {
         html += '<button class="btn" onclick="Timeline.viewResult()">View result</button>';
       }
-      html += '<button class="btn" onclick="Timeline.rewind()">⏮ Rewind to here</button></div></div>';
+      html += '<button class="btn" onclick="Timeline.rewind()">⏮ Rewind to here</button></div>';
+      const impact = rewindImpact(g.tag);
+      if (impact) {
+        html += '<p class="muted" style="font-size:12px;margin:10px 0 0">Rewinding here deletes ' + impact.total + ' checkpoint' + (impact.total === 1 ? '' : 's') +
+          ' from ' + impact.actions + ' action' + (impact.actions === 1 ? '' : 's') + (impact.earlier.length
+            ? ', including <span class="t-warn">' + escapeHtml(impact.earlier.join(', ')) + '</span>, which started earlier but finished later'
+            : '') + '.</p>';
+      }
+      html += '</div>';
       return html;
     }
 
@@ -1994,7 +2004,50 @@ Workflows list view
       const sel = selectedCheckpoint();
       if (!sel) return;
       const tag = sel.group.tag;
-      rewindToCheckpoint(tag.workflow_id, tag.action_class, tag.action_method, tag.iteration, tag.checkpoint_name);
+      const impact = rewindImpact(tag);
+      rewindToCheckpoint(tag.workflow_id, tag.action_class, tag.action_method, tag.iteration, tag.checkpoint_name, impact ? impact.text : null);
+    }
+
+    // What a rewind to `pivot` deletes. The store finds the pivot's first checkpoint and deletes it and
+    // every checkpoint stored after it. The API lists checkpoints in that storage order, which is when
+    // each one was written: for an async action, when it finished. The timeline orders rows by start
+    // time instead, so an action drawn above the pivot can still be deleted. That happens when it
+    // started before the pivot but finished after it, and such actions are called out by name.
+    function rewindImpact(pivot) {
+      const cps = st.data.checkpoints || [];
+      const matches = function(t) {
+        return pivot.checkpoint_name
+          ? t.checkpoint_name === pivot.checkpoint_name
+          : !t.checkpoint_name && t.action_class === pivot.action_class && t.action_method === pivot.action_method && t.iteration === pivot.iteration;
+      };
+      const from = cps.findIndex(function(cp) { return matches(cp.checkpoint_tag); });
+      if (from === -1) return null;
+      const pivotKey = checkpointKey(pivot);
+      const pivotStart = toMillis(cps[from].execution_start_time);
+      const actions = [], byKey = {};
+      cps.slice(from).forEach(function(cp) {
+        const key = checkpointKey(cp.checkpoint_tag);
+        if (!byKey[key]) {
+          byKey[key] = { tag: cp.checkpoint_tag, count: 0, start: Infinity };
+          actions.push(byKey[key]);
+        }
+        byKey[key].count += 1;
+        byKey[key].start = Math.min(byKey[key].start, toMillis(cp.execution_start_time));
+      });
+      const label = function(t) { return (t.checkpoint_name || simpleClassName(t.action_class) + '.' + t.action_method) + ' #' + t.iteration; };
+      const earlier = actions.filter(function(a) { return checkpointKey(a.tag) !== pivotKey && a.start < pivotStart; });
+      const shown = actions.slice(0, 12).map(function(a) {
+        return '- ' + label(a.tag) + (a.count > 1 ? ' (' + a.count + ' checkpoints)' : '') +
+          (earlier.indexOf(a) !== -1 ? ' <- started earlier, finished later' : '');
+      });
+      if (actions.length > shown.length) shown.push('- … and ' + (actions.length - shown.length) + ' more');
+      const total = cps.length - from;
+      let text = 'Checkpoints deleted (' + total + ' from ' + actions.length + ' action' + (actions.length === 1 ? '' : 's') + ', in the order they were stored):\n' + shown.join('\n');
+      if (earlier.length) {
+        text += '\n\n' + earlier.map(function(a) { return label(a.tag); }).join(', ') + (earlier.length === 1 ? ' starts' : ' start') +
+          ' before this action on the timeline but finished after it, so ' + (earlier.length === 1 ? 'it is' : 'they are') + ' deleted too and will re-run.';
+      }
+      return { text: text, total: total, actions: actions.length, earlier: earlier.map(function(a) { return label(a.tag); }) };
     }
 
     $(window).on('resize', function() { if (st && $('#tl-body').length) render(); });
