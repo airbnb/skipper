@@ -12,8 +12,9 @@ package com.airbnb.skipper.encryption
  * in place of the value. Null values are stored as null. To protect only part of a value, move that
  * part into its own action or state field.
  *
- * Decryption follows the stored value, not this annotation, so adding or removing the annotation
- * is safe for workflows that are already running. Values stored in plaintext keep loading as
+ * Decryption follows the stored value, not this annotation, so once every host runs a Skipper
+ * version with encryption, adding or removing the annotation is safe for workflows that are
+ * already running. Values stored in plaintext keep loading as
  * plaintext, and values stored encrypted keep decrypting as long as their encryptor stays
  * registered under the same name.
  *

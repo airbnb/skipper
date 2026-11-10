@@ -128,8 +128,11 @@ open class ActionExecutor
                         request.actionMethodName,
                     )
                 }
-                return valueEncryption.decrypt(checkpoint.get()).generateResult()
+                return valueEncryption.decryptResult(checkpoint.get()).generateResult()
             }
+            // An earlier encryption failure already dooms this execution to a retry. Running more
+            // actions would only repeat their side effects on that retry.
+            request.executionContext.encryptionFailure()?.let { throw it }
             // Re-read the current status (not the start-of-execution snapshot) before starting an
             // unchecked action, so a cancel written while this execution ran stops it here. A
             // compensation is exempt: it may run for a workflow that is CANCELLED.
@@ -179,9 +182,16 @@ open class ActionExecutor
             val isCompensable = actionInspector.hasCompensationMethod(request.actionMethodName)
             // If the action is compensable, we need to enforce a checkpointing and make sure that
             // the input is stored for compensation purposes.
+            var storedInput: Any? = null
             if (isCompensable) {
-                // Store input for compensation purposes only if action is compensable
-                actionCheckpointBuilder = actionCheckpointBuilder.input(request.getFirstArgOrNull())
+                // Store input for compensation purposes only if action is compensable. It is
+                // encrypted before the action runs, so an unavailable encryptor is found before the
+                // side effect happens rather than after it.
+                storedInput =
+                    recordingEncryptionFailure(request) {
+                        valueEncryption.encrypt(request.originalMethod, request.getFirstArgOrNull())
+                    }
+                actionCheckpointBuilder = actionCheckpointBuilder.input(storedInput)
                 // If checkpoint mode is DEFAULT, use the default checkpoint mode
                 if (checkpointMode == CheckpointMode.DEFAULT) {
                     checkpointMode = defaultCheckpointMode
@@ -201,6 +211,7 @@ open class ActionExecutor
             // Create final copies for lambda usage
             val finalCheckpointMode = checkpointMode
             val finalIsCompensable = isCompensable
+            val finalStoredInput = storedInput
             val timer =
                 metrics.timer(
                     ImmutableMap.of(
@@ -364,8 +375,7 @@ open class ActionExecutor
                                             .resultIsAsync(true)
                                     // Only store input for compensable actions
                                     if (finalIsCompensable) {
-                                        asyncCheckpointBuilder =
-                                            asyncCheckpointBuilder.input(request.getFirstArgOrNull())
+                                        asyncCheckpointBuilder = asyncCheckpointBuilder.input(finalStoredInput)
                                     }
                                     addCheckpoint(
                                         request.executionContext,
@@ -565,7 +575,8 @@ open class ActionExecutor
             }
             // Encrypted here, the one place both the sync and the async path pass through, so that
             // neither the dirty list nor the store ever holds the plaintext.
-            val checkpoint = valueEncryption.encrypt(plainCheckpoint, request.originalMethod)
+            val checkpoint =
+                recordingEncryptionFailure(request) { valueEncryption.encrypt(plainCheckpoint, request.originalMethod) }
             if (checkpointMode == CheckpointMode.IMMEDIATE_CHECKPOINT) {
                 try {
                     workflowStore.storeActionCheckpoints(
@@ -588,6 +599,21 @@ open class ActionExecutor
                 executionContext.addDirtyCheckpoint(checkpoint)
             }
         }
+
+        /**
+         * Runs [encryption], recording a failure on the execution context before rethrowing it, so
+         * that the execution is retried even if the workflow code catches the exception.
+         */
+        private fun <T> recordingEncryptionFailure(
+            request: ExecuteActionRequest,
+            encryption: () -> T,
+        ): T =
+            try {
+                encryption()
+            } catch (e: InternalError) {
+                request.executionContext.recordEncryptionFailure(e)
+                throw e
+            }
 
         class ExecuteActionRequest(
             val actionObject: Actions,

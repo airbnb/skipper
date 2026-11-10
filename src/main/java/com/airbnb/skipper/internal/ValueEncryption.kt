@@ -78,8 +78,21 @@ class ValueEncryption(
     }
 
     /**
+     * Encrypts [value] if [method] is annotated with [Encrypted], and returns it unchanged
+     * otherwise.
+     */
+    fun encrypt(
+        method: AnnotatedElement,
+        value: Any?,
+    ): Any? {
+        val annotation = method.getAnnotation(Encrypted::class.java) ?: return value
+        return encrypt(annotation.encryptor, value)
+    }
+
+    /**
      * Returns [checkpoint] with its successful result and its input encrypted, if [method] is
-     * annotated with [Encrypted]. Errors are never encrypted.
+     * annotated with [Encrypted]. Errors are never encrypted. An input that is already encrypted is
+     * kept as it is.
      */
     fun encrypt(
         checkpoint: ActionCheckpoint,
@@ -92,14 +105,17 @@ class ValueEncryption(
         )
     }
 
-    /** Returns [checkpoint] with its result and input decrypted. */
-    fun decrypt(checkpoint: ActionCheckpoint): ActionCheckpoint {
+    /**
+     * Returns [checkpoint] with its result decrypted, for replay. The input is left encrypted: only
+     * compensation reads it, and it decrypts the input itself, so replay pays for one decryption
+     * per checkpoint rather than two.
+     */
+    fun decryptResult(checkpoint: ActionCheckpoint): ActionCheckpoint {
         val result = checkpoint.result
-        val isResultEncrypted = result.isRight && result.get() is EncryptedValue
-        if (!isResultEncrypted && checkpoint.input !is EncryptedValue) {
+        if (!(result.isRight && result.get() is EncryptedValue)) {
             return checkpoint
         }
-        return checkpoint.withValues(result.map { decrypt(it) }, decrypt(checkpoint.input))
+        return checkpoint.withValues(result.map { decrypt(it) }, checkpoint.input)
     }
 
     private fun encryptorFor(name: String): Encryptor =

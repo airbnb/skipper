@@ -120,7 +120,26 @@ class ValueEncryptionTest {
         assertThat(stored.executionEndTime).isEqualTo(original.executionEndTime)
         assertThat(stored.isTransient).isEqualTo(original.isTransient)
         assertThat(stored.isResultIsAsync).isEqualTo(original.isResultIsAsync)
-        assertThat(encryption.decrypt(stored)).isEqualTo(original)
+        // Replay decrypts the result only; compensation decrypts the input when it needs it.
+        val replayed = encryption.decryptResult(stored)
+        assertThat(replayed.result).isEqualTo(original.result)
+        assertThat(replayed.input).isSameAs(stored.input)
+        assertThat(encryption.decrypt(stored.input)).isEqualTo("CUSTOMER-1")
+    }
+
+    @Test
+    fun encryptsAValueOnlyForAnAnnotatedMethod() {
+        assertThat(encryption.encrypt(method("encrypted"), "CUSTOMER-1")).isInstanceOf(EncryptedValue::class.java)
+        assertThat(encryption.encrypt(method("plain"), "CUSTOMER-1")).isEqualTo("CUSTOMER-1")
+    }
+
+    @Test
+    fun keepsAnInputThatIsAlreadyEncrypted() {
+        val input = encryption.encrypt(Encrypted.DEFAULT, "CUSTOMER-1")
+
+        val stored = encryption.encrypt(checkpoint(Either.right("ACCOUNT-1"), input), method("encrypted"))
+
+        assertThat(stored.input).isSameAs(input)
     }
 
     @Test
@@ -128,7 +147,7 @@ class ValueEncryptionTest {
         val original = checkpoint(Either.right("ACCOUNT-1"), input = "CUSTOMER-1")
 
         assertThat(encryption.encrypt(original, method("plain"))).isSameAs(original)
-        assertThat(encryption.decrypt(original)).isSameAs(original)
+        assertThat(encryption.decryptResult(original)).isSameAs(original)
     }
 
     @Test
@@ -140,9 +159,8 @@ class ValueEncryptionTest {
 
         assertThat(stored.result.left).isSameAs(error)
         assertThat(stored.input).isInstanceOf(EncryptedValue::class.java)
-        val reopened = encryption.decrypt(stored)
-        assertThat(reopened.result.left).isSameAs(error)
-        assertThat(reopened.input).isEqualTo("CUSTOMER-1")
+        assertThat(encryption.decryptResult(stored)).isSameAs(stored)
+        assertThat(encryption.decrypt(stored.input)).isEqualTo("CUSTOMER-1")
     }
 
     @Test
@@ -152,12 +170,13 @@ class ValueEncryptionTest {
         val stored = encryption.encrypt(original, method("encrypted"))
 
         assertThat(stored.input).isNull()
-        assertThat(encryption.decrypt(stored)).isEqualTo(original)
+        assertThat(encryption.decryptResult(stored)).isEqualTo(original)
     }
 
     @Test
-    fun theEnvelopeKeepsCiphertextOutOfItsString() {
+    fun theEnvelopeKeepsCiphertextOutOfItsStringAndPlaceholder() {
         assertThat(EncryptedValue("pii", "c2VjcmV0").toString()).isEqualTo("EncryptedValue(encryptor=pii)")
+        assertThat(EncryptedValue("pii", "c2VjcmV0").placeholder()).isEqualTo("[encrypted: pii]")
     }
 
     private fun method(name: String) = SampleActions::class.java.getDeclaredMethod(name, String::class.java)

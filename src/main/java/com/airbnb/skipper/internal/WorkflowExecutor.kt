@@ -153,6 +153,7 @@ open class WorkflowExecutor
                         }
                         return@supplyAsync resultFuture
                             .thenApply { result ->
+                                failIfEncryptionFailed(executionContext)
                                 metrics
                                     .counter(
                                         ImmutableMap.of(
@@ -300,6 +301,7 @@ open class WorkflowExecutor
                                 resultFuture = CompletableFuture.completedFuture(invokeResult)
                             }
                             return@supplyAsync resultFuture.thenApply { result ->
+                                failIfEncryptionFailed(executionContext)
                                 metrics
                                     .counter(
                                         ImmutableMap.of(
@@ -388,6 +390,9 @@ open class WorkflowExecutor
             failOnValidationError: Boolean,
             inspector: AtomicReference<WorkflowInspector>,
         ): ExecutionResult {
+            // Checked before looking at [e]: the workflow code may have caught the encryption
+            // failure, wrapped it (an ExecutionException from Future.get(), for one) or replaced it.
+            failIfEncryptionFailed(executionContext)
             val resultBuilder = ExecutionResult.builder()
             var cause = e
             if (e is CompletionException) {
@@ -601,6 +606,15 @@ open class WorkflowExecutor
                 )
                 .inc()
             throw e as RuntimeException
+        }
+
+        /**
+         * Fails the execution with the encryption failure recorded on [executionContext], if any.
+         * An [InternalError] is retried at the task level, so the workflow neither completes nor
+         * fails because of what its code did with the exception.
+         */
+        private fun failIfEncryptionFailed(executionContext: ExecutionContext) {
+            executionContext.encryptionFailure()?.let { throw it }
         }
 
         open fun getWorkflowInstance(

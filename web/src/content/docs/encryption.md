@@ -74,16 +74,37 @@ part into its own action or state field.
 that is not `@Execute`, or on a field that is not `@StateField`, fails validation when the workflow
 is created. No value is stored in that case.
 
-**Failures retry, never fail open.** If `encrypt` or `decrypt` throws, the execution is retried
-after `taskUnexpectedErrorRetryDelay`. That does not use the workflow's retry budget and never moves
-the workflow to `ERROR`. A value is never stored in plaintext as a fallback. If encryption fails
-right after an action ran, the action runs again on the retry, as it would after any failure to
-checkpoint.
+**Failures retry the execution, never fail open.** If `encrypt` or `decrypt` throws, the whole
+execution is retried after `taskUnexpectedErrorRetryDelay`, and a value is never stored in plaintext
+as a fallback. The retry happens whatever the workflow code does with the exception: catching it,
+reading an async action through `get()`, or turning it into a `NonRetryableError` does not let the
+workflow complete or fail as if the action had failed. Once encryption has failed, further actions
+in that execution are not started.
+
+What that means while an encryptor is down:
+
+- **Retries are capped.** They do not use the workflow's own retry budget, but they count against
+  `schedulerTaskMaxRetries` (100 by default). After that the task is dead-lettered and the workflow
+  stays where it is until the task is requeued, for example from the admin UI. It does not move to
+  `ERROR`, but it does not recover on its own either.
+- **An action whose result could not be encrypted runs again on each retry**, because its result was
+  never stored. Make such actions idempotent, as any action should be. For an action with a
+  `@Compensate` method, Skipper encrypts the input before invoking the action, so an encryptor that is
+  already down is found before the side effect happens.
 
 **Adding or removing the annotation is safe.** Decryption is driven by the stored value, not by
 the annotation. Values stored before you added `@Encrypted` keep loading as plaintext, and values
 stored encrypted keep decrypting after you remove it. The new setting applies to values written
 from then on.
+
+**Roll it out in two deploys.** `EncryptedValue` is part of the stored data, and Skipper versions
+without it cannot load a workflow that holds one. Upgrade Skipper on every host first, and add
+`@Encrypted` in a later deploy; otherwise a host still on the old version, or a rollback, fails on
+those workflows.
+
+**A custom serde must handle `EncryptedValue`.** The configured `serde` serializes the
+`EncryptedValue` itself, not only your types. The built-in serdes do; a serde that only knows your own
+types (Thrift-only, for example) fails on every encrypted value.
 
 **Names are part of the stored data.** Each encrypted value records its encryptor's name. Keep a
 name registered for as long as values encrypted under it may be read, and rotate keys inside the

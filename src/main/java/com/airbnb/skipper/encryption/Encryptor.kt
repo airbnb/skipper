@@ -18,8 +18,10 @@ package com.airbnb.skipper.encryption
  * 3. Both methods are thread-safe. Skipper calls them concurrently from its worker threads.
  *
  * A failure in either method should be thrown as an exception. Skipper treats it as a transient
- * failure of the current execution: the execution is retried later, the workflow is never failed
- * because of it, and nothing is persisted in plaintext.
+ * failure of the current execution: the execution is retried later, whatever the workflow code does
+ * with the exception, and nothing is persisted in plaintext. The retries count against
+ * `SkipperConfig.schedulerTaskMaxRetries`, and an action whose result could not be encrypted runs
+ * again on each of them.
  *
  * Register implementations by name in `SkipperConfig.encryptors`.
  */

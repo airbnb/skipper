@@ -94,22 +94,82 @@ class EncryptionEndToEndTest : WorkflowTest() {
     }
 
     @Test
-    fun anEncryptionFailureRetriesTheExecutionInsteadOfFailingTheWorkflow() {
-        encryptor.encryptFailuresLeft.set(1)
+    fun failingToEncryptAnActionResultRetriesTheExecution() {
+        encryptor.failEncrypting("ACCOUNT-")
 
-        startInBackground()
+        startInBackground<AccountWorkflow>()
 
         helper.expectWorkflowToWait()
         assertThat(encryptor.failures.get()).isEqualTo(1)
         // The action ran again on the retry, since its checkpoint was never stored.
         assertThat(bank.opened.get()).isEqualTo(2)
-        checkpointColumns().forEach { assertThat(it).doesNotContain(CUSTOMER, "ACCOUNT-", "BALANCE-") }
-        assertThat(stateColumn()).doesNotContain("TAXID-")
+        assertNothingStoredInPlaintext()
+    }
+
+    @Test
+    fun failingToEncryptAnAsyncResultReadWithGetRetriesTheExecution() {
+        // The workflow reads this action's future with get(), which wraps the failure in an
+        // ExecutionException instead of a CompletionException.
+        encryptor.failEncrypting("BALANCE-")
+
+        startInBackground<AccountWorkflow>()
+
+        helper.expectWorkflowToWait()
+        assertThat(encryptor.failures.get()).isEqualTo(1)
+        assertNothingStoredInPlaintext()
+    }
+
+    @Test
+    fun failingToEncryptAStateFieldRetriesTheExecution() {
+        encryptor.failEncrypting("TAXID-")
+
+        startInBackground<AccountWorkflow>()
+
+        helper.expectWorkflowToWait()
+        assertThat(encryptor.failures.get()).isEqualTo(1)
+        assertNothingStoredInPlaintext()
+    }
+
+    @Test
+    fun anUnavailableEncryptorIsFoundBeforeACompensableActionRuns() {
+        // The first value containing the customer is the compensable action's input, which is
+        // encrypted before the action is invoked.
+        encryptor.failEncrypting(CUSTOMER)
+
+        startInBackground<AccountWorkflow>()
+
+        helper.expectWorkflowToWait()
+        assertThat(encryptor.failures.get()).isEqualTo(1)
+        assertThat(bank.opened.get()).isEqualTo(1)
+    }
+
+    @Test
+    fun workflowCodeThatCatchesTheFailureDoesNotCompleteWithItsFallback() {
+        encryptor.failEncrypting("ACCOUNT-")
+
+        startInBackground<FallbackWorkflow>()
+
+        assertThat(helper.waitForWorkflowToComplete().status).isEqualTo(WorkflowInstanceStatusView.COMPLETED)
+        assertThat(workflow<FallbackWorkflow>().open(CUSTOMER).get()).isEqualTo("ACCOUNT-$CUSTOMER")
+        assertThat(bank.opened.get()).isEqualTo(2)
+    }
+
+    @Test
+    fun workflowCodeThatTurnsTheFailureIntoANonRetryableErrorIsStillRetried() {
+        encryptor.failEncrypting("ACCOUNT-")
+
+        startInBackground<RethrowingWorkflow>()
+
+        // Without the retry the workflow would end in ERROR with the account opened, no checkpoint
+        // and nothing to compensate.
+        assertThat(helper.waitForWorkflowToComplete().status).isEqualTo(WorkflowInstanceStatusView.COMPLETED)
+        assertThat(workflow<RethrowingWorkflow>().open(CUSTOMER).get()).isEqualTo("ACCOUNT-$CUSTOMER")
+        assertThat(checkpointColumns()).hasSize(1)
     }
 
     @Test
     fun aDecryptionFailureRetriesTheResumeInsteadOfFailingTheWorkflow() {
-        startInBackground()
+        startInBackground<AccountWorkflow>()
         helper.expectWorkflowToWait()
         encryptor.decryptFailuresLeft.set(2)
 
@@ -124,9 +184,14 @@ class EncryptionEndToEndTest : WorkflowTest() {
 
     // The first call to the workflow method blocks on the execution; run it off the test thread so
     // a failing first attempt cannot stall the test.
-    private fun startInBackground() {
-        val workflow = workflowBuilder<AccountWorkflow>().build()
+    private inline fun <reified T> startInBackground() where T : Workflow, T : OpensAnAccount {
+        val workflow = workflowBuilder<T>().build()
         CompletableFuture.runAsync { runCatching { workflow.open(CUSTOMER).get() } }
+    }
+
+    private fun assertNothingStoredInPlaintext() {
+        checkpointColumns().forEach { assertThat(it).doesNotContain(CUSTOMER, "ACCOUNT-", "BALANCE-") }
+        assertThat(stateColumn()).doesNotContain("TAXID-")
     }
 
     private fun checkpointColumns(): List<String> =
@@ -180,7 +245,50 @@ class EncryptionEndToEndTest : WorkflowTest() {
         fun balance(account: String): CompletableFuture<String> = CompletableFuture.completedFuture("BALANCE-$account")
     }
 
-    class AccountWorkflow : Workflow() {
+    /** The workflows below share one entry point so the tests can start any of them. */
+    interface OpensAnAccount {
+        fun open(customer: String): CompletableFuture<String>
+    }
+
+    /** Falls back to a default when opening the account fails. */
+    class FallbackWorkflow :
+        Workflow(),
+        OpensAnAccount {
+        private val accounts = actions<AccountActions>()
+
+        @WorkflowMethod(returnType = String::class)
+        override fun open(customer: String): CompletableFuture<String> {
+            val account =
+                try {
+                    accounts.openAccount(customer)
+                } catch (e: Exception) {
+                    "fallback"
+                }
+            return CompletableFuture.completedFuture(account)
+        }
+    }
+
+    /** Turns any failure to open the account into a terminal error. */
+    class RethrowingWorkflow :
+        Workflow(),
+        OpensAnAccount {
+        private val accounts = actions<AccountActions>()
+
+        @WorkflowMethod(returnType = String::class)
+        override fun open(customer: String): CompletableFuture<String> {
+            val account =
+                try {
+                    accounts.openAccount(customer)
+                } catch (e: Exception) {
+                    throw NonRetryableError("could not open the account")
+                }
+            return CompletableFuture.completedFuture(account)
+        }
+    }
+
+    class AccountWorkflow :
+        Workflow(),
+        OpensAnAccount {
         private val accounts = actions<AccountActions>()
 
         @StateField
@@ -194,7 +302,7 @@ class EncryptionEndToEndTest : WorkflowTest() {
         var approved: Boolean? = null
 
         @WorkflowMethod(returnType = String::class)
-        fun open(customer: String): CompletableFuture<String> {
+        override fun open(customer: String): CompletableFuture<String> {
             taxId = "TAXID-$customer"
             label = "LABEL-$customer"
             val account = accounts.openAccount(customer)
@@ -215,16 +323,30 @@ class EncryptionEndToEndTest : WorkflowTest() {
         fun currentTaxId(): String? = taxId
     }
 
-    /** Fails the next encryptions or decryptions it is told to, then delegates. */
+    /**
+     * Fails the first encryption of a value containing a given marker, or the next decryptions it
+     * is told to, then delegates.
+     */
     class FlakyEncryptor(
         private val delegate: Encryptor,
     ) : Encryptor {
-        val encryptFailuresLeft = AtomicInteger()
+        private val encryptFailuresLeft = AtomicInteger()
+
+        @Volatile
+        private var failingMarker: String? = null
         val decryptFailuresLeft = AtomicInteger()
         val failures = AtomicInteger()
 
+        fun failEncrypting(marker: String) {
+            failingMarker = marker
+            encryptFailuresLeft.set(1)
+        }
+
         override fun encrypt(plaintext: ByteArray): ByteArray {
-            failIfAsked(encryptFailuresLeft)
+            val marker = failingMarker
+            if (marker != null && String(plaintext, Charsets.UTF_8).contains(marker)) {
+                failIfAsked(encryptFailuresLeft)
+            }
             return delegate.encrypt(plaintext)
         }
 

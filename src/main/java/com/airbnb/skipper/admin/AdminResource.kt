@@ -1028,6 +1028,6 @@ internal class EncryptedValuePlaceholder : StdSerializer<EncryptedValue>(Encrypt
         gen: JsonGenerator,
         provider: SerializerProvider,
     ) {
-        gen.writeString("[encrypted: ${value.encryptor}]")
+        gen.writeString(value.placeholder())
     }
 }

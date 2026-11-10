@@ -11,6 +11,7 @@ import java.time.Clock
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /** ExecutionContext is a container for the state of a workflow execution. */
 // Lombok @Builder value type. Ported as a regular class (not a data class) to reproduce the
@@ -78,6 +79,22 @@ open class ExecutionContext(
     @get:JvmName("getShouldReloadWorkflowInstance") open val shouldReloadWorkflowInstance: AtomicBoolean,
 ) {
     open fun getExecutorService(): ExecutorService = executorService
+
+    // Kept out of the constructor, the builder and equals: it only lives for one execution.
+    private val encryptionFailure = AtomicReference<InternalError?>()
+
+    /**
+     * Records that encrypting a value of this execution failed. The executor then fails the whole
+     * execution with [error], so it is retried, whatever the workflow code did with the exception it
+     * was thrown: a workflow that catches it must not finish, or fail, as if the action had failed.
+     * Only the first failure is kept.
+     */
+    open fun recordEncryptionFailure(error: InternalError) {
+        encryptionFailure.compareAndSet(null, error)
+    }
+
+    /** The failure passed to [recordEncryptionFailure], if any. */
+    open fun encryptionFailure(): InternalError? = encryptionFailure.get()
 
     /**
      * Increments the number of times an action has been executed in the current workflow instance.
