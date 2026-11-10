@@ -4,6 +4,7 @@ import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.Knobs
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.internal.cluster.BucketPartitioner
+import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.cluster.SingleMemberClusterMembershipManager
 import com.airbnb.skipper.internal.scheduler.LeaseRenewalManager
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
@@ -20,10 +21,12 @@ import java.time.Duration
 import java.time.Instant
 import java.util.Optional
 import java.util.UUID
+import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.AfterEach
@@ -37,6 +40,7 @@ import org.mockito.kotlin.clearInvocations
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.spy
+import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -200,6 +204,45 @@ class SkipperSchedulerManagerConcurrencyTest {
         assertEquals(Int.MAX_VALUE, manager.freeSlots())
     }
 
+    @Test
+    fun testReleasesTheSlotWhenTheTaskCannotBeSubmitted() {
+        val rejecting = RejectingExecutor()
+        manager = createManager(idleScheduler(), CompletingHandler(), knobs, mainExecutor = rejecting).also { it.start() }
+        // The loops are running; from now on every task submission is rejected.
+        rejecting.reject = true
+
+        schedulerQueue.add(readyTask())
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (schedulerQueue.admittedCount > 0 && System.nanoTime() < deadline) {
+            Thread.sleep(20)
+        }
+        assertEquals(0, schedulerQueue.admittedCount, "a rejected task must not keep its slot")
+        rejecting.shutdownNow()
+    }
+
+    @Test
+    fun testEveryPartitioningFallbackFetchesTheRequestedSize() {
+        // Each way partitioning falls back to the whole queue must still ask for the size the
+        // fetch loop computed from the free slots, not the configured fetch size.
+        val cluster = mock<ClusterMembershipManager>()
+        whenever(cluster.isRegistered).thenReturn(true)
+        whenever(cluster.currentMemberId).thenReturn("me")
+        val mockScheduler = idleScheduler()
+        val manager = createManager(mockScheduler, CompletingHandler(), knobs, cluster = cluster)
+
+        // 1. No live members yet.
+        whenever(cluster.activeMemberIds).thenReturn(List.empty())
+        manager.fetchTasksWithOptionalPartitioning(3)
+        // 2. Live members, but not this one.
+        whenever(cluster.activeMemberIds).thenReturn(List.of("other"))
+        manager.fetchTasksWithOptionalPartitioning(3)
+        // 3. Reading the members fails.
+        whenever(cluster.activeMemberIds).thenThrow(IllegalStateException("membership read failed"))
+        manager.fetchTasksWithOptionalPartitioning(3)
+
+        verify(mockScheduler, times(3)).fetch<Any>(3)
+    }
+
     private fun scheduleReadyTask() {
         val id = UUID.randomUUID().toString()
         scheduler.schedule(
@@ -233,11 +276,13 @@ class SkipperSchedulerManagerConcurrencyTest {
         knobs: Knobs,
         maxConcurrentTasks: Int = SkipperSchedulerManager.NO_LIMIT,
         queue: SchedulerExecutionQueue = schedulerQueue,
+        cluster: ClusterMembershipManager = SingleMemberClusterMembershipManager(),
+        mainExecutor: ExecutorService = executor,
     ): SkipperSchedulerManager =
         SkipperSchedulerManager(
             queue,
             scheduler,
-            executor,
+            mainExecutor,
             taskHandlerExecutor,
             HashMap.of(Task.Type.WORKFLOW, handler),
             metrics,
@@ -246,7 +291,7 @@ class SkipperSchedulerManagerConcurrencyTest {
             leaseManager,
             featureGate,
             knobs,
-            SingleMemberClusterMembershipManager(),
+            cluster,
             BucketPartitioner(),
             Duration.ofSeconds(5),
             inactiveCancelWatcher(),
@@ -295,6 +340,32 @@ class SkipperSchedulerManagerConcurrencyTest {
             }
             return true
         }
+    }
+
+    /** Runs everything on a cached pool until [reject] is set, then rejects every submission. */
+    private class RejectingExecutor : AbstractExecutorService() {
+        @Volatile var reject = false
+        private val delegate = Executors.newCachedThreadPool()
+
+        override fun execute(command: Runnable) {
+            if (reject) {
+                throw RejectedExecutionException("rejecting for the test")
+            }
+            delegate.execute(command)
+        }
+
+        override fun shutdown() = delegate.shutdown()
+
+        override fun shutdownNow(): MutableList<Runnable> = delegate.shutdownNow()
+
+        override fun isShutdown(): Boolean = delegate.isShutdown
+
+        override fun isTerminated(): Boolean = delegate.isTerminated
+
+        override fun awaitTermination(
+            timeout: Long,
+            unit: TimeUnit,
+        ): Boolean = delegate.awaitTermination(timeout, unit)
     }
 
     private class CompletingHandler : TaskHandler {

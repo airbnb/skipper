@@ -262,7 +262,8 @@ class SkipperSchedulerManager
          * Fetch tasks from the scheduler, using partitioning if enabled and cluster membership is
          * available.
          */
-        private fun fetchTasksWithOptionalPartitioning(fetchSize: Int): List<Task<Any>> {
+        @VisibleForTesting
+        internal fun fetchTasksWithOptionalPartitioning(fetchSize: Int): List<Task<Any>> {
             val partitioningEnabled =
                 featureGate.isEnabled(FeatureGate.Keys.TASK_PARTITIONING) &&
                     clusterMembershipManager.isRegistered
