@@ -45,5 +45,11 @@ interface Knobs {
          * set to -1, then a dynamic value will be computed at runtime.
          */
         SCHEDULER_FETCH_COUNT("scheduler_fetch_count"),
+
+        /**
+         * Overrides `SkipperConfig.schedulerMaxConcurrentTasks`: the most tasks one process runs at
+         * once. Zero or less means no limit.
+         */
+        SCHEDULER_MAX_CONCURRENT_TASKS("scheduler_max_concurrent_tasks"),
     }
 }

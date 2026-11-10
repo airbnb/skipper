@@ -8,6 +8,7 @@ import io.vavr.control.Option
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.locks.ReentrantLock
 import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Singleton
@@ -19,6 +20,11 @@ import org.slf4j.LoggerFactory
  * This queue enables tasks to be executed immediately without going through the persistence layer,
  * which is very useful for short-lived tasks that might contain Futures that the caller is waiting
  * on.
+ *
+ * It also counts the tasks this process has taken on: a task is admitted when it is added to a
+ * queue and stays admitted until [markFinished] is called for it, so the count covers tasks waiting
+ * here and tasks being executed. The scheduler manager uses [admittedCount] to decide how many more
+ * tasks it can fetch.
  */
 @Singleton
 open class SchedulerExecutionQueue
@@ -35,6 +41,11 @@ open class SchedulerExecutionQueue
         val leaseDuration: Duration,
     ) {
         private val queues: MutableMap<Task.Type, UniqueBlockingQueue<Task<*>>> = HashMap()
+
+        // Guarded by admissionLock, so a waiter in awaitAdmittedBelow cannot miss a markFinished.
+        private var admitted = 0
+        private val admissionLock = ReentrantLock()
+        private val taskFinished = admissionLock.newCondition()
 
         init {
             for (type in Task.Type.values()) {
@@ -146,7 +157,67 @@ open class SchedulerExecutionQueue
         /** The persisted task with [taskId], if any. Every scheduled task is persisted, in-memory ones too. */
         open fun <T> getTask(taskId: String): Option<Task<T>> = persistentScheduler.getTask(taskId)
 
-        open fun add(task: Task<*>): Boolean = getQueue(task.type).add(task, task.id)
+        /** Adds [task] to its queue and admits it, unless a task with the same id is already queued. */
+        open fun add(task: Task<*>): Boolean {
+            admissionLock.lock()
+            try {
+                val added = getQueue(task.type).add(task, task.id)
+                if (added) {
+                    admitted++
+                }
+                return added
+            } finally {
+                admissionLock.unlock()
+            }
+        }
+
+        /** Releases the admission of a task taken from this queue, once it has finished executing. */
+        open fun markFinished() {
+            admissionLock.lock()
+            try {
+                check(admitted > 0) { "markFinished called with no admitted task" }
+                admitted--
+                taskFinished.signalAll()
+            } finally {
+                admissionLock.unlock()
+            }
+        }
+
+        /** Tasks added and not yet finished: those waiting in a queue plus those being executed. */
+        open val admittedCount: Int
+            get() {
+                admissionLock.lock()
+                try {
+                    return admitted
+                } finally {
+                    admissionLock.unlock()
+                }
+            }
+
+        /**
+         * Waits until fewer than [limit] tasks are admitted, or [timeout] passes.
+         *
+         * @return whether the count is below [limit] on return
+         */
+        @Throws(InterruptedException::class)
+        open fun awaitAdmittedBelow(
+            limit: Int,
+            timeout: Duration,
+        ): Boolean {
+            admissionLock.lock()
+            try {
+                var remaining = timeout.toNanos()
+                while (admitted >= limit) {
+                    if (remaining <= 0) {
+                        return false
+                    }
+                    remaining = taskFinished.awaitNanos(remaining)
+                }
+                return true
+            } finally {
+                admissionLock.unlock()
+            }
+        }
 
         open fun <T> take(type: Task.Type): Task<T> {
             @Suppress("UNCHECKED_CAST")

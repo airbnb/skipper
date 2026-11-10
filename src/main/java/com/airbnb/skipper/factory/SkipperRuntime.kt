@@ -401,6 +401,7 @@ class SkipperRuntime
                 BucketPartitioner(),
                 config.gracefulShutdownTimeout,
                 inFlightCancelWatcher.get(),
+                config.schedulerMaxConcurrentTasks,
             )
         }
     }

@@ -5,6 +5,7 @@ import com.airbnb.skipper.Knobs
 import com.airbnb.skipper.Metrics
 import com.airbnb.skipper.OptimisticLockingError
 import com.airbnb.skipper.SkipperAnnotationNames.GRACEFUL_SHUTDOWN_TIMEOUT
+import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_MAX_CONCURRENT_TASKS
 import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_TASK_EXECUTION_TIMEOUT
 import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_TASK_HANDLER_POOL
 import com.airbnb.skipper.SkipperAnnotationNames.SCHEDULER_TASK_MAX_RETRIES
@@ -31,6 +32,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -71,6 +73,11 @@ class SkipperSchedulerManager
         private val partitioner: BucketPartitioner,
         @param:Named(GRACEFUL_SHUTDOWN_TIMEOUT) private val gracefulShutdownTimeout: Duration,
         private val cancelWatcher: InFlightCancelWatcher,
+        /**
+         * The most tasks this process runs at once; zero or less means no limit. The
+         * `scheduler_max_concurrent_tasks` knob overrides it at runtime. See [freeSlots].
+         */
+        @param:Named(SCHEDULER_MAX_CONCURRENT_TASKS) private val maxConcurrentTasks: Int = NO_LIMIT,
     ) {
         private val stop = AtomicBoolean(false)
 
@@ -112,12 +119,18 @@ class SkipperSchedulerManager
                     log.debug("pulled task from queue: {}", task.id)
                     metrics.counter(METRICS_COMPONENT, "takenTasks").inc()
                     val taskFuture: Future<*> =
-                        executor.submit {
-                            try {
-                                handleTask(task)
-                            } finally {
-                                leaseManager.removeTaskInFlight(task.id)
+                        try {
+                            executor.submit {
+                                try {
+                                    handleTask(task)
+                                } finally {
+                                    leaseManager.removeTaskInFlight(task.id)
+                                    schedulerQueue.markFinished()
+                                }
                             }
+                        } catch (e: RejectedExecutionException) {
+                            schedulerQueue.markFinished()
+                            throw e
                         }
                     if (featureGate.isEnabled(FeatureGate.Keys.AUTOMATIC_LEASE_RENEWAL)) {
                         leaseManager.addTaskInFlight(
@@ -159,7 +172,16 @@ class SkipperSchedulerManager
                 log.info("starting skipper scheduler manager.startFetchingTasks")
                 while (!stop.get() && !Thread.currentThread().isInterrupted) {
                     try {
-                        val tasks = fetchTasksWithOptionalPartitioning()
+                        val free = freeSlots()
+                        if (free <= 0) {
+                            // Full: fetching now would lease tasks this process cannot start. Wait for
+                            // a running task to finish instead; the timeout re-reads the limit knob.
+                            metrics.counter(METRICS_COMPONENT, "fetchSkippedAtCapacity").inc()
+                            schedulerQueue.awaitAdmittedBelow(effectiveMaxConcurrentTasks(), CAPACITY_WAIT)
+                            continue
+                        }
+                        val requested = Math.min(getMaxTasks(), free)
+                        val tasks = fetchTasksWithOptionalPartitioning(requested)
                         log.debug("fetched {} tasks from scheduler", tasks.size())
                         metrics.counter(METRICS_COMPONENT, "fetchedTasks").inc()
                         tasks.forEach { task ->
@@ -172,12 +194,11 @@ class SkipperSchedulerManager
                                 )
                             }
                         }
-                        if (tasks.size() < DEFAULT_MAX_FETCH_SIZE) {
-                            // A one-second sleep if good enough because persistent scheduler is not a
-                            // blocker for the
-                            // workflow execution and only used for retries and async workflow (with
-                            // waits), so no
-                            // need to slam the db with requests more frequently.
+                        if (tasks.isEmpty || tasks.size() < requested) {
+                            // A short fetch means nothing more is ready right now, so wait a second
+                            // before asking again rather than slam the db. A full fetch means more may
+                            // be ready, so fetch again straight away; freeSlots() is what stops that
+                            // once this process is busy.
                             Thread.sleep(1000)
                         }
                     } catch (e: Exception) {
@@ -201,6 +222,31 @@ class SkipperSchedulerManager
             }
         }
 
+        /** The concurrency limit in force: the knob if set, else the configured value. */
+        @VisibleForTesting
+        fun effectiveMaxConcurrentTasks(): Int = knobs.getInteger(Knobs.Keys.SCHEDULER_MAX_CONCURRENT_TASKS).orElse(maxConcurrentTasks)
+
+        /**
+         * How many more tasks this process can take on, counting both tasks fetched from the
+         * scheduler and tasks scheduled for in-memory execution.
+         *
+         * 1. With no limit set, there is always room.
+         * 2. With a limit, it is the limit minus the tasks admitted to the in-memory queue and not yet
+         *    finished, which can go below zero.
+         *
+         * Only fetching is held back. In-memory executions are always admitted, because their callers
+         * may be waiting on the result in this process; they still count, so a burst of them pauses
+         * fetching until the process has room again.
+         */
+        @VisibleForTesting
+        fun freeSlots(): Int {
+            val limit = effectiveMaxConcurrentTasks()
+            if (limit <= NO_LIMIT) {
+                return Int.MAX_VALUE
+            }
+            return limit - schedulerQueue.admittedCount
+        }
+
         @VisibleForTesting
         fun getMaxTasks(): Int {
             val fetchSize =
@@ -215,13 +261,13 @@ class SkipperSchedulerManager
          * Fetch tasks from the scheduler, using partitioning if enabled and cluster membership is
          * available.
          */
-        private fun fetchTasksWithOptionalPartitioning(): List<Task<Any>> {
+        private fun fetchTasksWithOptionalPartitioning(fetchSize: Int): List<Task<Any>> {
             val partitioningEnabled =
                 featureGate.isEnabled(FeatureGate.Keys.TASK_PARTITIONING) &&
                     clusterMembershipManager.isRegistered
             if (!partitioningEnabled) {
                 // Fall back to regular fetch if partitioning is disabled
-                return scheduler.fetch(getMaxTasks())
+                return scheduler.fetch(fetchSize)
             }
             try {
                 val currentMember = clusterMembershipManager.currentMemberId
@@ -229,14 +275,14 @@ class SkipperSchedulerManager
                     clusterMembershipManager.activeMemberIds
                 if (activeMembers.isEmpty) {
                     log.debug("No active members found, falling back to regular fetch")
-                    return scheduler.fetch(getMaxTasks())
+                    return scheduler.fetch(fetchSize)
                 }
                 if (!activeMembers.contains(currentMember)) {
                     // Our own heartbeat has not landed (or has aged out while others' succeed): we cannot
                     // compute a partition, so fetch from the whole queue like the empty-list case rather
                     // than surface it as an error on every fetch.
                     log.debug("Current member {} not in active members, falling back to regular fetch", currentMember)
-                    return scheduler.fetch(getMaxTasks())
+                    return scheduler.fetch(fetchSize)
                 }
                 // Calculate this member's bucket partition
                 val partition = partitioner.getBucketRangeForMember(currentMember, activeMembers)
@@ -246,7 +292,7 @@ class SkipperSchedulerManager
                     partition,
                     activeMembers.size(),
                 )
-                val tasks = scheduler.fetch<Any>(getMaxTasks(), partition)
+                val tasks = scheduler.fetch<Any>(fetchSize, partition)
                 metrics
                     .counter(ImmutableMap.of("partitioned", "true"), METRICS_COMPONENT, "fetchedTasks")
                     .inc()
@@ -260,7 +306,7 @@ class SkipperSchedulerManager
                         "fetchErrors",
                     )
                     .inc()
-                return scheduler.fetch(getMaxTasks())
+                return scheduler.fetch(fetchSize)
             }
         }
 
@@ -295,6 +341,12 @@ class SkipperSchedulerManager
                 "failedTasksCount",
             )
             metrics.gauge({ getMaxTasks().toLong() }, METRICS_COMPONENT, "maxTasks")
+            metrics.gauge({ schedulerQueue.admittedCount.toLong() }, METRICS_COMPONENT, "admittedTasks")
+            metrics.gauge(
+                { Math.max(NO_LIMIT, effectiveMaxConcurrentTasks()).toLong() },
+                METRICS_COMPONENT,
+                "maxConcurrentTasks",
+            )
             schedulerQueue
                 .queueSizes
                 .forEach { type, size ->
@@ -652,6 +704,12 @@ class SkipperSchedulerManager
             private const val DEFAULT_MAX_FETCH_SIZE = 5
             private const val DYNAMIC_FETCH_SIZE_MARKER = -1
             private const val MAX_DYNAMIC_FETCH_SIZE = 20
+
+            /** A [maxConcurrentTasks] of this or less means no limit. */
+            const val NO_LIMIT = 0
+
+            /** How long the fetch loop waits for a free slot before checking the limit again. */
+            private val CAPACITY_WAIT: Duration = Duration.ofSeconds(1)
 
             /** Attempts [finishTask] makes before leaving a contended row to lease expiry. */
             private const val MAX_FINISH_ATTEMPTS = 3

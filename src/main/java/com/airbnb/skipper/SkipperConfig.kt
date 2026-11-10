@@ -88,6 +88,14 @@ class SkipperConfig(
      * It is counted in whole seconds.
      */
     var schedulerTaskExecutionTimeout: Duration = Duration.ofMinutes(5),
+    /**
+     * The most tasks (workflow runs, timers, compensations) this process runs at once; zero, the
+     * default, means no limit. Once it is reached the scheduler stops fetching until a task
+     * finishes, so a backlog drains at the rate the process and its dependencies can sustain
+     * instead of all at once. Workflows started in this process still run in memory past the limit,
+     * but they count against it. The `scheduler_max_concurrent_tasks` knob overrides it at runtime.
+     */
+    var schedulerMaxConcurrentTasks: Int = 0,
     /** The maximum number of times a task can be retried before it is considered failed. */
     var schedulerTaskMaxRetries: Int = 100,
     /** The time to wait before retrying a task that failed unexpectedly. */
