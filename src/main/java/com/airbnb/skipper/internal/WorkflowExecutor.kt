@@ -129,7 +129,7 @@ open class WorkflowExecutor
                             workflowInstance.workflowId,
                         )
                     workflow.executionContext = executionContext
-                    inspector.set(WorkflowInspector(workflow))
+                    inspector.set(WorkflowInspector(workflow, internalDeps.valueEncryption))
                     inspector.get().validate()
                     inspector.get().setState(workflowInstance.state)
                     val workflowMethod =
@@ -286,7 +286,7 @@ open class WorkflowExecutor
                         workflow.executionContext = executionContext
                         middleware.rawBeforeExecution(invocation)
                         try {
-                            inspector.set(WorkflowInspector(workflow))
+                            inspector.set(WorkflowInspector(workflow, internalDeps.valueEncryption))
                             inspector.get().validate()
                             inspector.get().setState(workflowInstance.state)
                             val signalMethod =
@@ -362,7 +362,7 @@ open class WorkflowExecutor
         ): Any? {
             try {
                 val workflow = getWorkflowInstance(workflowClass, workflowId)
-                val inspector = WorkflowInspector(workflow)
+                val inspector = WorkflowInspector(workflow, internalDeps.valueEncryption)
                 inspector.validate()
                 inspector.setState(state)
                 val queryMethod = inspector.getQueryMethod(queryMethodName)
@@ -441,16 +441,18 @@ open class WorkflowExecutor
                         "workflowExecutions",
                     )
                     .inc()
+                // Read once: getState() encrypts @Encrypted fields, so each call costs an encryption.
+                val newState = inspector.get().getState()
                 log.debug(
                     "workflow execution exhausted retries and is waiting for manual retry. workflowId={}," +
                         " newState={}, prevState={}",
                     workflowInstance.workflowId,
-                    inspector.get().getState(),
+                    newState,
                     workflowInstance.state,
                 )
                 return resultBuilder
                     .newStatus(WorkflowInstance.Status.RETRIES_EXHAUSTED)
-                    .newState(inspector.get().getState())
+                    .newState(newState)
                     .result(Either.left(cause))
                     .build()
             }
@@ -479,18 +481,20 @@ open class WorkflowExecutor
                     )
                     .inc()
                 val waitDuration = cause.waitDuration
+                // Read once: getState() encrypts @Encrypted fields, so each call costs an encryption.
+                val newState = inspector.get().getState()
                 log.debug(
                     "workflow execution is waiting on a conditional wait. workflowId={}, waitDuration={}," +
                         " newState={}, prevState={}",
                     workflowInstance.workflowId,
                     waitDuration,
-                    inspector.get().getState(),
+                    newState,
                     workflowInstance.state,
                 )
                 return resultBuilder
                     .waitDuration(waitDuration)
                     .newStatus(WorkflowInstance.Status.WAITING)
-                    .newState(inspector.get().getState())
+                    .newState(newState)
                     .build()
             }
             if (cause is SkipperError) {

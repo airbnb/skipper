@@ -144,3 +144,5 @@ Java class needs them written out (or Lombok's `@Value`/`@Data`). Java records a
 supported, because the bundled Jackson predates record support. Serialization is kept
 backwards compatible so that data written by an older version can still be read after an
 upgrade. See **[Troubleshooting](/docs/troubleshooting/)** if you hit a serialization error.
+To keep sensitive values encrypted in the store, see
+**[Encrypting Sensitive Data](/docs/encryption/)**.

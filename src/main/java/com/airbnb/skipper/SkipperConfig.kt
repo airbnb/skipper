@@ -1,5 +1,6 @@
 package com.airbnb.skipper
 
+import com.airbnb.skipper.encryption.Encryptor
 import com.airbnb.skipper.internal.DefaultExceptionClassifier
 import com.airbnb.skipper.internal.ExceptionClassifier
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
@@ -238,6 +239,17 @@ class SkipperConfig(
             }
             field = value
         }
+
+    /**
+     * The encryptors available to [com.airbnb.skipper.encryption.Encrypted] action methods and
+     * state fields, keyed by the name the annotation refers to. The annotation's default name is
+     * [com.airbnb.skipper.encryption.Encrypted.DEFAULT].
+     *
+     * Empty by default. A workflow or action that uses `@Encrypted` with a name missing from this
+     * map fails validation when it is registered. Each name is stored with the values it
+     * encrypted, so keep a name registered for as long as values encrypted under it may be read.
+     */
+    var encryptors: Map<String, Encryptor> = emptyMap()
 
     private val devModeSuffix: String by lazy { UUID.randomUUID().toString() }
 

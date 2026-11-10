@@ -26,6 +26,7 @@ See [Quickstart](/docs/quickstart/) and [Storage Backends](/docs/storage/).
 | `defaultRetryStrategy` | Default retry strategy for actions that don't specify one. |
 | `defaultCheckpointMode` | When action checkpoints are flushed (eventual vs immediate). |
 | `exceptionClassifier` | Global `ExceptionClassifier` factory. |
+| `encryptors` | Map of name to `Encryptor` used by `@Encrypted` actions and state fields (empty by default). See [Encrypting Sensitive Data](/docs/encryption/). |
 | `metrics` | `Metrics` implementation factory (no-op by default). |
 | `tenant` | Namespace key for this service's workflows, tasks, and cluster rows (default `"default"`). |
 | `shouldIsolateTenant` | Predicate `(rawTenant) -> Boolean`; return `true` to append a stable per-config suffix to `tenant`, isolating deployments that share one store. |

@@ -41,10 +41,9 @@ import javax.inject.Named
 // `open` so this non-final (Java-baseline) class stays Mockito-mockable — skipper's own
 // InjectorTest mocks it. ABI-faithful (matches the non-final baseline); no behavior change.
 open class ActionExecutor
-    @Inject
     constructor(
         private val workflowStore: WorkflowStore,
-        @param:Named(DEFAULT_CHECKPOINT_MODE) private val defaultCheckpointMode: CheckpointMode,
+        private val defaultCheckpointMode: CheckpointMode,
         private val metrics: Metrics,
         private val errorMapper: ActionErrorMapper,
         private val eventPublisher: EventPublisher,
@@ -53,7 +52,38 @@ open class ActionExecutor
         private val contextPropagator: ContextPropagator,
         private val featureGate: FeatureGate?,
         private val inFlightActions: InFlightActions,
+        /** Encrypts the checkpoints of [com.airbnb.skipper.encryption.Encrypted] actions. */
+        private val valueEncryption: ValueEncryption,
     ) {
+        // Keeps the injectable signature the class had before encryption, for hosts that construct
+        // or subclass it. Such an executor encrypts nothing and refuses to checkpoint an @Encrypted
+        // action, so a value never reaches the store in plaintext.
+        @Inject
+        constructor(
+            workflowStore: WorkflowStore,
+            @Named(DEFAULT_CHECKPOINT_MODE) defaultCheckpointMode: CheckpointMode,
+            metrics: Metrics,
+            errorMapper: ActionErrorMapper,
+            eventPublisher: EventPublisher,
+            executionMetricsCollector: ExecutionMetricsCollector,
+            tracer: Tracer,
+            contextPropagator: ContextPropagator,
+            featureGate: FeatureGate?,
+            inFlightActions: InFlightActions,
+        ) : this(
+            workflowStore,
+            defaultCheckpointMode,
+            metrics,
+            errorMapper,
+            eventPublisher,
+            executionMetricsCollector,
+            tracer,
+            contextPropagator,
+            featureGate,
+            inFlightActions,
+            ValueEncryption.UNCONFIGURED,
+        )
+
         /**
          * Executes an action method.
          *
@@ -98,7 +128,7 @@ open class ActionExecutor
                         request.actionMethodName,
                     )
                 }
-                return checkpoint.get().generateResult()
+                return valueEncryption.decrypt(checkpoint.get()).generateResult()
             }
             // Re-read the current status (not the start-of-execution snapshot) before starting an
             // unchecked action, so a cancel written while this execution ran stops it here. A
@@ -525,7 +555,7 @@ open class ActionExecutor
 
         private fun addCheckpoint(
             executionContext: ExecutionContext,
-            checkpoint: ActionCheckpoint,
+            plainCheckpoint: ActionCheckpoint,
             actionCheckpointMode: CheckpointMode,
             request: ExecuteActionRequest,
         ) {
@@ -533,6 +563,9 @@ open class ActionExecutor
             if (actionCheckpointMode != CheckpointMode.DEFAULT) {
                 checkpointMode = actionCheckpointMode
             }
+            // Encrypted here, the one place both the sync and the async path pass through, so that
+            // neither the dirty list nor the store ever holds the plaintext.
+            val checkpoint = valueEncryption.encrypt(plainCheckpoint, request.originalMethod)
             if (checkpointMode == CheckpointMode.IMMEDIATE_CHECKPOINT) {
                 try {
                     workflowStore.storeActionCheckpoints(
