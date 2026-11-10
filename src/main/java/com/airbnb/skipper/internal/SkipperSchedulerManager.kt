@@ -174,10 +174,11 @@ class SkipperSchedulerManager
                     try {
                         val free = freeSlots()
                         if (free <= 0) {
-                            // Full: fetching now would lease tasks this process cannot start. Wait for
-                            // a running task to finish instead; the timeout re-reads the limit knob.
+                            // Full: fetching now would lease tasks this process cannot start. Check
+                            // again shortly. Polling rather than waking on every finished task lets
+                            // several slots free up, so they are fetched as one batch.
                             metrics.counter(METRICS_COMPONENT, "fetchSkippedAtCapacity").inc()
-                            schedulerQueue.awaitAdmittedBelow(effectiveMaxConcurrentTasks(), CAPACITY_WAIT)
+                            Thread.sleep(CAPACITY_POLL_INTERVAL.toMillis())
                             continue
                         }
                         val requested = Math.min(getMaxTasks(), free)
@@ -708,8 +709,8 @@ class SkipperSchedulerManager
             /** A [maxConcurrentTasks] of this or less means no limit. */
             const val NO_LIMIT = 0
 
-            /** How long the fetch loop waits for a free slot before checking the limit again. */
-            private val CAPACITY_WAIT: Duration = Duration.ofSeconds(1)
+            /** How long the fetch loop sleeps while this process is full before checking again. */
+            private val CAPACITY_POLL_INTERVAL: Duration = Duration.ofMillis(100)
 
             /** Attempts [finishTask] makes before leaving a contended row to lease expiry. */
             private const val MAX_FINISH_ATTEMPTS = 3

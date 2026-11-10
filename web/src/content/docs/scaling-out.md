@@ -133,7 +133,8 @@ config.schedulerMaxConcurrentTasks = 200
 ```
 
 The instance then asks only for as many tasks as it has room for, and stops fetching while it is
-full. A backlog drains at about `instances × schedulerMaxConcurrentTasks ÷ task duration` tasks
+full. While full it checks again every 100 ms, so slots that free up in the meantime are fetched
+together in one batch. A backlog drains at about `instances × schedulerMaxConcurrentTasks ÷ task duration` tasks
 per second. The `scheduler_max_concurrent_tasks` knob changes the limit at runtime.
 
 Workflows started in the process run in memory without waiting for a slot, because the caller may
@@ -143,7 +144,7 @@ be waiting on the result. They count against the limit, so a burst of them pause
 |---|---|
 | `schedulerManager.admittedTasks` | Gauge of the tasks this instance has taken on and not finished. |
 | `schedulerManager.maxConcurrentTasks` | Gauge of the limit in force; 0 means none. |
-| `schedulerManager.fetchSkippedAtCapacity` | A fetch was skipped because the instance was full. |
+| `schedulerManager.fetchSkippedAtCapacity` | Counts the fetch loop's checks while the instance is full. The loop checks every 100 ms, so its rate is about 10 per second times the share of time the instance spends full: a measure of time at capacity, not of skipped work. |
 
 ## Operational notes
 

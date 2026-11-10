@@ -4,8 +4,6 @@ import com.airbnb.skipper.testutils.TestRuntime
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -61,25 +59,6 @@ class SchedulerExecutionQueueAdmissionTest {
     @Test
     fun testMarkFinishedWithNothingAdmittedFails() {
         assertThrows(IllegalStateException::class.java) { queue.markFinished() }
-    }
-
-    @Test
-    fun testAwaitReturnsOnceATaskFinishes() {
-        queue.add(task("a"))
-        queue.add(task("b"))
-        assertFalse(queue.awaitAdmittedBelow(2, Duration.ofMillis(50)))
-
-        val waiter = CompletableFuture.supplyAsync { queue.awaitAdmittedBelow(2, Duration.ofSeconds(10)) }
-        Thread.sleep(100)
-        assertFalse(waiter.isDone)
-        queue.markFinished()
-        assertTrue(waiter.get(5, TimeUnit.SECONDS))
-    }
-
-    @Test
-    fun testAwaitReturnsAtOnceWhenBelowTheLimit() {
-        queue.add(task("a"))
-        assertTrue(queue.awaitAdmittedBelow(2, Duration.ZERO))
     }
 
     private fun task(id: String): Task<Any> =

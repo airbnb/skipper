@@ -36,6 +36,7 @@ import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.clearInvocations
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
+import org.mockito.kotlin.spy
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -127,6 +128,27 @@ class SkipperSchedulerManagerConcurrencyTest {
     }
 
     @Test
+    fun testSlotsFreedWhileFullAreFetchedAsOneBatch() {
+        // The admitted count is set by the test, so it can drop from full to empty in one step and
+        // the next poll is guaranteed to see every freed slot at once.
+        val admitted = AtomicInteger(3)
+        val queue = spy(schedulerQueue)
+        whenever(queue.admittedCount).thenAnswer { admitted.get() }
+        val mockScheduler = idleScheduler()
+        manager = createManager(mockScheduler, CompletingHandler(), knobs, maxConcurrentTasks = 3, queue = queue)
+            .also { it.start() }
+
+        Thread.sleep(500)
+        verify(mockScheduler, never()).fetch<Any>(any<Int>())
+
+        admitted.set(0)
+        Thread.sleep(500)
+        verify(mockScheduler).fetch<Any>(3)
+        verify(mockScheduler, never()).fetch<Any>(1)
+        verify(mockScheduler, never()).fetch<Any>(2)
+    }
+
+    @Test
     fun testFetchesAgainStraightAwayAfterAFullFetchBelowTheDefaultSize() {
         // Before, the loop slept after any fetch smaller than 5, even a full one of a smaller size.
         val mockKnobs = mock<Knobs>()
@@ -210,9 +232,10 @@ class SkipperSchedulerManagerConcurrencyTest {
         handler: TaskHandler,
         knobs: Knobs,
         maxConcurrentTasks: Int = SkipperSchedulerManager.NO_LIMIT,
+        queue: SchedulerExecutionQueue = schedulerQueue,
     ): SkipperSchedulerManager =
         SkipperSchedulerManager(
-            schedulerQueue,
+            queue,
             scheduler,
             executor,
             taskHandlerExecutor,
