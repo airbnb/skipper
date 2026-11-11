@@ -1,3 +1,12 @@
+# TLA+ models
+
+Two models of the engine, checked with TLC by the same script:
+
+- **Workflow liveness** (`SkipperWorkflowLiveness.tla`, below): one workflow instance through the
+  store.
+- **Scheduler** (`SkipperScheduler.tla`, [further down](#scheduler-model)): many opaque tasks over
+  several scheduler instances, each with a concurrency limit, with or without task partitioning.
+
 # Workflow liveness model
 
 `SkipperWorkflowLiveness.tla` is a TLA+ model of how the engine drives a workflow instance through
@@ -57,7 +66,8 @@ in-memory copy waits in its queue, for as long as a lease. Without it, an in-mem
 its lease and run next to the backstop row's delivery, which `inmem_start` already records.
 
 Not modelled yet: compensation, execution timeouts, cancellation, child workflows, persisted-signal
-replay, task partitioning, several workflows sharing workers.
+replay. Task partitioning and several tasks sharing instances are in the
+[scheduler model](#scheduler-model).
 
 | Action | Code |
 |---|---|
@@ -80,9 +90,11 @@ TLA2TOOLS=/path/to/tla2tools.jar formal/tla/check.sh baseline   # one model
 ```
 
 Get `tla2tools.jar` from the [TLA+ releases](https://github.com/tlaplus/tlaplus/releases). CI
-pins v1.7.4. The script needs Java 11 or later, and the full run takes about a minute.
+pins v1.7.4. The script needs Java 11 or later, and the full run takes a little over a minute.
 
-For each model, the script prints a verdict and compares it with the model's `\* expect:` line.
+A config names the module it checks on a `\* spec:` line (the `sched_*` configs check
+`SkipperScheduler`); without one it checks `SkipperWorkflowLiveness`. For each model, the script
+prints a verdict and compares it with the model's `\* expect:` line.
 The verdict is one of:
 - `ok`
 - the name of the violated invariant or property
@@ -185,3 +197,130 @@ The findings behind these results:
    - The signal persists `RUNNING`, then schedules the workflow task in a separate call
      (`SkipperEngine.kt:485` / `:492`, then `:507`).
    - If that call fails, the workflow is `RUNNING` with no task. Only the wait timer rescues it.
+
+# Scheduler model
+
+`SkipperScheduler.tla` models the scheduler as a component: N opaque tasks, M instances that each
+keep a count of the tasks they have admitted and (optionally) a concurrency limit, one shared table
+of task rows, and (optionally) task partitioning over the live cluster members. It is separate from
+the workflow model because the questions are different: here a task has no workflow state, and what
+matters is which instance holds which task, what each instance's count says, and who may fetch what.
+
+## The properties
+
+1. **The count is the work** (`AdmittedMatchesWork`, `IdleMeansZero`). An instance's admitted count
+   equals its tasks queued, plus its runs not yet done, plus its handlers still pending. It is never
+   negative (`TypeOK`), and an instance with nothing to do reports zero.
+2. **Fetched work stays within the limit** (`FetchedWithinLimit`). The tasks an instance fetched
+   never exceed its limit, however stale the free-slot count its fetch acted on. The count as a
+   whole may pass the limit, because in-memory executions are never refused;
+   `sched_inmem_over_limit` asks for `AdmittedWithinLimit` and records the violation.
+3. **No fetched task waits behind a full instance** (`NoFetchedWaitsWhileFull`). A fetched task is
+   never leased and waiting to start while the instance is already executing as many tasks as its
+   limit, unless in-memory work is taking up room.
+4. **Every due task eventually runs** (`DueEventuallyRuns`), on some instance, across crashes and
+   membership changes. Since every fault is bounded, every task is also eventually finished
+   (`EveryTaskCompletes`), and with partitioning the member list settles with every bucket owned by
+   a live instance in that instance's own view (`BucketsEventuallyOwned`).
+
+Liveness assumes weak fairness for the steps that happen on their own: live instances keep
+fetching, taking, running and reporting; handlers that are not hung complete; the wait on a hung
+handler times out; unheld leases run out; dead members age out, and live ones heartbeat and re-read
+the member list. Faults, in-memory schedules, cancels and restarts may or may not happen.
+
+## What is modelled
+
+| Action | Code |
+|---|---|
+| `FetchRead` | `SkipperSchedulerManager.startFetchingTasks`: `freeSlots()` and `min(getMaxTasks(), free)` |
+| `FetchDeliver` | `fetchTasksWithOptionalPartitioning`, `SqliteScheduler.fetch` / `MySqlScheduler.fetch` (plain and partitioned), then `SchedulerExecutionQueue.add` for each task, which refuses an id already queued |
+| `Owns`, `RangeStart`, `RangeSize` | `BucketPartitioner.getBucketRangeForMember`, and the fall back to the whole table when the gate is off or the instance is missing from the member list it read |
+| `InMemAdd` | `SchedulerExecutionQueue.schedule`: the leased backstop row and the in-memory copy |
+| `Take` | `SkipperSchedulerManager.startTakingTasks`: `take`, `executor.execute(run)`, `addTaskInFlight` |
+| `RunStart`, `Report` | `AdmittedRun` running `handleTask`: `handler.handle`, then `holdSlotUntil(handled)` |
+| `HandlerDone` | the handler's future completing: `finishTask` when the run still waits on it, and `AdmittedRun.done` / `SchedulerExecutionQueue.markFinished` |
+| `Timeout` | `handled.get(taskExecutionTimeout)` giving up in `handleTask` |
+| `Hang` | a handler whose future never completes |
+| `Cancel` | `LeaseRenewalManager.attemptToRenewOneTask` failing and calling `taskFuture.cancel(true)`, then `AdmittedRun.done` |
+| `Lapse` | a row's `run_after` passing: the lease is gone and the row can be fetched again |
+| `Crash`, `Join` | the process dying and starting; `JdbcClusterMembershipManager.start` (first heartbeat, then the member list) |
+| `MemberExpire`, `MemberLapse`, `Heartbeat`, `RefreshView` | `JdbcClusterMembershipManager`: `LIVENESS_THRESHOLD` on `last_heartbeat_at`, the heartbeat loop, and the cached `getActiveMemberIds` |
+
+The fetch is two steps on purpose. The loop reads its free slots, then fetches, so in-memory
+schedules and finishing tasks can land in between; property 2 has to hold anyway.
+
+Left out, on purpose:
+
+- Everything the workflow model covers: versions and the final versioned write (here a task is
+  finished if its row still carries the lease the run holds), signals, timers, retries and
+  `markAsFailed`.
+- `FutureTask` internals. That a slot is given back exactly once is covered by `AdmittedRunTest`.
+- Timing: the 100 ms poll while full and the 1 s pause after a short fetch only decide when the
+  next fetch happens.
+- A graceful stop. It reaches the same states as a crash followed by the member row ageing out.
+- A renewal that wins back a lapsed lease nobody else took. It returns to a state already covered.
+- The executor's size, a limit changed at runtime through the knob, and the SQLite candidate page
+  (a partitioned fetch can return fewer tasks than are due).
+- An unbounded stream of in-memory work. In-memory schedules are finite here; a process that
+  keeps itself over its limit with in-memory work never fetches, which is by design.
+
+## Results (airbnb/skipper#58's concurrency limit)
+
+Every model has two instances, two buckets and a limit of 1 unless it says otherwise.
+
+| Model | Scenario | Result |
+|---|---|---|
+| `sched_baseline` | limit 2, fetch size 3, three due tasks, no faults | ok |
+| `sched_no_limit` | as above with no limit | ok |
+| `sched_inmem` | one task enters in memory on either instance, two are due | ok |
+| `sched_inmem_over_limit` | as above, asking that the whole count stay within the limit | `AdmittedWithinLimit` violated (calibration: in-memory work is never refused) |
+| `sched_faults` | limit 2; two faults among crash, handler timeout and lease lapse; the renewer cancels runs whose lease moved | ok |
+| `sched_partitioned` | partitioning on; two faults among crash and a live member's heartbeat ageing out | ok |
+| `sched_cancel_unreported` | the renewer cancels a run between its start and the moment it reports its handler | **`AdmittedMatchesWork` violated** (finding 1) |
+| `sched_hang` | one instance, one handler that never completes | **a due task never runs** (the documented trade-off) |
+| `sched_hang_spare` | two instances, no partitioning, one hung handler | ok: the other instance runs what the full one cannot |
+| `sched_hang_every_attempt` | as above, one task whose handler hangs on every attempt | **a due task never runs** (finding 3) |
+| `sched_hang_partitioned` | as `sched_hang_spare` with partitioning on | **a due task never runs**, next to an idle instance (finding 2) |
+
+The models are not vacuous: each fault path is reached in the model that enables it, and breaking
+the spec on purpose is caught. Fetching the fetch size regardless of free slots breaks
+`FetchedWithinLimit`. Giving the slot back on a timeout, on a cancel while the handler runs, or not
+at all on a crash, and counting a task the queue refused, each break `AdmittedMatchesWork`. Dead
+members that never age out break liveness in `sched_partitioned`.
+
+The findings:
+
+1. **A run cancelled before it reports its handler gives its slot back while the handler runs on.**
+   - `AdmittedRun.done` holds the slot for the handler only if the run has reported the handler's
+     future (`holdSlotUntil`). The run reports it after `handler.handle` returns, and
+     `WorkflowExecutionTaskHandler.handle` reads the workflow from the store before it returns.
+   - If the lease renewer cancels the run in that window (`LeaseRenewalManager`, when another
+     worker has re-leased the row), `done` sees no future and gives the slot back at once. The
+     interrupt does not stop `handle`, which goes on to start the workflow on the handler pool.
+   - From then until that handler finishes, the instance runs one task more than its count says,
+     so a fetch can take it one over its limit.
+   - Confirmed in the engine: with a handler that blocks inside `handle` and a run the renewer
+     cancels, `admittedCount` is 0 while the handler's future is still pending.
+     `AdmittedRunTest.testRunCancelledBeforeItReachesTheHandlerGivesTheSlotBackOnce` pins the same
+     behaviour down as the release happening once.
+   - Narrow in practice: the cancel has to land within one store read of the run starting, on a
+     task whose lease was already lost.
+
+2. **With partitioning, a full instance's buckets wait even when another instance is idle.**
+   - An instance at its limit stops fetching, but keeps heartbeating, so it stays in the member
+     list and keeps its bucket range. A partitioned fetch never reads outside its own range.
+   - So tasks in that range wait for a slot on that instance. If its slots are held by handlers
+     that never complete, they wait for good, while the other members have room.
+   - Without partitioning, any instance with room runs them (`sched_hang_spare`).
+   - Confirmed in the engine: two scheduler managers over one store, each with a limit of 1 and
+     half the buckets. The first one's handler never completes. Its other due tasks did not run in
+     8 s, while the second manager finished its own tasks and sat idle.
+   - The same mechanism without a hang is only a delay: a busy member's tasks queue behind it
+     instead of spilling to an idle one.
+
+3. **One task whose handler always hangs takes one more slot each time it is rerun.**
+   - After the execution timeout the run ends, the handler keeps its slot, and nothing renews the
+     lease. When the lease lapses the task is fetched again, by any instance with room, and its
+     new handler takes another slot.
+   - This repeats until the task has used `schedulerTaskMaxRetries` deliveries (100 by default),
+     which is more than most limits. Read from the code and the model; not reproduced in a test.
