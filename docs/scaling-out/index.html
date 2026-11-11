@@ -128,6 +128,50 @@ fetching from the whole queue. The same data is available as JSON from <code>GET
 
 
 <table><thead><tr><th>Metric</th><th>Meaning</th></tr></thead><tbody><tr><td><code>schedulerManager.fetchedTasks{partitioned=true}</code></td><td>A partitioned fetch ran. If this stays at zero while <code>schedulerManager.fetchedTasks</code> grows, partitioning is not active.</td></tr><tr><td><code>schedulerManager.fetchErrors{error=partitioning_fallback}</code></td><td>A partitioned fetch failed and the instance fell back to the whole queue for that round.</td></tr><tr><td><code>schedulerManager.clusterMemberStartRange</code> / <code>clusterMemberEndRange</code></td><td>Gauges of this member’s current <code>[start, end)</code> range, tagged with <code>memberId</code> and <code>clusterName</code>. Both read 0 while the member is absent from the live list.</td></tr><tr><td><code>jdbcClusterMembershipManager.heartbeat</code> / <code>getActiveMembers</code></td><td>Timers for the heartbeat write and the membership read.</td></tr><tr><td><code>sqliteScheduler.leaseLockContention</code></td><td>SQLite only: a lease attempt skipped because another instance held the table lock. Expected to be low and non-zero under load.</td></tr></tbody></table>
+<h2 id="limiting-concurrency">Limiting concurrency</h2>
+<p>The scheduler fetches ready tasks in batches of <code>scheduler_fetch_count</code> (default 5). It waits a
+second after a fetch that comes back with fewer than 5 tasks, and otherwise fetches again straight
+away. Each fetched task starts on its own thread, so on its own nothing stops an
+instance from taking on a large backlog all at once. Partitioning makes this more likely: once
+instances stop colliding, every fetch comes back full until the backlog is gone.</p>
+<p>Set <code>schedulerMaxConcurrentTasks</code> to the number of tasks one instance can run at once without
+overloading itself or the services its workflows call:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="kotlin"><code><span class="line"><span style="color:#E1E4E8">config.schedulerMaxConcurrentTasks </span><span style="color:#F97583">=</span><span style="color:#79B8FF"> 200</span></span></code></pre>
+<p>The instance then asks only for as many tasks as it has room for, and stops fetching while it is
+full. While full it checks again every 100 ms, so slots that free up in the meantime are fetched
+together in one batch. With fewer than 5 free slots, a fetch that fills them all is not followed by
+the one-second wait. Keep <code>scheduler_fetch_count</code> at 5 or more when you set a limit: a smaller
+fetch size still waits a second after every fetch, as it does with no limit. A backlog drains at about <code>instances × schedulerMaxConcurrentTasks ÷ task duration</code> tasks
+per second. The <code>scheduler_max_concurrent_tasks</code> knob changes the limit at runtime.</p>
+<p>Workflows started in the process run in memory without waiting for a slot, because the caller may
+be waiting on the result. They count against the limit, so a burst of them pauses fetching.</p>
+<p>A task keeps its slot until its handler finishes, even after the scheduler stops waiting for it at
+<code>schedulerTaskExecutionTimeout</code>. So when a slow dependency makes runs time out, the instance stops
+taking on more work rather than piling new runs on top of the ones still running. A run that never
+finishes keeps its slot for as long as the process lives; <code>admittedTasks</code> staying above zero while
+the instance is idle is the sign of one.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Metric</th><th>Meaning</th></tr></thead><tbody><tr><td><code>schedulerManager.admittedTasks</code></td><td>Gauge of the tasks this instance has taken on and not finished.</td></tr><tr><td><code>schedulerManager.maxConcurrentTasks</code></td><td>Gauge of the limit in force; 0 means none.</td></tr><tr><td><code>schedulerManager.fetchSkippedAtCapacity</code></td><td>Counts the fetch loop’s checks while the instance is full. The loop checks every 100 ms, so its rate is about 10 per second times the share of time the instance spends full: a measure of time at capacity, not of skipped work.</td></tr></tbody></table>
 <h2 id="operational-notes">Operational notes</h2>
 <ul>
 <li><strong>Rolling deploys.</strong> Because a graceful stop removes the member row, a rolling restart hands
