@@ -1,6 +1,6 @@
 package com.airbnb.skipper.internal.scheduler
 
-import com.airbnb.skipper.internal.SkipperSchedulerManager
+import com.airbnb.skipper.factory.SkipperRuntime
 import com.airbnb.skipper.testutils.TestRuntime
 import io.vavr.control.Option
 import java.time.Clock
@@ -20,7 +20,6 @@ class SchedulerInstrumentationTest {
             object : SchedulerInstrumentation {
                 var queue: SchedulerExecutionQueue? = null
                 val handlers = ArrayList<TaskHandler>()
-                val managers = ArrayList<SkipperSchedulerManager>()
 
                 override fun executionQueue(
                     scheduler: Scheduler,
@@ -29,18 +28,14 @@ class SchedulerInstrumentationTest {
                 ): SchedulerExecutionQueue = SchedulerExecutionQueue(scheduler, clock, leaseDuration).also { queue = it }
 
                 override fun taskHandler(handler: TaskHandler): TaskHandler = handler.also { handlers.add(it) }
-
-                override fun schedulerManager(manager: SkipperSchedulerManager): SkipperSchedulerManager = manager.also { managers.add(it) }
             }
-        val deps = TestRuntime()
-        deps.config.schedulerInstrumentation = observing
-        val runtime = deps.runtime
+        val config = TestRuntime().config
+        val runtime = SkipperRuntime(config, config.injector, observing)
 
-        val manager = runtime.skipperSchedulerManager.get()
+        runtime.skipperSchedulerManager.get()
 
         assertSame(observing.queue, runtime.schedulerExecutionQueue.get())
         assertEquals(Task.Type.values().size, observing.handlers.size, "one handler per task type")
-        assertEquals(listOf(manager), observing.managers)
     }
 
     @Test
@@ -59,7 +54,5 @@ class SchedulerInstrumentationTest {
         assertEquals(SchedulerExecutionQueue::class.java, queue.javaClass)
         assertEquals(Duration.ofMinutes(8), queue.leaseDuration)
         assertSame(handler, SchedulerInstrumentation.None.taskHandler(handler))
-        val manager = TestRuntime().schedulerManager
-        assertSame(manager, SchedulerInstrumentation.None.schedulerManager(manager))
     }
 }

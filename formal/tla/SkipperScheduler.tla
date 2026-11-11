@@ -177,12 +177,16 @@ Deliver(i, t) ==
 Schedulable(t) == t \in InMemTasks /\ row[t].st = "none"
 
 (* SchedulerExecutionQueue.schedule: a caller in this process schedules a task for     *)
-(* immediate execution. It writes the row as leased and queues a copy. Never refused.  *)
+(* immediate execution. It writes the row as leased and queues a copy. The limit never *)
+(* refuses it. The queue does if it already holds the id: schedule checks for that     *)
+(* before it writes the row, but another schedule of the same task can get in between. *)
 InMemAdd(i, t) ==
     /\ alive[i] /\ Schedulable(t)
     /\ row' = [row EXCEPT ![t] = [st |-> "leased", gen |-> @.gen + 1]]
-    /\ jobs' = [jobs EXCEPT ![i] = @ \cup {Job(t, row[t].gen + 1, "inmem")}]
-    /\ admitted' = [admitted EXCEPT ![i] = @ + 1]
+    /\ IF QueuedHere(i, t)
+       THEN UNCHANGED <<jobs, admitted>>
+       ELSE /\ jobs' = [jobs EXCEPT ![i] = @ \cup {Job(t, row[t].gen + 1, "inmem")}]
+            /\ admitted' = [admitted EXCEPT ![i] = @ + 1]
     /\ UNCHANGED <<alive, members, view, snap, pending, faults, hangs>>
 
 -----------------------------------------------------------------------------------------
@@ -432,7 +436,11 @@ FetchedWithinLimit ==
 AdmittedWithinLimit == Limit > 0 => \A i \in Instances : admitted[i] <= Limit
 
 (* Property 3. A fetched task does not sit leased, waiting to start, behind a full     *)
-(* instance, unless in-memory work is taking up room.                                  *)
+(* instance, unless in-memory work is taking up room. In this model it follows from    *)
+(* property 2: nothing but the count stands between a queued task and its run, so with *)
+(* no in-memory work a waiting fetched task and a full instance add up to more fetched *)
+(* work than the limit. It is stated because it is what the limit is for, and it would *)
+(* stop following if the model gained a bound on runs, such as the executor's size.    *)
 NoFetchedWaitsWhileFull ==
     Limit > 0 =>
         \A i \in Instances :

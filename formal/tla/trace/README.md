@@ -164,20 +164,25 @@ move the way the model says, and does the fetch loop ask for what its free slots
 
 1. **Recording.** With `-PskipperTraceDir=<dir>`, the test harness also gives each runtime a
    `SchedulerTraceRecorder`, which writes `sched-<uuid>.ndjson`.
-   - The runtime builds its in-memory queue and its task handlers through
-     `SkipperConfig.schedulerInstrumentation`. That is the one seam in the engine, and it only
-     decides what gets built. The recorder builds a `TracingExecutionQueue`, a subclass that
+   - The runtime builds its in-memory queue and its task handlers through a
+     `SchedulerInstrumentation`, an optional argument of `SkipperRuntime`'s constructor. That is the
+     one seam in the engine. It only decides what gets built, it is not on `SkipperConfig`, and it
+     is not a supported extension point. The recorder builds a `TracingExecutionQueue`, a subclass that
      records each `add`, `take` and `markFinished`, and wraps each handler in a
      `TracingTaskHandler`, which records the call, the future coming back, and the future
      completing. A wrapper around the store records each fetch the fetch loop makes.
    - Each line carries the queue's admitted count after the step. Every step that changes the
      count runs under one lock together with its line, so the file order is the order the steps
      happened and each count is exact.
-   - A fetch line also carries the limit and fetch size in force, read from the scheduler manager.
+   - A fetch line also carries the limit and fetch size in force, read from the config and the
+     knobs as the scheduler manager reads them.
    - A handler's completion is recorded before the scheduler sees it: the scheduler is handed a
      future derived from the handler's, which completes right after the line is written.
    - Nothing is written until the runtime builds its own scheduler manager. A test that drives a
      manager of its own, with handlers the recorder never sees, leaves no file.
+   - A fetch is recognised by its caller, `SkipperSchedulerManager`. If the fetch loop's call moved
+     elsewhere, fetches would go unrecorded, fetched tasks would appear from nowhere, and those runs
+     would be rejected.
 2. **Conversion.** `sched_trace_to_tla.py` turns each file into one model.
 
    | Line | Model action |
@@ -190,8 +195,10 @@ move the way the model says, and does the fetch loop ask for what its free slots
    | `done` | `HandlerDone` |
    | `release` | `SlotBack`, `Cancel` or `RunAborts`: whichever task could give a slot back |
 
-   The model's limit and fetch size come from the fetch lines. A run in which they changed is
-   skipped, because they are constants of the model.
+   The model's limit and fetch size come from the fetch lines. A run in which they changed, or
+   whose fetches are sized from the backlog, is skipped, because they are constants of the model.
+   Nothing else is skipped, and `check_traces.sh` fails when there are no scheduler files or when
+   no scheduler run is accepted.
 3. **Checking.** [`SkipperSchedulerTrace.tla`](SkipperSchedulerTrace.tla) replays the events
    against `SkipperScheduler` with one instance.
    - A step consumes the next event, taking its action and landing on its admitted count. The

@@ -217,7 +217,10 @@ matters is which instance holds which task, what each instance's count says, and
    `sched_inmem_over_limit` asks for `AdmittedWithinLimit` and records the violation.
 3. **No fetched task waits behind a full instance** (`NoFetchedWaitsWhileFull`). A fetched task is
    never leased and waiting to start while the instance is already executing as many tasks as its
-   limit, unless in-memory work is taking up room.
+   limit, unless in-memory work is taking up room. In this model it is a corollary of property 2,
+   not an independent check: nothing but the count stands between a queued task and its run. It
+   would become one if the model bounded runs some other way, such as by the executor's size,
+   which is left out.
 4. **Every due task eventually runs** (`DueEventuallyRuns`), on some instance, across crashes and
    membership changes. Since every fault is bounded, every task is also eventually finished
    (`EveryTaskCompletes`), and with partitioning the member list settles with every bucket owned by

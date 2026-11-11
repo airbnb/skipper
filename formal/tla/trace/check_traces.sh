@@ -15,7 +15,7 @@
 #   skipped    the run uses an engine feature the model does not cover yet
 #   INCONCLUSIVE  TLC did not decide within $TRACE_BUDGET seconds (default 300)
 #
-# Exits 1 when any run is rejected. An inconclusive one does not fail the run but is listed
+# Exits 1 when any run is rejected, and when no workflow run or no scheduler run is accepted. An inconclusive one does not fail the run but is listed
 # (and flagged as a warning on GitHub Actions): a rejection needs TLC to exhaust every
 # interleaving, so a slow trace may be hiding one. With --self-test it then corrupts every accepted trace in a
 # few ways (mutants.py) and exits 1 unless the checker rejects all of them, which guards against a
@@ -45,9 +45,11 @@ if [ "${#traces[@]}" -eq 0 ]; then
 fi
 python3 "$here/trace_to_tla.py" "${traces[@]}" --out "$out_dir/models" >"$out_dir/workflows.jsonl"
 sched_traces=("$trace_dir"/sched-*.ndjson)
-if [ "${#sched_traces[@]}" -gt 0 ]; then
-  python3 "$here/sched_trace_to_tla.py" "${sched_traces[@]}" --out "$out_dir/models" >>"$out_dir/workflows.jsonl"
+if [ "${#sched_traces[@]}" -eq 0 ]; then
+  echo "no sched-*.ndjson files in $trace_dir" >&2
+  exit 1
 fi
+python3 "$here/sched_trace_to_tla.py" "${sched_traces[@]}" --out "$out_dir/models" >>"$out_dir/workflows.jsonl"
 
 # TLC runs one model per JVM; a single worker keeps each run's PrintT output in order, and a private
 # java.io.tmpdir keeps parallel runs from clobbering the standard modules TLC unpacks there.
@@ -76,6 +78,8 @@ if [ -s "$out_dir/rejected.txt" ]; then
 fi
 status=0
 python3 "$here/report.py" "$out_dir/workflows.jsonl" || status=1
+# All green with nothing checked is not green: the recorder or the converter has stopped seeing runs.
+python3 "$here/report.py" "$out_dir/workflows.jsonl" --require-accepted || status=1
 
 if $self_test; then
   python3 "$here/mutants.py" "$out_dir/workflows.jsonl" --out "$out_dir/mutants" >"$out_dir/mutants.jsonl"
