@@ -153,8 +153,9 @@ class SkipperSchedulerManagerConcurrencyTest {
     }
 
     @Test
-    fun testFetchesAgainStraightAwayAfterAFullFetchBelowTheDefaultSize() {
-        // Before, the loop slept after any fetch smaller than 5, even a full one of a smaller size.
+    fun testWithNoLimitAFetchBelowTheDefaultSizeStillPauses() {
+        // With no limit the pause rule is unchanged: any fetch that returns fewer than 5 tasks is
+        // followed by a pause, even a full one of a smaller fetch size.
         val mockKnobs = mock<Knobs>()
         whenever(mockKnobs.getInteger(Knobs.Keys.SCHEDULER_FETCH_COUNT)).thenReturn(Optional.of(2))
         val fetches = AtomicInteger()
@@ -165,8 +166,24 @@ class SkipperSchedulerManagerConcurrencyTest {
         }
         manager = createManager(mockScheduler, CompletingHandler(), mockKnobs).also { it.start() }
 
+        Thread.sleep(1_500)
+        assertTrue(fetches.get() <= 2, "a fetch below 5 should be followed by a pause, saw ${fetches.get()}")
+    }
+
+    @Test
+    fun testFetchesAgainWithoutTheLongPauseAfterFillingTheFreeSlots() {
+        // Two free slots and a fetch that fills both: the loop must not wait a second, or a limit
+        // below 5 would cap throughput at one batch a second.
+        val fetches = AtomicInteger()
+        val mockScheduler = idleScheduler()
+        whenever(mockScheduler.fetch<Any>(2)).thenAnswer {
+            fetches.incrementAndGet()
+            List.of(readyTask(), readyTask())
+        }
+        manager = createManager(mockScheduler, CompletingHandler(), knobs, maxConcurrentTasks = 2).also { it.start() }
+
         Thread.sleep(900)
-        assertTrue(fetches.get() >= 3, "expected back-to-back full fetches, saw ${fetches.get()}")
+        assertTrue(fetches.get() >= 3, "expected fetches without a one-second pause, saw ${fetches.get()}")
     }
 
     @Test
@@ -199,6 +216,24 @@ class SkipperSchedulerManagerConcurrencyTest {
 
         Thread.sleep(1_500)
         assertTrue(fetches.get() <= 2, "a short fetch should be followed by a pause, saw ${fetches.get()}")
+    }
+
+    @Test
+    fun testSleepsAfterAnEmptyFetchWhenTheFetchSizeIsZero() {
+        // A fetch size of zero asks for nothing and gets nothing. That must still pause, or the loop
+        // queries the scheduler as fast as it can.
+        val mockKnobs = mock<Knobs>()
+        whenever(mockKnobs.getInteger(Knobs.Keys.SCHEDULER_FETCH_COUNT)).thenReturn(Optional.of(0))
+        val fetches = AtomicInteger()
+        val mockScheduler = idleScheduler()
+        whenever(mockScheduler.fetch<Any>(0)).thenAnswer {
+            fetches.incrementAndGet()
+            List.empty<Task<Any>>()
+        }
+        manager = createManager(mockScheduler, CompletingHandler(), mockKnobs).also { it.start() }
+
+        Thread.sleep(1_500)
+        assertTrue(fetches.get() <= 2, "an empty fetch should be followed by a pause, saw ${fetches.get()}")
     }
 
     @Test

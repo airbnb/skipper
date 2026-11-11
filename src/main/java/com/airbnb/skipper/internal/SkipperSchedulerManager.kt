@@ -14,7 +14,6 @@ import com.airbnb.skipper.internal.cluster.BucketPartitioner
 import com.airbnb.skipper.internal.cluster.BucketRange
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.common.SneakyThrow
-import com.airbnb.skipper.internal.scheduler.Admission
 import com.airbnb.skipper.internal.scheduler.AdmittedRun
 import com.airbnb.skipper.internal.scheduler.LeaseRenewalManager
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
@@ -121,11 +120,10 @@ class SkipperSchedulerManager
                 try {
                     val task: Task<Any> = schedulerQueue.take(type)
                     // From here the task holds a slot, and the run gives it back when it is done.
-                    val admission = Admission(schedulerQueue)
                     val run =
-                        AdmittedRun(admission) {
+                        AdmittedRun(schedulerQueue) { holdSlotUntil ->
                             try {
-                                handleTask(task, admission::holdUntil)
+                                handleTask(task, holdSlotUntil)
                             } finally {
                                 leaseManager.removeTaskInFlight(task.id)
                             }
@@ -203,15 +201,14 @@ class SkipperSchedulerManager
                                 )
                             }
                         }
-                        if (tasks.size() < Math.min(requested, DEFAULT_MAX_FETCH_SIZE)) {
+                        if (tasks.size() < Math.min(free, DEFAULT_MAX_FETCH_SIZE)) {
                             // Few tasks came back, so little is ready: wait a second before asking
-                            // again rather than slam the db. Otherwise fetch again straight away, and
-                            // let freeSlots() stop that once this process is busy.
-                            // 1. A fetch of 5 or more pauses below 5 tasks, as it always has. It does
-                            //    not pause on any short fetch: rows lost to another instance's lease,
-                            //    or filtered out by partitioning, can make it short with more ready.
-                            // 2. A smaller fetch, from a small fetch size or from few free slots,
-                            //    pauses only when it comes back short. A full one fetches again.
+                            // again rather than slam the db.
+                            // 1. With 5 or more free slots, which is always the case with no limit,
+                            //    a fetch that returns fewer than 5 tasks pauses, as it always has.
+                            // 2. With fewer free slots, a fetch that fills them all is followed
+                            //    straight away, and freeSlots() then holds the loop until one frees.
+                            //    One that comes back short pauses.
                             Thread.sleep(1000)
                         }
                     } catch (e: Exception) {

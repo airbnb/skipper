@@ -120,8 +120,8 @@ fetching from the whole queue. The same data is available as JSON from `GET /ski
 ## Limiting concurrency
 
 The scheduler fetches ready tasks in batches of `scheduler_fetch_count` (default 5). It waits a
-second after a fetch that comes back with fewer than 5 tasks, or fewer than it asked for when it
-asked for fewer than 5, and otherwise fetches again straight away. Each fetched task starts on its own thread, so on its own nothing stops an
+second after a fetch that comes back with fewer than 5 tasks, and otherwise fetches again straight
+away. Each fetched task starts on its own thread, so on its own nothing stops an
 instance from taking on a large backlog all at once. Partitioning makes this more likely: once
 instances stop colliding, every fetch comes back full until the backlog is gone.
 
@@ -134,7 +134,9 @@ config.schedulerMaxConcurrentTasks = 200
 
 The instance then asks only for as many tasks as it has room for, and stops fetching while it is
 full. While full it checks again every 100 ms, so slots that free up in the meantime are fetched
-together in one batch. A backlog drains at about `instances × schedulerMaxConcurrentTasks ÷ task duration` tasks
+together in one batch. With fewer than 5 free slots, a fetch that fills them all is not followed by
+the one-second wait. Keep `scheduler_fetch_count` at 5 or more when you set a limit: a smaller
+fetch size still waits a second after every fetch, as it does with no limit. A backlog drains at about `instances × schedulerMaxConcurrentTasks ÷ task duration` tasks
 per second. The `scheduler_max_concurrent_tasks` knob changes the limit at runtime.
 
 Workflows started in the process run in memory without waiting for a slot, because the caller may

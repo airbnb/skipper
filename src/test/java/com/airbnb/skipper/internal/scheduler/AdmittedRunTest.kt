@@ -14,8 +14,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 
-/** An [Admission] goes back to its queue exactly once, however its run ends. */
-class AdmissionTest {
+/** An [AdmittedRun] gives its slot back to the queue exactly once, however it ends. */
+class AdmittedRunTest {
     private lateinit var queue: SchedulerExecutionQueue
 
     @BeforeEach
@@ -25,7 +25,8 @@ class AdmissionTest {
 
     @Test
     fun testFinishedRunGivesTheSlotBack() {
-        val run = AdmittedRun(admit()) {}
+        admit()
+        val run = AdmittedRun(queue) {}
         run.run()
         assertEquals(0, queue.admittedCount)
     }
@@ -33,7 +34,8 @@ class AdmissionTest {
     @Test
     fun testRunThatThrowsGivesTheSlotBack() {
         // Covers the handler and the run's own cleanup alike: both throw out of the body.
-        val run = AdmittedRun(admit()) { throw IllegalStateException("handler blew up") }
+        admit()
+        val run = AdmittedRun(queue) { throw IllegalStateException("handler blew up") }
         run.run()
         assertEquals(0, queue.admittedCount)
     }
@@ -42,7 +44,8 @@ class AdmissionTest {
     fun testRunCancelledBeforeItStartsGivesTheSlotBackOnce() {
         // A second task keeps the count above zero, so an extra release would show as 0, not throw.
         admit()
-        val run = AdmittedRun(admit()) {}
+        admit()
+        val run = AdmittedRun(queue) {}
         run.cancel(true)
         run.run()
         run.cancel(true)
@@ -51,9 +54,9 @@ class AdmissionTest {
 
     @Test
     fun testHandlerFutureKeepsTheSlotAfterTheRunEnds() {
+        admit()
         val handled = CompletableFuture<Unit>()
-        val admission = admit()
-        val run = AdmittedRun(admission) { admission.holdUntil(handled) }
+        val run = AdmittedRun(queue) { holdSlotUntil -> holdSlotUntil(handled) }
         run.run()
         assertEquals(1, queue.admittedCount, "the handler is still running")
 
@@ -62,30 +65,72 @@ class AdmissionTest {
     }
 
     @Test
+    fun testHandlerFutureThatFailsGivesTheSlotBack() {
+        admit()
+        val handled = CompletableFuture<Unit>()
+        val run = AdmittedRun(queue) { holdSlotUntil -> holdSlotUntil(handled) }
+        run.run()
+
+        handled.completeExceptionally(IllegalStateException("workflow blew up"))
+        assertEquals(0, queue.admittedCount)
+    }
+
+    @Test
     fun testAlreadyCompletedHandlerFutureDoesNotHoldTheSlot() {
-        val admission = admit()
-        val run = AdmittedRun(admission) { admission.holdUntil(CompletableFuture.completedFuture(Unit)) }
+        admit()
+        val run = AdmittedRun(queue) { holdSlotUntil -> holdSlotUntil(CompletableFuture.completedFuture(Unit)) }
         run.run()
         assertEquals(0, queue.admittedCount)
     }
 
     @Test
-    fun testRunCancelledWhileRunningGivesTheSlotBackOnce() {
+    fun testRunCancelledWhileTheHandlerRunsKeepsTheSlotUntilTheHandlerFinishes() {
         admit()
         val handled = CompletableFuture<Unit>()
-        val admission = admit()
+        val reported = CountDownLatch(1)
+        val run =
+            AdmittedRun(queue) { holdSlotUntil ->
+                holdSlotUntil(handled)
+                reported.countDown()
+                // The scheduler's wait for the handler, which cancelling interrupts.
+                try {
+                    Thread.sleep(5_000)
+                } catch (ignored: InterruptedException) {
+                }
+            }
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            pool.execute(run)
+            assertTrue(reported.await(5, TimeUnit.SECONDS))
+            run.cancel(true)
+            pool.shutdown()
+            assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
+            assertEquals(1, queue.admittedCount, "the handler is still running")
+
+            handled.complete(Unit)
+            assertEquals(0, queue.admittedCount)
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun testRunCancelledBeforeItReachesTheHandlerGivesTheSlotBackOnce() {
+        admit()
+        admit()
+        val handled = CompletableFuture<Unit>()
         val started = CountDownLatch(1)
         val cancelled = CountDownLatch(1)
         val run =
-            AdmittedRun(admission) {
+            AdmittedRun(queue) { holdSlotUntil ->
                 started.countDown()
-                // Cancelling interrupts this wait. The admission is already given back by then, so
-                // the hold below must not take it again.
+                // Cancelling gives the slot back at once, since no handler has been reported yet.
+                // Reporting one afterwards must not give it back a second time.
                 try {
                     cancelled.await(5, TimeUnit.SECONDS)
                 } catch (ignored: InterruptedException) {
                 }
-                admission.holdUntil(handled)
+                holdSlotUntil(handled)
             }
         val pool = Executors.newSingleThreadExecutor()
         try {
@@ -102,7 +147,8 @@ class AdmissionTest {
         }
     }
 
-    private fun admit(): Admission {
+    /** Adds a task and takes it, which leaves it admitted, as the scheduler's take loop does. */
+    private fun admit() {
         val id = UUID.randomUUID().toString()
         val task =
             Task.builder<Any>()
@@ -114,8 +160,6 @@ class AdmissionTest {
                 .executionTimeout(Duration.ofSeconds(30))
                 .build()
         assertTrue(queue.add(task))
-        // Taking it leaves it admitted, as the scheduler's take loop does.
         queue.take<Any>(task.type)
-        return Admission(queue)
     }
 }
