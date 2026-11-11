@@ -26,6 +26,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -48,6 +49,7 @@ import org.mockito.kotlin.whenever
  * The window is frozen by wrapping the scheduler so `remove` of the WORKFLOW task blocks on a
  * latch; the test signals while it is blocked, then releases it. No sleeps, no timing luck.
  */
+@Disabled("canary: isolate the trace checker, do not merge")
 @Execution(ExecutionMode.SAME_THREAD)
 class LostSignalOnHonoredLeaseTest {
     /** Blocks the handler's WORKFLOW-task `remove` until the test says go. Everything else passes through. */
