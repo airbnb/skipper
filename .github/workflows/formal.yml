@@ -14,7 +14,8 @@
 #
 #   trace-validation Runs the engine's end-to-end test suites with trace recording on
 #                    (formal/tla/trace/record_traces.sh), then checks every recorded workflow run
-#                    against the model (check_traces.sh --self-test). Red when the engine takes a
+#                    against the workflow model, and every runtime's scheduler against the
+#                    scheduler model (check_traces.sh --self-test). Red when the engine takes a
 #                    step the model says it cannot, meaning the code or the spec has drifted, or when
 #                    the self-test finds the checker accepting a corrupted trace. A trace TLC cannot
 #                    decide within its time budget is reported as inconclusive, with a warning,

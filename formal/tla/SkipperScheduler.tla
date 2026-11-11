@@ -42,6 +42,8 @@ FaultKinds == {
     "lapse",             \* a lease lapses under a task its instance still holds
     "member_lapse",      \* a live instance's heartbeat ages out of the member list
     "hang",              \* a handler never completes
+    "abort",             \* a run ends before it has a handler: its submit is rejected, the task is
+                         \* past its retries, or handler.handle throws
     "cancel_unreported"  \* the renewer cancels a run between its start and the moment it
                          \* reports the handler's future (scheduler finding 1 in README.md)
 }
@@ -65,10 +67,11 @@ Min(a, b) == IF a < b THEN a ELSE b
 (*   taken     its AdmittedRun is on the executor, not started; leases are renewed     *)
 (*   started   the run called handler.handle and has not yet reported the future       *)
 (*   waiting   the run reported the future and waits on it                             *)
+(*   finished  the handler completed; the slot is given back next                      *)
 (*   detached  the run is done (timeout or cancel), the handler still runs and still   *)
 (*             holds the slot                                                          *)
 (*   leaked    the run is done and gave the slot back, the handler still runs          *)
-Phases == {"queued", "taken", "started", "waiting", "detached", "leaked"}
+Phases == {"queued", "taken", "started", "waiting", "finished", "detached", "leaked"}
 InFlight == {"taken", "started", "waiting"}  \* registered with LeaseRenewalManager
 HoldsLease == {"queued"} \cup InFlight        \* will renew, or start renewing once taken
 
@@ -80,10 +83,11 @@ VARIABLES
     jobs,       \* jobs[i]: the admissions instance i has in memory
     admitted,   \* admitted[i]: SchedulerExecutionQueue.admittedCount
     snap,       \* snap[i]: tasks the fetch loop decided to ask for; 0 when not fetching
+    pending,    \* pending[i]: tasks the fetch loop has leased and not yet queued
     faults,     \* faults used, hangs aside
     hangs       \* handlers that have hung
 
-vars == <<row, alive, members, view, jobs, admitted, snap, faults, hangs>>
+vars == <<row, alive, members, view, jobs, admitted, snap, pending, faults, hangs>>
 
 Job(t, g, o) == [task |-> t, gen |-> g, origin |-> o, phase |-> "queued", hung |-> FALSE]
 
@@ -96,6 +100,7 @@ Init ==
     /\ jobs = [i \in Instances |-> {}]
     /\ admitted = [i \in Instances |-> 0]
     /\ snap = [i \in Instances |-> 0]
+    /\ pending = [i \in Instances |-> {}]
     /\ faults = 0
     /\ hangs = 0
 
@@ -128,42 +133,57 @@ Free(i) == IF Limit = 0 THEN FetchSize ELSE Limit - admitted[i]
 (* The loop reads its free slots and decides how many tasks to ask for. With none      *)
 (* free it polls instead, which changes nothing.                                       *)
 FetchRead(i) ==
-    /\ alive[i] /\ snap[i] = 0 /\ Free(i) > 0
+    /\ alive[i] /\ snap[i] = 0 /\ pending[i] = {} /\ Free(i) > 0
     /\ snap' = [snap EXCEPT ![i] = Min(FetchSize, Free(i))]
-    /\ UNCHANGED <<row, alive, members, view, jobs, admitted, faults, hangs>>
+    /\ UNCHANGED <<row, alive, members, view, jobs, admitted, pending, faults, hangs>>
 
 QueuedHere(i, t) == \E j \in jobs[i] : j.task = t /\ j.phase = "queued"
 
-(* The store leases up to that many due tasks of the instance's buckets, and each goes *)
-(* to the in-memory queue. The queue refuses a task whose id it already holds: an old  *)
-(* copy that waited there for a whole lease. Then the new lease is nobody's. Each such *)
-(* wait counts as a "lapse" fault.                                                     *)
-FetchDeliver(i) ==
+(* A row the instance's fetch can lease. Trace validation replaces this: it does not   *)
+(* see the rows.                                                                       *)
+Fetchable(i, t) == row[t].st = "due" /\ Owns(i, BucketOf(t))
+
+(* The sets of tasks a fetch may come back with: as many fetchable ones as it asked    *)
+(* for, or all of them. A task whose old copy still sits in this instance's queue has  *)
+(* waited there for a whole lease, which counts as a "lapse" fault.                    *)
+FetchChoices(i) ==
+    LET eligible == {t \in Tasks : Fetchable(i, t) /\ (QueuedHere(i, t) => faults < MaxFaults)}
+    IN {S \in SUBSET eligible : Cardinality(S) = Min(snap[i], Cardinality(eligible))}
+
+(* The store leases the tasks to this instance.                                        *)
+FetchLease(i) ==
     /\ snap[i] > 0
-    /\ LET eligible == {t \in Tasks : /\ row[t].st = "due"
-                                      /\ Owns(i, BucketOf(t))
-                                      /\ QueuedHere(i, t) => faults < MaxFaults}
-           k == Min(snap[i], Cardinality(eligible))
-       IN \E S \in SUBSET eligible :
-            /\ Cardinality(S) = k
-            /\ LET refused == {t \in S : QueuedHere(i, t)}
-                   new == {Job(t, row[t].gen + 1, "fetched") : t \in S \ refused}
-               IN /\ row' = [t \in Tasks |-> IF t \in S THEN [st |-> "leased", gen |-> row[t].gen + 1]
-                                                       ELSE row[t]]
-                  /\ jobs' = [jobs EXCEPT ![i] = @ \cup new]
-                  /\ admitted' = [admitted EXCEPT ![i] = @ + Cardinality(new)]
-                  /\ faults' = IF refused = {} THEN faults ELSE faults + 1
+    /\ \E S \in FetchChoices(i) :
+          /\ row' = [t \in Tasks |-> IF t \in S THEN [st |-> "leased", gen |-> row[t].gen + 1]
+                                               ELSE row[t]]
+          /\ pending' = [pending EXCEPT ![i] = S]
+          /\ faults' = IF \E t \in S : QueuedHere(i, t) THEN faults + 1 ELSE faults
     /\ snap' = [snap EXCEPT ![i] = 0]
-    /\ UNCHANGED <<alive, members, view, hangs>>
+    /\ UNCHANGED <<alive, members, view, jobs, admitted, hangs>>
+
+(* The loop adds one leased task to the in-memory queue, which counts it. The queue    *)
+(* refuses a task whose id it already holds; then the new lease is nobody's.           *)
+Deliver(i, t) ==
+    /\ t \in pending[i]
+    /\ pending' = [pending EXCEPT ![i] = @ \ {t}]
+    /\ IF QueuedHere(i, t)
+       THEN UNCHANGED <<jobs, admitted>>
+       ELSE /\ jobs' = [jobs EXCEPT ![i] = @ \cup {Job(t, row[t].gen, "fetched")}]
+            /\ admitted' = [admitted EXCEPT ![i] = @ + 1]
+    /\ UNCHANGED <<row, alive, members, view, snap, faults, hangs>>
+
+(* A task a caller in this process may schedule for immediate execution. Trace         *)
+(* validation replaces this too.                                                       *)
+Schedulable(t) == t \in InMemTasks /\ row[t].st = "none"
 
 (* SchedulerExecutionQueue.schedule: a caller in this process schedules a task for     *)
 (* immediate execution. It writes the row as leased and queues a copy. Never refused.  *)
 InMemAdd(i, t) ==
-    /\ alive[i] /\ t \in InMemTasks /\ row[t].st = "none"
-    /\ row' = [row EXCEPT ![t] = [st |-> "leased", gen |-> 1]]
-    /\ jobs' = [jobs EXCEPT ![i] = @ \cup {Job(t, 1, "inmem")}]
+    /\ alive[i] /\ Schedulable(t)
+    /\ row' = [row EXCEPT ![t] = [st |-> "leased", gen |-> @.gen + 1]]
+    /\ jobs' = [jobs EXCEPT ![i] = @ \cup {Job(t, row[t].gen + 1, "inmem")}]
     /\ admitted' = [admitted EXCEPT ![i] = @ + 1]
-    /\ UNCHANGED <<alive, members, view, snap, faults, hangs>>
+    /\ UNCHANGED <<alive, members, view, snap, pending, faults, hangs>>
 
 -----------------------------------------------------------------------------------------
 (* One admission: startTakingTasks, AdmittedRun, handleTask                            *)
@@ -177,33 +197,49 @@ Release(i) == admitted' = [admitted EXCEPT ![i] = @ - 1]  \* SchedulerExecutionQ
 Take(i, j) ==
     /\ j \in jobs[i] /\ j.phase = "queued"
     /\ Move(i, j, "taken")
-    /\ UNCHANGED <<row, alive, members, view, admitted, snap, faults, hangs>>
+    /\ UNCHANGED <<row, alive, members, view, admitted, snap, pending, faults, hangs>>
 
 (* The run starts and calls handler.handle, which starts the handler's work.           *)
 RunStart(i, j) ==
     /\ j \in jobs[i] /\ j.phase = "taken"
     /\ Move(i, j, "started")
-    /\ UNCHANGED <<row, alive, members, view, admitted, snap, faults, hangs>>
+    /\ UNCHANGED <<row, alive, members, view, admitted, snap, pending, faults, hangs>>
 
 (* handle returned: the run reports the handler's future (holdSlotUntil) and waits.    *)
 Report(i, j) ==
     /\ j \in jobs[i] /\ j.phase = "started"
     /\ Move(i, j, "waiting")
-    /\ UNCHANGED <<row, alive, members, view, admitted, snap, faults, hangs>>
+    /\ UNCHANGED <<row, alive, members, view, admitted, snap, pending, faults, hangs>>
 
 (* The handler completes.                                                              *)
-(* 1. Its run was waiting on it: the run makes the final write, which removes the row  *)
-(*    if it still carries this admission's lease, and the slot is given back.          *)
-(* 2. Its run had ended and the slot was held for it: the slot is given back.          *)
-(* 3. Its run had ended and had given the slot back already: nothing to give back.     *)
+(* 1. Its run was waiting on it: the run wakes and makes the final write, which        *)
+(*    removes the row if it still carries this admission's lease.                      *)
+(* 2. Its run had ended and the slot was held for it.                                  *)
+(* 3. Its run had ended and had given the slot back already: nothing is left of it.    *)
+(* In cases 1 and 2 the slot is given back next (SlotBack).                            *)
 HandlerDone(i, j) ==
     /\ j \in jobs[i] /\ ~j.hung /\ j.phase \in {"waiting", "detached", "leaked"}
     /\ row' = IF j.phase = "waiting" /\ row[j.task].gen = j.gen /\ row[j.task].st \in {"leased", "due"}
               THEN [row EXCEPT ![j.task].st = "done"]
               ELSE row
-    /\ Drop(i, j)
-    /\ IF j.phase = "leaked" THEN admitted' = admitted ELSE Release(i)
-    /\ UNCHANGED <<alive, members, view, snap, faults, hangs>>
+    /\ IF j.phase = "leaked" THEN Drop(i, j) ELSE Move(i, j, "finished")
+    /\ UNCHANGED <<alive, members, view, admitted, snap, pending, faults, hangs>>
+
+(* AdmittedRun.done gives the slot back: the run has ended and its handler is done.    *)
+SlotBack(i, j) ==
+    /\ j \in jobs[i] /\ j.phase = "finished"
+    /\ Drop(i, j) /\ Release(i)
+    /\ UNCHANGED <<row, alive, members, view, snap, pending, faults, hangs>>
+
+(* The run ends before it has a handler, and gives its slot back: the executor         *)
+(* rejects it, the task is past its retries and is marked failed, or handler.handle    *)
+(* throws.                                                                             *)
+RunAborts(i, j) ==
+    /\ "abort" \in Faults /\ faults < MaxFaults
+    /\ j \in jobs[i] /\ j.phase \in {"taken", "started"}
+    /\ Drop(i, j) /\ Release(i)
+    /\ faults' = faults + 1
+    /\ UNCHANGED <<row, alive, members, view, snap, pending, hangs>>
 
 (* handleTask stops waiting (SCHEDULER_TASK_EXECUTION_TIMEOUT). The run ends without   *)
 (* a final write; the handler keeps running and keeps the slot. A hung handler always  *)
@@ -213,7 +249,7 @@ Timeout(i, j) ==
     /\ \/ j.hung /\ faults' = faults
        \/ ~j.hung /\ "timeout" \in Faults /\ faults < MaxFaults /\ faults' = faults + 1
     /\ Move(i, j, "detached")
-    /\ UNCHANGED <<row, alive, members, view, admitted, snap, hangs>>
+    /\ UNCHANGED <<row, alive, members, view, admitted, snap, pending, hangs>>
 
 HungTimeout(i, j) == j.hung /\ Timeout(i, j)
 
@@ -223,7 +259,7 @@ Hang(i, j) ==
     /\ j \in jobs[i] /\ j.phase = "waiting" /\ ~j.hung
     /\ jobs' = [jobs EXCEPT ![i] = (@ \ {j}) \cup {[j EXCEPT !.hung = TRUE]}]
     /\ hangs' = hangs + 1
-    /\ UNCHANGED <<row, alive, members, view, admitted, snap, faults>>
+    /\ UNCHANGED <<row, alive, members, view, admitted, snap, pending, faults>>
 
 (* LeaseRenewalManager.attemptToRenewOneTask fails for a run in flight, because        *)
 (* another fetch has leased the row since, and cancels the run. What AdmittedRun.done  *)
@@ -234,21 +270,25 @@ Hang(i, j) ==
 (* 3. The run had started but not reported the future yet: the slot is given back at   *)
 (*    once, and the handler it started runs on without one. Only with                  *)
 (*    "cancel_unreported"; without it the cancel lands once the future is reported.    *)
+LeaseMoved(j) == row[j.task].gen # j.gen  \* replaced in trace validation, which does not see the rows
+
 Cancel(i, j) ==
     /\ j \in jobs[i] /\ j.phase \in InFlight
-    /\ row[j.task].gen # j.gen
+    /\ LeaseMoved(j)
     /\ \/ j.phase = "taken" /\ Drop(i, j) /\ Release(i)
        \/ j.phase = "waiting" /\ Move(i, j, "detached") /\ admitted' = admitted
        \/ j.phase = "started" /\ "cancel_unreported" \in Faults /\ Move(i, j, "leaked") /\ Release(i)
-    /\ UNCHANGED <<row, alive, members, view, snap, faults, hangs>>
+    /\ UNCHANGED <<row, alive, members, view, snap, pending, faults, hangs>>
 
 -----------------------------------------------------------------------------------------
 (* Leases                                                                              *)
 
-(* Some instance holds the row's current lease and keeps it renewed.                   *)
+(* Some instance holds the row's current lease: it is about to queue the task, or has  *)
+(* a copy that keeps the lease renewed.                                                *)
 Held(t) ==
-    \E i \in Instances : \E j \in jobs[i] :
-        j.task = t /\ j.gen = row[t].gen /\ j.phase \in HoldsLease
+    \E i \in Instances :
+        \/ t \in pending[i]
+        \/ \E j \in jobs[i] : j.task = t /\ j.gen = row[t].gen /\ j.phase \in HoldsLease
 
 (* The lease runs out and the row is due again. Under a holder that is a fault (a      *)
 (* pause, a starved renewer, a copy that waited in the queue for a whole lease).       *)
@@ -258,7 +298,7 @@ Lapse(t) ==
        THEN "lapse" \in Faults /\ faults < MaxFaults /\ faults' = faults + 1
        ELSE faults' = faults
     /\ row' = [row EXCEPT ![t].st = "due"]
-    /\ UNCHANGED <<alive, members, view, jobs, admitted, snap, hangs>>
+    /\ UNCHANGED <<alive, members, view, jobs, admitted, snap, pending, hangs>>
 
 FreeLapse(t) == ~Held(t) /\ Lapse(t)
 
@@ -275,6 +315,7 @@ Crash(i) ==
     /\ jobs' = [jobs EXCEPT ![i] = {}]
     /\ admitted' = [admitted EXCEPT ![i] = 0]
     /\ snap' = [snap EXCEPT ![i] = 0]
+    /\ pending' = [pending EXCEPT ![i] = {}]
     /\ view' = [view EXCEPT ![i] = {}]
     /\ faults' = faults + 1
     /\ UNCHANGED <<row, members, hangs>>
@@ -285,13 +326,13 @@ Join(i) ==
     /\ alive' = [alive EXCEPT ![i] = TRUE]
     /\ members' = IF Partitioning THEN members \cup {i} ELSE members
     /\ view' = [view EXCEPT ![i] = members']
-    /\ UNCHANGED <<row, jobs, admitted, snap, faults, hangs>>
+    /\ UNCHANGED <<row, jobs, admitted, snap, pending, faults, hangs>>
 
 (* A dead instance's heartbeat row ages out (LIVENESS_THRESHOLD).                      *)
 MemberExpire(i) ==
     /\ Partitioning /\ ~alive[i] /\ i \in members
     /\ members' = members \ {i}
-    /\ UNCHANGED <<row, alive, view, jobs, admitted, snap, faults, hangs>>
+    /\ UNCHANGED <<row, alive, view, jobs, admitted, snap, pending, faults, hangs>>
 
 (* A live instance's heartbeats fail for long enough that its row ages out.            *)
 MemberLapse(i) ==
@@ -299,50 +340,53 @@ MemberLapse(i) ==
     /\ alive[i] /\ i \in members
     /\ members' = members \ {i}
     /\ faults' = faults + 1
-    /\ UNCHANGED <<row, alive, view, jobs, admitted, snap, hangs>>
+    /\ UNCHANGED <<row, alive, view, jobs, admitted, snap, pending, hangs>>
 
 (* Its next heartbeat lands and refreshes its cached member list.                      *)
 Heartbeat(i) ==
     /\ Partitioning /\ alive[i] /\ i \notin members
     /\ members' = members \cup {i}
     /\ view' = [view EXCEPT ![i] = members']
-    /\ UNCHANGED <<row, alive, jobs, admitted, snap, faults, hangs>>
+    /\ UNCHANGED <<row, alive, jobs, admitted, snap, pending, faults, hangs>>
 
 (* The cached member list (one heartbeat interval old at most) is read again.          *)
 RefreshView(i) ==
     /\ Partitioning /\ alive[i] /\ view[i] # members
     /\ view' = [view EXCEPT ![i] = members]
-    /\ UNCHANGED <<row, alive, members, jobs, admitted, snap, faults, hangs>>
+    /\ UNCHANGED <<row, alive, members, jobs, admitted, snap, pending, faults, hangs>>
 
 -----------------------------------------------------------------------------------------
 JobStep(i, t) ==
     \E j \in jobs[i] :
         /\ j.task = t
-        /\ (\/ Take(i, j) \/ RunStart(i, j) \/ Report(i, j) \/ HandlerDone(i, j)
-            \/ Timeout(i, j) \/ Hang(i, j) \/ Cancel(i, j))
+        /\ (\/ Take(i, j) \/ RunStart(i, j) \/ Report(i, j) \/ HandlerDone(i, j) \/ SlotBack(i, j)
+            \/ Timeout(i, j) \/ Hang(i, j) \/ Cancel(i, j) \/ RunAborts(i, j))
 
 Next ==
     \/ \E i \in Instances :
-          \/ FetchRead(i) \/ FetchDeliver(i)
+          \/ FetchRead(i) \/ FetchLease(i)
           \/ Crash(i) \/ Join(i)
           \/ MemberExpire(i) \/ MemberLapse(i) \/ Heartbeat(i) \/ RefreshView(i)
-          \/ \E t \in Tasks : InMemAdd(i, t) \/ JobStep(i, t)
+          \/ \E t \in Tasks : Deliver(i, t) \/ InMemAdd(i, t) \/ JobStep(i, t)
     \/ \E t \in Tasks : Lapse(t)
 
-(* Live instances keep fetching, taking, running and reporting; handlers that are not  *)
-(* hung complete; the wait on a hung handler times out; unheld leases run out; dead    *)
+(* Live instances keep fetching, queueing, taking, running and reporting; handlers that *)
+(* are not hung complete and give their slot back; the wait on a hung handler times    *)
+(* out; unheld leases run out; dead                                                    *)
 (* members age out and live ones heartbeat and re-read the member list. Faults,        *)
 (* in-memory schedules, cancels and restarts get no fairness: they may or may not      *)
 (* happen.                                                                             *)
 Fairness ==
     /\ \A i \in Instances :
-          /\ WF_vars(FetchRead(i)) /\ WF_vars(FetchDeliver(i))
+          /\ WF_vars(FetchRead(i)) /\ WF_vars(FetchLease(i))
           /\ WF_vars(MemberExpire(i)) /\ WF_vars(Heartbeat(i)) /\ WF_vars(RefreshView(i))
           /\ \A t \in Tasks :
+                /\ WF_vars(Deliver(i, t))
                 /\ WF_vars(\E j \in jobs[i] : j.task = t /\ Take(i, j))
                 /\ WF_vars(\E j \in jobs[i] : j.task = t /\ RunStart(i, j))
                 /\ WF_vars(\E j \in jobs[i] : j.task = t /\ Report(i, j))
                 /\ WF_vars(\E j \in jobs[i] : j.task = t /\ HandlerDone(i, j))
+                /\ WF_vars(\E j \in jobs[i] : j.task = t /\ SlotBack(i, j))
                 /\ WF_vars(\E j \in jobs[i] : j.task = t /\ HungTimeout(i, j))
     /\ \A t \in Tasks : WF_vars(FreeLapse(t))
 
@@ -361,6 +405,7 @@ TypeOK ==
           /\ j.origin \in {"fetched", "inmem"} /\ j.phase \in Phases /\ j.hung \in BOOLEAN
     /\ admitted \in [Instances -> Nat]
     /\ snap \in [Instances -> 0..FetchSize]
+    /\ pending \in [Instances -> SUBSET Tasks]
     /\ faults \in 0..MaxFaults /\ hangs \in 0..MaxHangs
 
 (* Property 1. The count is the instance's work: tasks queued, runs not yet done and   *)
@@ -377,9 +422,10 @@ InMem(i) == {j \in jobs[i] : j.origin = "inmem"}
 WaitingToStart(i) == {j \in jobs[i] : j.phase \in {"queued", "taken"}}
 Executing(i) == {j \in jobs[i] : j.phase \notin {"queued", "taken"}}
 
-(* Property 2. The work an instance fetched never exceeds its limit, however stale     *)
-(* the free-slot count its fetch acted on.                                             *)
-FetchedWithinLimit == Limit > 0 => \A i \in Instances : Cardinality(Fetched(i)) <= Limit
+(* Property 2. The work an instance fetched, queued yet or not, never exceeds its      *)
+(* limit, however stale the free-slot count its fetch acted on.                        *)
+FetchedWithinLimit ==
+    Limit > 0 => \A i \in Instances : Cardinality(Fetched(i)) + Cardinality(pending[i]) <= Limit
 
 (* Not a property of the design: in-memory executions are never refused, so the count  *)
 (* as a whole can pass the limit. Models that list it expect the violation.            *)

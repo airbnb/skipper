@@ -3,16 +3,19 @@
 #
 #   TLA2TOOLS=/path/to/tla2tools.jar formal/tla/trace/check_traces.sh [--self-test] <trace-dir>
 #
-# <trace-dir> holds the trace-*.ndjson files a test run writes with -PskipperTraceDir=<trace-dir>.
-# Each workflow in them becomes a TLC model of SkipperTrace (trace_to_tla.py) and is checked in
-# parallel. One line per workflow:
+# <trace-dir> holds the files a test run writes with -PskipperTraceDir=<trace-dir>:
+#   trace-*.ndjson  the store and scheduler writes of one runtime. Each workflow in them becomes a
+#                   TLC model of SkipperTrace (trace_to_tla.py).
+#   sched-*.ndjson  what one runtime's scheduler did in memory. Each file becomes a TLC model of
+#                   SkipperSchedulerTrace (sched_trace_to_tla.py).
+# The models are checked in parallel. One line per workflow or scheduler run:
 #
 #   accepted   the model can take exactly the steps the engine took
 #   REJECTED   it cannot; the line names the first write it could not explain
 #   skipped    the run uses an engine feature the model does not cover yet
 #   INCONCLUSIVE  TLC did not decide within $TRACE_BUDGET seconds (default 300)
 #
-# Exits 1 when any workflow is rejected. An inconclusive one does not fail the run but is listed
+# Exits 1 when any run is rejected. An inconclusive one does not fail the run but is listed
 # (and flagged as a warning on GitHub Actions): a rejection needs TLC to exhaust every
 # interleaving, so a slow trace may be hiding one. With --self-test it then corrupts every accepted trace in a
 # few ways (mutants.py) and exits 1 unless the checker rejects all of them, which guards against a
@@ -41,6 +44,10 @@ if [ "${#traces[@]}" -eq 0 ]; then
   exit 1
 fi
 python3 "$here/trace_to_tla.py" "${traces[@]}" --out "$out_dir/models" >"$out_dir/workflows.jsonl"
+sched_traces=("$trace_dir"/sched-*.ndjson)
+if [ "${#sched_traces[@]}" -gt 0 ]; then
+  python3 "$here/sched_trace_to_tla.py" "${sched_traces[@]}" --out "$out_dir/models" >>"$out_dir/workflows.jsonl"
+fi
 
 # TLC runs one model per JVM; a single worker keeps each run's PrintT output in order, and a private
 # java.io.tmpdir keeps parallel runs from clobbering the standard modules TLC unpacks there.
