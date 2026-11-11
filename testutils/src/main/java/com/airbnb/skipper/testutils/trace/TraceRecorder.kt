@@ -157,7 +157,7 @@ class TraceRecorder internal constructor(
         internal fun calledFrom(methods: List<String>): Boolean = callSite().firstOrNull() in methods
 
         /** Whether the engine method calling directly belongs to [className] (its simple name). */
-        internal fun calledFromClass(className: String): Boolean = callSite().firstOrNull()?.substringBefore('.') == className
+        internal fun calledFromClass(className: String): Boolean = callSite().firstOrNull()?.substringBefore('.')?.substringBefore('$') == className
 
         /**
          * The engine methods that made the call, innermost first: what the checker maps to a model action.

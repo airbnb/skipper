@@ -7,7 +7,8 @@ A model is accepted when TLC reports TraceNotDone violated, meaning some behavio
 event. Otherwise the highest event TLC printed as matched tells how far the model got, and the next
 event is the first write it could not explain.
 
-With --require-accepted it prints nothing unless no workflow run, or no scheduler run, was accepted,
+With --require-accepted it prints nothing unless no workflow run, or no scheduler run that fetched
+a task, was accepted,
 which fails: a check that covered nothing must not pass.
 
 With --expect-rejected (the mutants.py self-test) the roles swap: every model should be rejected,
@@ -73,14 +74,15 @@ def main():
 
 
 def require_accepted(rows):
-    """Fails unless at least one workflow run and one scheduler run were accepted."""
+    """Fails unless a workflow run and a scheduler run that fetched a task were accepted."""
+    accepted = [r for r in rows if r["status"] == "model" and verdict(r["dir"])[0] == "accepted"]
     missing = []
-    for kind in ("workflow", "scheduler"):
-        models = [r for r in rows if r.get("kind", "workflow") == kind and r["status"] == "model"]
-        if not any(verdict(r["dir"])[0] == "accepted" for r in models):
-            missing.append(kind)
-    for kind in missing:
-        print(f"no {kind} run was accepted: nothing of that kind was checked")
+    if not any(r.get("kind", "workflow") == "workflow" for r in accepted):
+        missing.append("no workflow run was accepted")
+    if not any(r.get("kind") == "scheduler" and r["fetched"] > 0 for r in accepted):
+        missing.append("no scheduler run with a fetched task was accepted")
+    for line in missing:
+        print(f"{line}: nothing of that kind was checked")
     return 1 if missing else 0
 
 

@@ -31,7 +31,13 @@ internal open class TracingExecutionQueue(
     }
 
     override fun add(task: Task<*>): Boolean {
-        val origin = if (scheduling.get()) "inmem" else "fetched"
+        // Anything else adding to the queue is a test doing the fetch loop's job by hand.
+        val origin =
+            when {
+                scheduling.get() -> "inmem"
+                TraceRecorder.calledFromClass(FETCH_LOOP) -> "fetched"
+                else -> "direct"
+            }
         return recorder.event("add", task.id, { added -> mapOf("origin" to origin, "added" to added) }) { super.add(task) }
     }
 
@@ -44,4 +50,8 @@ internal open class TracingExecutionQueue(
     }
 
     override fun markFinished() = recorder.event("release") { super.markFinished() }
+
+    private companion object {
+        const val FETCH_LOOP = "SkipperSchedulerManager"
+    }
 }

@@ -16,8 +16,9 @@ The mapping:
   * the model's limit and fetch size are the ones in force at the run's fetches. A run in which
     they changed is skipped: they are constants of the model.
 
-Nothing else is skipped. In particular a fetched task that no recorded fetch came back with is
-left for the model to reject, so a recorder that stops seeing fetches fails the check rather than
+A run in which the test itself adds a task to the queue, doing the fetch loop's job by hand, is
+skipped too. A task the fetch loop adds that no recorded fetch came back with is not: it is left
+for the model to reject, so a recorder that stops seeing fetches fails the check rather than
 quietly emptying it.
 """
 
@@ -52,6 +53,8 @@ def normalise(lines):
             if act != "Release":
                 event["task"] = number(line["task"])
             if act == "Add":
+                if line["origin"] == "direct":
+                    raise OutOfScope("the test adds a task to the queue itself")
                 event["origin"], event["added"] = line["origin"], line["added"]
         events.append(event)
     if len(limits) > 1:
@@ -116,7 +119,8 @@ def convert(path, out_dir):
     tla, cfg = model_files(events, constants)
     open(os.path.join(target, "MC.tla"), "w").write(tla)
     open(os.path.join(target, "MC.cfg"), "w").write(cfg)
-    print(json.dumps({**report, "status": "model", "dir": target, "events": len(events)}))
+    fetched = sum(1 for e in events if e["act"] == "Add" and e["origin"] == "fetched")
+    print(json.dumps({**report, "status": "model", "dir": target, "events": len(events), "fetched": fetched}))
 
 
 def main():
