@@ -56,6 +56,24 @@ row, and a signal call failing before it schedules.
 in-memory copy waits in its queue, for as long as a lease. Without it, an in-memory copy can outlive
 its lease and run next to the backstop row's delivery, which `inmem_start` already records.
 
+Its first part, "no start stalls between its two writes", is also the bound the stranded-start
+recovery (finding 1) depends on: a slow first start has to reach its `schedule` call within one
+`schedulerTaskLeaseDuration` (8 minutes by default). Remove only that part (the "caller in `sched`"
+case of `LeaseStillClaimed`) and `start_race` fails `NoOverlappingRuns`:
+
+1. `StartCreate(c1)` writes the workflow.
+2. `StartCreate(c2)` finds it stranded.
+3. `StartRecover(c2)` writes the row, due after a lease.
+4. `ExpireFree`: the lease lapses while `c1` is still paused.
+5. `Fetch(p1)` leases the row.
+6. `StartSched(c1)` honours `p1`'s lease but still queues an in-memory copy.
+7. `Take(p2)` takes the copy, and two workers run the workflow.
+
+That part is coarser than it needs to be. It stops any workflow-task lease from lapsing while any
+caller is in `sched`, which is only exact under `start_race`'s constants (no-op gate on, no user
+failures, fresh workflow). A future model that combines it with other settings may over-constrain
+time.
+
 Not modelled yet: compensation, execution timeouts, cancellation, child workflows, persisted-signal
 replay, task partitioning, several workflows sharing workers.
 
@@ -141,8 +159,10 @@ The findings behind these results:
 
      `start_race_unguarded` finds this.
    - So the recovering start writes only the backstop row, due after a lease, with no in-memory
-     copy (`SchedulerExecutionQueue.scheduleAfterLease`). Whichever row write comes first, the
-     other honours its lease, and only one copy runs. `start_race` checks it, and trace
+     copy (`SchedulerExecutionQueue.scheduleAfterLease`). As long as the slow start reaches its
+     `schedule` call within one lease, whichever row write comes first, the other honours its
+     lease, and only one copy runs. A longer pause can still run the workflow twice (see
+     `NoLongPauses` above). `start_race` checks it under that bound, and trace
      validation checks the engine against it on a recorded stranded child
      (`ChildWorkflowStartFailureTest`).
 
