@@ -156,6 +156,9 @@ class TraceRecorder internal constructor(
          */
         internal fun calledFrom(methods: List<String>): Boolean = callSite().firstOrNull() in methods
 
+        /** Whether the engine method calling directly belongs to [className] (its simple name). */
+        internal fun calledFromClass(className: String): Boolean = callSite().firstOrNull()?.substringBefore('.') == className
+
         /**
          * The engine methods that made the call, innermost first: what the checker maps to a model action.
          * A store or scheduler wrapped around the traced one, such as a test's fault injector, passes
@@ -177,7 +180,7 @@ class TraceRecorder internal constructor(
             }
 
         /** The frames of the test that started the runtime, for finding the test a trace came from. */
-        private fun origin(): List<String> =
+        internal fun origin(): List<String> =
             Thread.currentThread().stackTrace
                 .filterNot { f -> isBackendWrapper(f.className) }
                 .map { f -> f.className.substringAfterLast('.') + "." + f.methodName }

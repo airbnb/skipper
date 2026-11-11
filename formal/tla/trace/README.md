@@ -1,7 +1,9 @@
 # Trace validation
 
-This directory checks that runs of the real engine are behaviours of the TLA+ model in
-[`../SkipperWorkflowLiveness.tla`](../SkipperWorkflowLiveness.tla).
+This directory checks that runs of the real engine are behaviours of the TLA+ models in `../`:
+each workflow's run against [`SkipperWorkflowLiveness.tla`](../SkipperWorkflowLiveness.tla), and
+each runtime's scheduler against [`SkipperScheduler.tla`](../SkipperScheduler.tla). The first
+part of this page is about workflows; [Scheduler traces](#scheduler-traces) covers the second.
 
 The model check in `../` proves properties of the model. Trace validation checks the other half:
 that the model describes the code. When the engine does something the model says it can't, either
@@ -151,3 +153,94 @@ Running it turned up places where the model didn't describe the code. They were 
   change that makes a handler give up without writing can pass.
 - **One workflow at a time.** Each workflow's run is checked on its own; workers shared across
   workflows are not modelled.
+
+# Scheduler traces
+
+The same test runs also record what each runtime's scheduler does in memory, and each recording is
+replayed against the scheduler model. The question it answers: does the engine's admitted count
+move the way the model says, and does the fetch loop ask for what its free slots allow?
+
+## How it works
+
+1. **Recording.** With `-PskipperTraceDir=<dir>`, the test harness also gives each runtime a
+   `SchedulerTraceRecorder`, which writes `sched-<uuid>.ndjson`.
+   - The runtime builds its in-memory queue and its task handlers through
+     `SkipperConfig.schedulerInstrumentation`. That is the one seam in the engine, and it only
+     decides what gets built. The recorder builds a `TracingExecutionQueue`, a subclass that
+     records each `add`, `take` and `markFinished`, and wraps each handler in a
+     `TracingTaskHandler`, which records the call, the future coming back, and the future
+     completing. A wrapper around the store records each fetch the fetch loop makes.
+   - Each line carries the queue's admitted count after the step. Every step that changes the
+     count runs under one lock together with its line, so the file order is the order the steps
+     happened and each count is exact.
+   - A fetch line also carries the limit and fetch size in force, read from the scheduler manager.
+   - A handler's completion is recorded before the scheduler sees it: the scheduler is handed a
+     future derived from the handler's, which completes right after the line is written.
+   - Nothing is written until the runtime builds its own scheduler manager. A test that drives a
+     manager of its own, with handlers the recorder never sees, leaves no file.
+2. **Conversion.** `sched_trace_to_tla.py` turns each file into one model.
+
+   | Line | Model action |
+   |---|---|
+   | `fetch` | `FetchLease`, with the tasks it came back with |
+   | `add` | `Deliver` for a fetched task, `InMemAdd` for one scheduled in the process |
+   | `take` | `Take` |
+   | `start` | `RunStart` |
+   | `report` | `Report` |
+   | `done` | `HandlerDone` |
+   | `release` | `SlotBack`, `Cancel` or `RunAborts`: whichever task could give a slot back |
+
+   The model's limit and fetch size come from the fetch lines. A run in which they changed is
+   skipped, because they are constants of the model.
+3. **Checking.** [`SkipperSchedulerTrace.tla`](SkipperSchedulerTrace.tla) replays the events
+   against `SkipperScheduler` with one instance.
+   - A step consumes the next event, taking its action and landing on its admitted count. The
+     only step with no event is the fetch loop reading its free slots (`FetchRead`); a fetch is
+     accepted only if what it asked for is what some such read allows.
+   - The recorder does not see the task rows or other instances. So the conditions on rows are
+     opened up: any task may be due, and any lease may have moved. Partitioning and what happens
+     across instances are left to the model check.
+   - A slot given back while its handler is still running (finding 1 of the scheduler model) is
+     not allowed, so a run that shows it is rejected.
+
+Replaying is nearly deterministic, so these checks are quick: the longest run so far has a few
+hundred events and takes under a second.
+
+## The self-test
+
+`mutants.py` corrupts the 40 longest scheduler runs in five ways, each of which must be rejected:
+- the queue's count is one too high;
+- a fetch asked for one task more;
+- a task ran without being taken from the queue;
+- a handler handed back its future before it was called;
+- the last slot in use came back before its handler finished.
+
+## Does it catch engine changes?
+
+Two checks, neither of which any end-to-end test notices:
+
+- **Giving the slot back when the scheduler stops waiting.** I changed `AdmittedRun.done` to
+  release the slot as soon as the run ends, instead of holding it until the handler finishes. All
+  112 integration tests stayed green. Trace validation rejected the scheduler run of
+  `SchedulerTaskExecutionTimeoutTest`: it stops at the slot coming back while the handler that
+  outlived the timeout is still running.
+- **Finding 1 of the scheduler model, in the engine as it is.** A handler that blocks inside
+  `handle`, and a run the lease renewer cancels meanwhile. The recorded run reads: handler called,
+  slot given back, future handed back, and then a fetch asking for a task the instance has no room
+  for. It is rejected at the future being handed back, since the model has no handler left to
+  hand one back. The suites do not produce this run on their own (see Limits).
+
+Current results on the traced suites: 119 of 119 scheduler runs accepted (2,066 events, the longest
+112), and 200 of 200 mutants rejected.
+
+## Limits
+
+- **One instance, no rows.** The check covers an instance's own accounting. It cannot tell
+  whether a cancel was justified, or whether a task should have been fetchable.
+- **Timing.** The recorder's lock serialises the queue's steps, which can hide races that happen
+  at full speed.
+- **Only what the suites do.** A race that the suites never hit is never recorded. Finding 1
+  needs the lease renewer to cancel a run within one store read of its start; no suite does that.
+- **Runtimes only.** Tests that build their own scheduler manager are not recorded.
+- **Stopping looks like being slow**, as for workflows: a handler that never finishes just leaves
+  a shorter trace.

@@ -255,7 +255,7 @@ class SkipperRuntime
         }
 
         val schedulerExecutionQueue: Provider<SchedulerExecutionQueue> = singleton {
-            SchedulerExecutionQueue(
+            config.schedulerInstrumentation.executionQueue(
                 scheduler.get(),
                 config.utcClock,
                 config.schedulerTaskLeaseDuration
@@ -384,7 +384,7 @@ class SkipperRuntime
                 executionTimeoutHandler.get(),
                 Task.Type.COMPENSATION,
                 compensationFlowTaskHandler.get()
-            )
+            ).mapValues { config.schedulerInstrumentation.taskHandler(it) }
             SkipperSchedulerManager(
                 schedulerExecutionQueue.get(),
                 scheduler.get(),
@@ -402,6 +402,6 @@ class SkipperRuntime
                 config.gracefulShutdownTimeout,
                 inFlightCancelWatcher.get(),
                 config.schedulerMaxConcurrentTasks,
-            )
+            ).also { config.schedulerInstrumentation.schedulerManager(it) }
         }
     }

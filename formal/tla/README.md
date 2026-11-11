@@ -233,12 +233,15 @@ the member list. Faults, in-memory schedules, cancels and restarts may or may no
 | Action | Code |
 |---|---|
 | `FetchRead` | `SkipperSchedulerManager.startFetchingTasks`: `freeSlots()` and `min(getMaxTasks(), free)` |
-| `FetchDeliver` | `fetchTasksWithOptionalPartitioning`, `SqliteScheduler.fetch` / `MySqlScheduler.fetch` (plain and partitioned), then `SchedulerExecutionQueue.add` for each task, which refuses an id already queued |
+| `FetchLease` | `fetchTasksWithOptionalPartitioning`, `SqliteScheduler.fetch` / `MySqlScheduler.fetch` (plain and partitioned) |
+| `Deliver` | `SchedulerExecutionQueue.add` for each fetched task, which refuses an id already queued |
 | `Owns`, `RangeStart`, `RangeSize` | `BucketPartitioner.getBucketRangeForMember`, and the fall back to the whole table when the gate is off or the instance is missing from the member list it read |
 | `InMemAdd` | `SchedulerExecutionQueue.schedule`: the leased backstop row and the in-memory copy |
 | `Take` | `SkipperSchedulerManager.startTakingTasks`: `take`, `executor.execute(run)`, `addTaskInFlight` |
 | `RunStart`, `Report` | `AdmittedRun` running `handleTask`: `handler.handle`, then `holdSlotUntil(handled)` |
-| `HandlerDone` | the handler's future completing: `finishTask` when the run still waits on it, and `AdmittedRun.done` / `SchedulerExecutionQueue.markFinished` |
+| `HandlerDone` | the handler's future completing, and `finishTask` when the run still waits on it |
+| `SlotBack` | `AdmittedRun.done` / `SchedulerExecutionQueue.markFinished` once the handler is done |
+| `RunAborts` | a run that ends before it has a handler: the executor rejects it, the task is past `maxRetries` and is marked failed, or `handler.handle` throws |
 | `Timeout` | `handled.get(taskExecutionTimeout)` giving up in `handleTask` |
 | `Hang` | a handler whose future never completes |
 | `Cancel` | `LeaseRenewalManager.attemptToRenewOneTask` failing and calling `taskFuture.cancel(true)`, then `AdmittedRun.done` |
@@ -246,14 +249,17 @@ the member list. Faults, in-memory schedules, cancels and restarts may or may no
 | `Crash`, `Join` | the process dying and starting; `JdbcClusterMembershipManager.start` (first heartbeat, then the member list) |
 | `MemberExpire`, `MemberLapse`, `Heartbeat`, `RefreshView` | `JdbcClusterMembershipManager`: `LIVENESS_THRESHOLD` on `last_heartbeat_at`, the heartbeat loop, and the cached `getActiveMemberIds` |
 
-The fetch is two steps on purpose. The loop reads its free slots, then fetches, so in-memory
-schedules and finishing tasks can land in between; property 2 has to hold anyway.
+The fetch is three steps on purpose: the loop reads its free slots, the store leases the tasks,
+and the loop queues them one at a time. In-memory schedules and finishing tasks can land between
+any two; property 2 has to hold anyway. A handler finishing and its slot coming back are separate
+steps for the same reason. That granularity is also what lets a recorded run be replayed against
+the model one event at a time ([trace validation](trace/README.md#scheduler-traces)).
 
 Left out, on purpose:
 
 - Everything the workflow model covers: versions and the final versioned write (here a task is
-  finished if its row still carries the lease the run holds), signals, timers, retries and
-  `markAsFailed`.
+  finished if its row still carries the lease the run holds), signals, timers, and retry counts
+  (a task marked failed is just a run that ends without a handler).
 - `FutureTask` internals. That a slot is given back exactly once is covered by `AdmittedRunTest`.
 - Timing: the 100 ms poll while full and the 1 s pause after a short fetch only decide when the
   next fetch happens.
@@ -274,7 +280,7 @@ Every model has two instances, two buckets and a limit of 1 unless it says other
 | `sched_no_limit` | as above with no limit | ok |
 | `sched_inmem` | one task enters in memory on either instance, two are due | ok |
 | `sched_inmem_over_limit` | as above, asking that the whole count stay within the limit | `AdmittedWithinLimit` violated (calibration: in-memory work is never refused) |
-| `sched_faults` | limit 2; two faults among crash, handler timeout and lease lapse; the renewer cancels runs whose lease moved | ok |
+| `sched_faults` | limit 2; two faults among crash, handler timeout, lease lapse and a run that ends before it has a handler; the renewer cancels runs whose lease moved | ok |
 | `sched_partitioned` | partitioning on; two faults among crash and a live member's heartbeat ageing out | ok |
 | `sched_cancel_unreported` | the renewer cancels a run between its start and the moment it reports its handler | **`AdmittedMatchesWork` violated** (finding 1) |
 | `sched_hang` | one instance, one handler that never completes | **a due task never runs** (the documented trade-off) |
@@ -284,9 +290,13 @@ Every model has two instances, two buckets and a limit of 1 unless it says other
 
 The models are not vacuous: each fault path is reached in the model that enables it, and breaking
 the spec on purpose is caught. Fetching the fetch size regardless of free slots breaks
-`FetchedWithinLimit`. Giving the slot back on a timeout, on a cancel while the handler runs, or not
-at all on a crash, and counting a task the queue refused, each break `AdmittedMatchesWork`. Dead
-members that never age out break liveness in `sched_partitioned`.
+`FetchedWithinLimit`. Giving the slot back on a timeout or on a cancel while the handler runs,
+keeping the count across a crash, and counting a task the queue refused, each break
+`AdmittedMatchesWork`. Dead members that never age out break liveness in `sched_partitioned`.
+
+The model check says nothing about whether the engine does what the model says. That half is
+[trace validation](trace/README.md#scheduler-traces): recorded runs of the real scheduler are
+replayed against this model, and a run it cannot explain fails the `trace-validation` job.
 
 The findings:
 
@@ -300,7 +310,8 @@ The findings:
    - From then until that handler finishes, the instance runs one task more than its count says,
      so a fetch can take it one over its limit.
    - Confirmed in the engine: with a handler that blocks inside `handle` and a run the renewer
-     cancels, `admittedCount` is 0 while the handler's future is still pending.
+     cancels, `admittedCount` is 0 while the handler's future is still pending. Trace validation
+     rejects the recorded run.
      `AdmittedRunTest.testRunCancelledBeforeItReachesTheHandlerGivesTheSlotBackOnce` pins the same
      behaviour down as the release happening once.
    - Narrow in practice: the cancel has to land within one store read of the run starting, on a

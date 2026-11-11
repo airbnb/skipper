@@ -5,6 +5,7 @@ import com.airbnb.skipper.internal.ExceptionClassifier
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.cluster.SingleMemberClusterMembershipManager
 import com.airbnb.skipper.internal.scheduler.Scheduler
+import com.airbnb.skipper.internal.scheduler.SchedulerInstrumentation
 import com.airbnb.skipper.internal.scheduler.mysql.MySqlScheduler
 import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
 import com.airbnb.skipper.internal.serde.Serde
@@ -254,6 +255,12 @@ class SkipperConfig(
             }
             field = value
         }
+
+    /**
+     * How the runtime builds its in-memory task queue and task handlers. Leave it at the default.
+     * It exists so a test harness can observe the scheduler; see [SchedulerInstrumentation].
+     */
+    var schedulerInstrumentation: SchedulerInstrumentation = SchedulerInstrumentation.None
 
     private val devModeSuffix: String by lazy { UUID.randomUUID().toString() }
 

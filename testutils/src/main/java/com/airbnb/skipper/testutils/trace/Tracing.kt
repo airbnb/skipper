@@ -3,6 +3,7 @@ package com.airbnb.skipper.testutils.trace
 import com.airbnb.skipper.ComponentFactory
 import com.airbnb.skipper.SkipperConfig
 import com.airbnb.skipper.internal.scheduler.Scheduler
+import com.airbnb.skipper.internal.scheduler.SchedulerInstrumentation
 import com.airbnb.skipper.internal.scheduler.mysql.MySqlScheduler
 import com.airbnb.skipper.internal.scheduler.sqlite.SqliteScheduler
 import com.airbnb.skipper.internal.storage.WorkflowStore
@@ -14,8 +15,9 @@ import java.util.UUID
 /**
  * Turns on trace recording for a runtime when the `skipper.trace.dir` system property names a
  * directory: the configured store and scheduler are wrapped so every write lands in a new
- * `<dir>/trace-<uuid>.ndjson`. Without the property this does nothing, so ordinary test runs are
- * unaffected. The test harness calls it just before it builds each runtime.
+ * `<dir>/trace-<uuid>.ndjson`, and what the scheduler does in memory (its queue and its handlers)
+ * lands in a new `<dir>/sched-<uuid>.ndjson`. Without the property this does nothing, so ordinary
+ * test runs are unaffected. The test harness calls it just before it builds each runtime.
  *
  * Only the stock JDBC backends are traced. A test that plugs in its own store or scheduler is
  * usually steering an interleaving by blocking inside a call, and the recorder's lock, held across
@@ -33,6 +35,13 @@ object Tracing {
         val recorder = TraceRecorder(Paths.get(dir).resolve("trace-${UUID.randomUUID()}.ndjson"), config)
         config.workflowStore = StoreFactory(config.workflowStore, recorder)
         config.scheduler = SchedulerFactory(config.scheduler, recorder)
+        // A test that observes the scheduler itself keeps its own instrumentation.
+        if (config.schedulerInstrumentation === SchedulerInstrumentation.None) {
+            val schedulerRecorder = SchedulerTraceRecorder(Paths.get(dir).resolve("sched-${UUID.randomUUID()}.ndjson"))
+            config.schedulerInstrumentation = schedulerRecorder
+            val traced = config.scheduler
+            config.scheduler = ComponentFactory { FetchTracingScheduler(traced.create(it), schedulerRecorder) }
+        }
     }
 
     private fun isStockBackend(config: SkipperConfig): Boolean =
