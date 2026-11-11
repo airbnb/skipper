@@ -3,7 +3,8 @@
 # what the models cover and formal/tla/trace/README.md for trace validation.
 #
 #   tla-model-check  Runs formal/tla/check.sh, which model-checks every config in
-#                    formal/tla/models/ with TLC and compares each verdict with the one the
+#                    formal/tla/models/ with TLC, against the workflow model or (the sched_*
+#                    configs) the scheduler model, and compares each verdict with the one the
 #                    config records on its `\* expect:` line. Some models record a known engine
 #                    bug as their expected violation, so the job is green while nothing changes
 #                    and red when a verdict moves: a model edit that breaks a property, or a fix
