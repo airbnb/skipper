@@ -23,8 +23,8 @@ interface SchedulerInstrumentation {
     /** Returns the handler the scheduler manager will call for its task type. */
     fun taskHandler(handler: TaskHandler): TaskHandler = handler
 
-    /** Called once with the scheduler manager the runtime built around that queue and those handlers. */
-    fun schedulerManager(manager: SkipperSchedulerManager) {}
+    /** Returns the scheduler manager to run, given the one built around that queue and those handlers. */
+    fun schedulerManager(manager: SkipperSchedulerManager): SkipperSchedulerManager = manager
 
     object None : SchedulerInstrumentation
 }

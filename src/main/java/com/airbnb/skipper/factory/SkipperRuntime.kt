@@ -402,6 +402,6 @@ class SkipperRuntime
                 config.gracefulShutdownTimeout,
                 inFlightCancelWatcher.get(),
                 config.schedulerMaxConcurrentTasks,
-            ).also { config.schedulerInstrumentation.schedulerManager(it) }
+            ).let { config.schedulerInstrumentation.schedulerManager(it) }
         }
     }
