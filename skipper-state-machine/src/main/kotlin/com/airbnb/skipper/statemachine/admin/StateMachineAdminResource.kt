@@ -1,6 +1,7 @@
 package com.airbnb.skipper.statemachine.admin
 
 import com.airbnb.skipper.WorkflowInstance
+import com.airbnb.skipper.encryption.EncryptedValue
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.api.RunRequest
 import com.airbnb.skipper.internal.storage.WorkflowSearchFilter
@@ -336,8 +337,8 @@ open class StateMachineAdminResource
                         endTime = cp.executionEndTime?.let { PreciseTimestampView(it.epochSecond, it.nano) },
                         successful = cp.isSuccessful,
                         compensation = cp.checkpointTag.actionMethod.contains("compensat", ignoreCase = true),
-                        input = cp.input,
-                        result = cp.resultOrError,
+                        input = redacted(cp.input),
+                        result = redacted(cp.resultOrError),
                         actionClassName = cp.checkpointTag.actionClass.name,
                     )
                 }
@@ -518,6 +519,11 @@ open class StateMachineAdminResource
             instance.state.toJavaMap()
                 .filterKeys { name -> name != INTERNAL_PERSISTED_STATE_FIELD && !name.startsWith("__") }
                 .filterValues { value -> value !is SkipperStateMachine.PersistedStateBlob }
+                .mapValues { (_, value) -> redacted(value) }
+
+        // This resource serializes stored values with its own mapper, so an encrypted value is
+        // swapped for its placeholder here; the admin UI never decrypts.
+        private fun redacted(value: Any?): Any? = if (value is EncryptedValue) value.placeholder() else value
 
         private fun buildEventSchema(clazz: Class<*>): EventSchemaInfo {
             val params = clazz.kotlin.primaryConstructor?.parameters?.map { p ->

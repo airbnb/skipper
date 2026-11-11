@@ -6,6 +6,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowInstance
+import com.airbnb.skipper.encryption.EncryptedValue
 import com.airbnb.skipper.internal.CheckpointTag
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.api.ActionCheckpoint
@@ -282,6 +283,28 @@ class StateMachineAdminResourceTest {
             assertThat(this.result).isEqualTo("ok-value")
         }
         assertThat(result.sequenceDiagramMermaid).contains("SomeActions.doSomething()")
+    }
+
+    @Test
+    fun `shows a placeholder instead of encrypted checkpoint values and state fields`() {
+        val businessCheckpoint = buildCheckpoint(
+            actionClass = SomeActions::class.java,
+            actionMethod = "doSomething",
+            result = Either.right(EncryptedValue("pii", "cmVzdWx0")),
+            input = EncryptedValue("pii", "aW5wdXQ="),
+        )
+        val instance = buildInstance(state = HashMap.empty<String, Any?>().put("taxId", EncryptedValue("pii", "dGF4")))
+        every { store.getWorkflow("test-id") } returns Option.of(instance)
+        every { store.getActionCheckpoints("test-id") } returns io.vavr.collection.List.of(businessCheckpoint)
+        stubSnapshotQuery(null)
+
+        val result = resource.getWorkflowInstance("test-id", null)
+
+        with(result.actionHistory.single()) {
+            assertThat(input).isEqualTo("[encrypted: pii]")
+            assertThat(this.result).isEqualTo("[encrypted: pii]")
+        }
+        assertThat(result.stateFields).containsEntry("taxId", "[encrypted: pii]")
     }
 
     @Test

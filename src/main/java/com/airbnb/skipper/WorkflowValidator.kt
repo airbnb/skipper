@@ -1,5 +1,7 @@
 package com.airbnb.skipper
 
+import com.airbnb.skipper.encryption.Encrypted
+import com.airbnb.skipper.internal.ValueEncryption
 import com.airbnb.skipper.internal.serde.Serde
 import com.airbnb.skipper.util.allDeclaredFields
 import com.airbnb.skipper.util.allDeclaredMethods
@@ -10,8 +12,15 @@ import javax.inject.Inject
  * A runtime validator for Workflow creation and invocations.
  */
 class WorkflowValidator
-    @Inject
-    constructor(private val serde: Serde) {
+    constructor(
+        private val serde: Serde,
+        /** Knows which encryptors `@Encrypted` state fields may name. */
+        private val valueEncryption: ValueEncryption,
+    ) {
+        // Validates against no registered encryptors, so every `@Encrypted` state field is rejected.
+        @Inject
+        constructor(serde: Serde) : this(serde, ValueEncryption.UNCONFIGURED)
+
         /**
          * Defines a rule for validating a workflow creation. This is the closest we can get to compile-time validation.
          */
@@ -107,6 +116,38 @@ class WorkflowValidator
             } else {
                 emptyList()
             }
+        }
+
+        /**
+         * Validates `@Encrypted` on a workflow class: it is supported on `@StateField` fields only, and the
+         * encryptor it names must be registered. Workflow inputs and results are not encrypted, so the
+         * annotation is rejected on methods rather than silently ignored.
+         */
+        private val encryptedMustBeOnStateFieldsWithARegisteredEncryptor = CreationRule { workflow ->
+            val errors = mutableListOf<String>()
+            workflow.allDeclaredMethods(Workflow::class.java)
+                .filter { !it.isSynthetic && it.isAnnotationPresent(Encrypted::class.java) }
+                .forEach {
+                    errors.add(
+                        "Workflow method ${workflow.name}.${it.name} is annotated with @Encrypted, which is only " +
+                            "supported on @StateField fields of a workflow"
+                    )
+                }
+            workflow.allDeclaredFields(Workflow::class.java)
+                .filter { it.isAnnotationPresent(Encrypted::class.java) }
+                .forEach { field ->
+                    if (!field.isAnnotationPresent(StateField::class.java)) {
+                        errors.add("Workflow field ${workflow.name}.${field.name} is annotated with @Encrypted but not with @StateField")
+                    }
+                    val encryptor = field.getAnnotation(Encrypted::class.java).encryptor
+                    if (!valueEncryption.isRegistered(encryptor)) {
+                        errors.add(
+                            "State field ${workflow.name}.${field.name} uses encryptor '$encryptor', which is not registered in " +
+                                "SkipperConfig.encryptors"
+                        )
+                    }
+                }
+            errors
         }
 
         /**
@@ -233,7 +274,8 @@ class WorkflowValidator
             workflowMethodsMustHaveAtMostOneArgument,
             workflowMustHaveAtLeastOneWorkflowMethod,
             workflowStateFieldsMustBeSerializable,
-            persistableSignalArgMustBeSerializable
+            persistableSignalArgMustBeSerializable,
+            encryptedMustBeOnStateFieldsWithARegisteredEncryptor
         )
 
         /**

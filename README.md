@@ -193,6 +193,7 @@ with Guice and the admin UI.
 | [Signals and queries](https://skipper.airbnb.tech/docs/signals-and-queries/)   | Feed a running workflow from the outside, or ask it where it is      |
 | [Compensation](https://skipper.airbnb.tech/docs/compensation/)                 | Undo completed steps in reverse on failure — the saga pattern        |
 | [Versioning](https://skipper.airbnb.tech/docs/versioning/)                     | Evolve workflow code while old instances are still in flight         |
+| [Encryption](https://skipper.airbnb.tech/docs/encryption/)                     | `@Encrypted` keeps sensitive action results and state encrypted at rest, with your own `Encryptor` |
 | [Admin UI and tracing](https://skipper.airbnb.tech/docs/observability/)        | Inspect, replay, and manage live instances                          |
 | [Metrics](https://skipper.airbnb.tech/docs/observability/#metrics)             | Engine counters, latencies and gauges; `skipper-metrics-prometheus` exposes them to a Prometheus scrape |
 | [Testing](https://skipper.airbnb.tech/docs/testing/)                           | `skipper-testutils`: extend `WorkflowTest` and drive workflows deterministically in unit tests |

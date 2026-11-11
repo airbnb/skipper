@@ -1,6 +1,8 @@
 package com.airbnb.skipper
 
 import com.airbnb.skipper.ActionValidator.CreationRule
+import com.airbnb.skipper.encryption.Encrypted
+import com.airbnb.skipper.internal.ValueEncryption
 import com.airbnb.skipper.internal.serde.Serde
 import com.airbnb.skipper.util.allDeclaredFields
 import com.airbnb.skipper.util.allDeclaredMethods
@@ -13,8 +15,15 @@ import javax.inject.Inject
  * A runtime validator for Action classes.
  */
 class ActionValidator
-    @Inject
-    constructor(private val serde: Serde) {
+    constructor(
+        private val serde: Serde,
+        /** Knows which encryptors `@Encrypted` methods may name. */
+        private val valueEncryption: ValueEncryption,
+    ) {
+        // Validates against no registered encryptors, so every `@Encrypted` method is rejected.
+        @Inject
+        constructor(serde: Serde) : this(serde, ValueEncryption.UNCONFIGURED)
+
         private fun interface CreationRule {
             fun evaluate(action: Class<out Actions>): List<String>
         }
@@ -351,6 +360,30 @@ class ActionValidator
         }
 
         /**
+         * Validates that every `@Encrypted` method is an `@Execute` method, the only kind whose values Skipper persists
+         * (a `@Compensate` method returns nothing and is handed its action's values already decrypted), and that the
+         * encryptor it names is registered.
+         */
+        private val encryptedMethodsMustBeActionsWithARegisteredEncryptor = CreationRule { actions ->
+            actions.allDeclaredMethods(Actions::class.java)
+                .filter { !it.isSynthetic && it.isAnnotationPresent(Encrypted::class.java) }
+                .flatMap { method ->
+                    val encryptor = method.getAnnotation(Encrypted::class.java).encryptor
+                    val errors = mutableListOf<String>()
+                    if (!method.isAnnotationPresent(Execute::class.java)) {
+                        errors.add("Action method ${actions.name}.${method.name} is annotated with @Encrypted but not with @Execute")
+                    }
+                    if (!valueEncryption.isRegistered(encryptor)) {
+                        errors.add(
+                            "Action method ${actions.name}.${method.name} uses encryptor '$encryptor', which is not registered in " +
+                                "SkipperConfig.encryptors"
+                        )
+                    }
+                    errors
+                }
+        }
+
+        /**
          * List of rules to validate the creation of an action class.
          */
         private val creationRules = listOf(
@@ -364,7 +397,8 @@ class ActionValidator
             validateCompensableActionParameters,
             validateCompensationMethodReturnType,
             validateCompensationMethodParameterCount,
-            validateCompensationMethodParameterTypes
+            validateCompensationMethodParameterTypes,
+            encryptedMethodsMustBeActionsWithARegisteredEncryptor
         )
 
         /**

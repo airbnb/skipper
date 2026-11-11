@@ -129,7 +129,7 @@ open class WorkflowExecutor
                             workflowInstance.workflowId,
                         )
                     workflow.executionContext = executionContext
-                    inspector.set(WorkflowInspector(workflow))
+                    inspector.set(WorkflowInspector(workflow, internalDeps.valueEncryption))
                     inspector.get().validate()
                     inspector.get().setState(workflowInstance.state)
                     val workflowMethod =
@@ -153,6 +153,7 @@ open class WorkflowExecutor
                         }
                         return@supplyAsync resultFuture
                             .thenApply { result ->
+                                failIfEncryptionFailed(executionContext)
                                 metrics
                                     .counter(
                                         ImmutableMap.of(
@@ -286,7 +287,7 @@ open class WorkflowExecutor
                         workflow.executionContext = executionContext
                         middleware.rawBeforeExecution(invocation)
                         try {
-                            inspector.set(WorkflowInspector(workflow))
+                            inspector.set(WorkflowInspector(workflow, internalDeps.valueEncryption))
                             inspector.get().validate()
                             inspector.get().setState(workflowInstance.state)
                             val signalMethod =
@@ -300,6 +301,7 @@ open class WorkflowExecutor
                                 resultFuture = CompletableFuture.completedFuture(invokeResult)
                             }
                             return@supplyAsync resultFuture.thenApply { result ->
+                                failIfEncryptionFailed(executionContext)
                                 metrics
                                     .counter(
                                         ImmutableMap.of(
@@ -362,7 +364,7 @@ open class WorkflowExecutor
         ): Any? {
             try {
                 val workflow = getWorkflowInstance(workflowClass, workflowId)
-                val inspector = WorkflowInspector(workflow)
+                val inspector = WorkflowInspector(workflow, internalDeps.valueEncryption)
                 inspector.validate()
                 inspector.setState(state)
                 val queryMethod = inspector.getQueryMethod(queryMethodName)
@@ -388,6 +390,9 @@ open class WorkflowExecutor
             failOnValidationError: Boolean,
             inspector: AtomicReference<WorkflowInspector>,
         ): ExecutionResult {
+            // Checked before looking at [e]: the workflow code may have caught the encryption
+            // failure, wrapped it (an ExecutionException from Future.get(), for one) or replaced it.
+            failIfEncryptionFailed(executionContext)
             val resultBuilder = ExecutionResult.builder()
             var cause = e
             if (e is CompletionException) {
@@ -441,16 +446,18 @@ open class WorkflowExecutor
                         "workflowExecutions",
                     )
                     .inc()
+                // Read once: getState() encrypts @Encrypted fields, so each call costs an encryption.
+                val newState = inspector.get().getState()
                 log.debug(
                     "workflow execution exhausted retries and is waiting for manual retry. workflowId={}," +
                         " newState={}, prevState={}",
                     workflowInstance.workflowId,
-                    inspector.get().getState(),
+                    newState,
                     workflowInstance.state,
                 )
                 return resultBuilder
                     .newStatus(WorkflowInstance.Status.RETRIES_EXHAUSTED)
-                    .newState(inspector.get().getState())
+                    .newState(newState)
                     .result(Either.left(cause))
                     .build()
             }
@@ -479,18 +486,20 @@ open class WorkflowExecutor
                     )
                     .inc()
                 val waitDuration = cause.waitDuration
+                // Read once: getState() encrypts @Encrypted fields, so each call costs an encryption.
+                val newState = inspector.get().getState()
                 log.debug(
                     "workflow execution is waiting on a conditional wait. workflowId={}, waitDuration={}," +
                         " newState={}, prevState={}",
                     workflowInstance.workflowId,
                     waitDuration,
-                    inspector.get().getState(),
+                    newState,
                     workflowInstance.state,
                 )
                 return resultBuilder
                     .waitDuration(waitDuration)
                     .newStatus(WorkflowInstance.Status.WAITING)
-                    .newState(inspector.get().getState())
+                    .newState(newState)
                     .build()
             }
             if (cause is SkipperError) {
@@ -597,6 +606,15 @@ open class WorkflowExecutor
                 )
                 .inc()
             throw e as RuntimeException
+        }
+
+        /**
+         * Fails the execution with the encryption failure recorded on [executionContext], if any.
+         * An [InternalError] is retried at the task level, so the workflow neither completes nor
+         * fails because of what its code did with the exception.
+         */
+        private fun failIfEncryptionFailed(executionContext: ExecutionContext) {
+            executionContext.encryptionFailure()?.let { throw it }
         }
 
         open fun getWorkflowInstance(
