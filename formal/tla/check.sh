@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Model-checks SkipperWorkflowLiveness.tla against each config in models/ (or the ones named) and
-# compares every verdict with the one the config records on its `\* expect:` line.
+# Model-checks each config in models/ (or the ones named) against its specification and compares
+# every verdict with the one the config records on its `\* expect:` line. A config names the
+# module it checks on a `\* spec:` line; without one it checks SkipperWorkflowLiveness.
 #
 #   TLA2TOOLS=/path/to/tla2tools.jar formal/tla/check.sh [model ...]
 #
@@ -47,9 +48,10 @@ for model in "$@"; do
     exit 1
   fi
   expected="$(sed -nE 's/^\\\* expect: *([A-Za-z0-9_]+).*/\1/p' "$cfg" | head -1)"
+  spec="$(sed -nE 's/^\\\* spec: *([A-Za-z0-9_]+).*/\1/p' "$cfg" | head -1)"
   java -XX:+UseParallelGC -cp "$jar" tlc2.TLC \
     -config "$cfg" -workers auto -metadir "$out_dir/states/$model" \
-    SkipperWorkflowLiveness.tla >"$out" 2>&1 || true
+    "${spec:-SkipperWorkflowLiveness}.tla" >"$out" 2>&1 || true
   rm -rf "$out_dir/states/$model" # TLC's on-disk state queue; only the .out is kept
   actual="$(verdict_of "$out")"
   if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then

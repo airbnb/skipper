@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs the engine's end-to-end test suites with trace recording on, writing trace-*.ndjson files
-# into <trace-dir> for check_traces.sh:
+# Runs the engine's end-to-end test suites with trace recording on, writing trace-*.ndjson (store
+# and scheduler writes) and sched-*.ndjson (the scheduler's in-memory steps) files into <trace-dir>
+# for check_traces.sh:
 #
 #   formal/tla/trace/record_traces.sh <trace-dir>
 #
