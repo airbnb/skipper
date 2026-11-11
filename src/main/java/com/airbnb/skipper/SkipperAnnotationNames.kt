@@ -21,6 +21,7 @@ object SkipperAnnotationNames {
     const val SCHEDULER_LEASE_DURATION = "SchedulerLeaseDuration"
     const val SCHEDULER_TASK_MAX_RETRIES = "SchedulerTaskMaxRetries"
     const val SCHEDULER_TASK_EXECUTION_TIMEOUT = "SchedulerTaskExecutionTimeout"
+    const val SCHEDULER_MAX_CONCURRENT_TASKS = "SchedulerMaxConcurrentTasks"
     const val UNEXPECTED_ERROR_RETRY_DELAY = "UnexpectedErrorRetryDelay"
     const val RESULT_POLLING_TIME_LIMIT = "ResultPollingTimeLimit"
     const val RESULT_POLLING_SLEEP_DURATION = "ResultPollingSleepDuration"

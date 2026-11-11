@@ -117,6 +117,43 @@ fetching from the whole queue. The same data is available as JSON from `GET /ski
 | `jdbcClusterMembershipManager.heartbeat` / `getActiveMembers` | Timers for the heartbeat write and the membership read. |
 | `sqliteScheduler.leaseLockContention` | SQLite only: a lease attempt skipped because another instance held the table lock. Expected to be low and non-zero under load. |
 
+## Limiting concurrency
+
+The scheduler fetches ready tasks in batches of `scheduler_fetch_count` (default 5). It waits a
+second after a fetch that comes back with fewer than 5 tasks, and otherwise fetches again straight
+away. Each fetched task starts on its own thread, so on its own nothing stops an
+instance from taking on a large backlog all at once. Partitioning makes this more likely: once
+instances stop colliding, every fetch comes back full until the backlog is gone.
+
+Set `schedulerMaxConcurrentTasks` to the number of tasks one instance can run at once without
+overloading itself or the services its workflows call:
+
+```kotlin
+config.schedulerMaxConcurrentTasks = 200
+```
+
+The instance then asks only for as many tasks as it has room for, and stops fetching while it is
+full. While full it checks again every 100 ms, so slots that free up in the meantime are fetched
+together in one batch. With fewer than 5 free slots, a fetch that fills them all is not followed by
+the one-second wait. Keep `scheduler_fetch_count` at 5 or more when you set a limit: a smaller
+fetch size still waits a second after every fetch, as it does with no limit. A backlog drains at about `instances × schedulerMaxConcurrentTasks ÷ task duration` tasks
+per second. The `scheduler_max_concurrent_tasks` knob changes the limit at runtime.
+
+Workflows started in the process run in memory without waiting for a slot, because the caller may
+be waiting on the result. They count against the limit, so a burst of them pauses fetching.
+
+A task keeps its slot until its handler finishes, even after the scheduler stops waiting for it at
+`schedulerTaskExecutionTimeout`. So when a slow dependency makes runs time out, the instance stops
+taking on more work rather than piling new runs on top of the ones still running. A run that never
+finishes keeps its slot for as long as the process lives; `admittedTasks` staying above zero while
+the instance is idle is the sign of one.
+
+| Metric | Meaning |
+|---|---|
+| `schedulerManager.admittedTasks` | Gauge of the tasks this instance has taken on and not finished. |
+| `schedulerManager.maxConcurrentTasks` | Gauge of the limit in force; 0 means none. |
+| `schedulerManager.fetchSkippedAtCapacity` | Counts the fetch loop's checks while the instance is full. The loop checks every 100 ms, so its rate is about 10 per second times the share of time the instance spends full: a measure of time at capacity, not of skipped work. |
+
 ## Operational notes
 
 - **Rolling deploys.** Because a graceful stop removes the member row, a rolling restart hands
