@@ -197,8 +197,9 @@ move the way the model says, and does the fetch loop ask for what its free slots
 
    The model's limit and fetch size come from the fetch lines. A run in which they changed, or
    whose fetches are sized from the backlog, is skipped, because they are constants of the model.
-   Nothing else is skipped, and `check_traces.sh` fails when there are no scheduler files or when
-   no scheduler run is accepted.
+   So is a run in which the test adds a task to the queue itself, doing the fetch loop's job by
+   hand. Nothing else is skipped, and `check_traces.sh` fails when there are no scheduler files or
+   when no scheduler run that fetched a task is accepted.
 3. **Checking.** [`SkipperSchedulerTrace.tla`](SkipperSchedulerTrace.tla) replays the events
    against `SkipperScheduler` with one instance.
    - A step consumes the next event, taking its action and landing on its admitted count. The
