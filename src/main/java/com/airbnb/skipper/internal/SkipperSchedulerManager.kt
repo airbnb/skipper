@@ -14,6 +14,8 @@ import com.airbnb.skipper.internal.cluster.BucketPartitioner
 import com.airbnb.skipper.internal.cluster.BucketRange
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.common.SneakyThrow
+import com.airbnb.skipper.internal.scheduler.Admission
+import com.airbnb.skipper.internal.scheduler.AdmittedRun
 import com.airbnb.skipper.internal.scheduler.LeaseRenewalManager
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
@@ -28,11 +30,11 @@ import io.vavr.control.Option
 import java.time.Duration
 import java.time.Instant
 import java.util.HashMap
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
-import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -111,30 +113,36 @@ class SkipperSchedulerManager
          * Starts taking tasks from the scheduler queue and processing them by delegating to the
          * appropriate task handler. This is the scheduler queue consumer thread.
          */
+        // Anything thrown between taking a task and starting its run must give the slot back first.
+        @Suppress("TooGenericExceptionCaught")
         private fun startTakingTasks(type: Task.Type) {
             log.info("starting skipper scheduler manager.startTakingTasks for task type {}", type)
             while (!stop.get() && !Thread.currentThread().isInterrupted) {
                 try {
                     val task: Task<Any> = schedulerQueue.take(type)
-                    log.debug("pulled task from queue: {}", task.id)
-                    metrics.counter(METRICS_COMPONENT, "takenTasks").inc()
-                    val taskFuture: Future<*> =
-                        try {
-                            executor.submit {
-                                try {
-                                    handleTask(task)
-                                } finally {
-                                    leaseManager.removeTaskInFlight(task.id)
-                                    schedulerQueue.markFinished()
-                                }
+                    // From here the task holds a slot, and the run gives it back when it is done.
+                    val admission = Admission(schedulerQueue)
+                    val run =
+                        AdmittedRun(admission) {
+                            try {
+                                handleTask(task, admission::holdUntil)
+                            } finally {
+                                leaseManager.removeTaskInFlight(task.id)
                             }
-                        } catch (e: RejectedExecutionException) {
-                            schedulerQueue.markFinished()
-                            throw e
                         }
+                    try {
+                        log.debug("pulled task from queue: {}", task.id)
+                        metrics.counter(METRICS_COMPONENT, "takenTasks").inc()
+                        executor.execute(run)
+                    } catch (e: Throwable) {
+                        // The run never started and nothing else has it yet, so cancelling it is safe,
+                        // and it gives the slot back.
+                        run.cancel(false)
+                        throw e
+                    }
                     if (featureGate.isEnabled(FeatureGate.Keys.AUTOMATIC_LEASE_RENEWAL)) {
                         leaseManager.addTaskInFlight(
-                            LeaseRenewalManager.TaskInFlight(taskFuture, task.runAfter, task)
+                            LeaseRenewalManager.TaskInFlight(run, task.runAfter, task)
                         )
                     }
                 } catch (e: Exception) {
@@ -195,11 +203,15 @@ class SkipperSchedulerManager
                                 )
                             }
                         }
-                        if (tasks.isEmpty || tasks.size() < requested) {
-                            // A short fetch means nothing more is ready right now, so wait a second
-                            // before asking again rather than slam the db. A full fetch means more may
-                            // be ready, so fetch again straight away; freeSlots() is what stops that
-                            // once this process is busy.
+                        if (tasks.size() < Math.min(requested, DEFAULT_MAX_FETCH_SIZE)) {
+                            // Few tasks came back, so little is ready: wait a second before asking
+                            // again rather than slam the db. Otherwise fetch again straight away, and
+                            // let freeSlots() stop that once this process is busy.
+                            // 1. A fetch of 5 or more pauses below 5 tasks, as it always has. It does
+                            //    not pause on any short fetch: rows lost to another instance's lease,
+                            //    or filtered out by partitioning, can make it short with more ready.
+                            // 2. A smaller fetch, from a small fetch size or from few free slots,
+                            //    pauses only when it comes back short. A full one fetches again.
                             Thread.sleep(1000)
                         }
                     } catch (e: Exception) {
@@ -634,7 +646,10 @@ class SkipperSchedulerManager
         // would change behavior, so the detekt rule is suppressed instead.
         @Suppress("TooGenericExceptionCaught")
         @VisibleForTesting
-        fun handleTask(task: Task<*>) {
+        fun handleTask(
+            task: Task<*>,
+            holdSlotUntil: (CompletableFuture<*>) -> Unit = {},
+        ) {
             if (task.retryCount > maxRetries) {
                 log.warn("task has reached max retries. marking task as failed. task={}", task)
                 scheduler.markAsFailed(task, "max retries reached")
@@ -647,10 +662,11 @@ class SkipperSchedulerManager
                 val handler = taskHandlers.get(task.type).get()
                 log.debug("handling '{}' task: {}", handler, task.id)
                 try {
-                    val rescheduleTime: Option<Instant> =
-                        handler
-                            .handle(task, taskHandlerExecutor)
-                            .get(taskExecutionTimeout.seconds, TimeUnit.SECONDS)
+                    val handled = handler.handle(task, taskHandlerExecutor)
+                    // The run keeps its slot until the handler finishes, even if we stop waiting for
+                    // it below: work still running on the handler pool counts against the limit.
+                    holdSlotUntil(handled)
+                    val rescheduleTime: Option<Instant> = handled.get(taskExecutionTimeout.seconds, TimeUnit.SECONDS)
                     if (rescheduleTime.isDefined) {
                         log.info("rescheduling task: {} to {}", task.id, rescheduleTime.get())
                         try {

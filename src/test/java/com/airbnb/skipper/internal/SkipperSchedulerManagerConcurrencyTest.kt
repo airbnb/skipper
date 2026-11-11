@@ -170,6 +170,24 @@ class SkipperSchedulerManagerConcurrencyTest {
     }
 
     @Test
+    fun testFetchesAgainStraightAwayAfterAShortFetchOfFiveOrMore() {
+        // Rows lost to another instance's lease can make a large fetch short with more still ready;
+        // as before this change, only a fetch below 5 pauses.
+        val mockKnobs = mock<Knobs>()
+        whenever(mockKnobs.getInteger(Knobs.Keys.SCHEDULER_FETCH_COUNT)).thenReturn(Optional.of(10))
+        val fetches = AtomicInteger()
+        val mockScheduler = idleScheduler()
+        whenever(mockScheduler.fetch<Any>(10)).thenAnswer {
+            fetches.incrementAndGet()
+            List.fill(7) { readyTask() }
+        }
+        manager = createManager(mockScheduler, CompletingHandler(), mockKnobs).also { it.start() }
+
+        Thread.sleep(900)
+        assertTrue(fetches.get() >= 3, "expected back-to-back fetches, saw ${fetches.get()}")
+    }
+
+    @Test
     fun testSleepsAfterAShortFetch() {
         val fetches = AtomicInteger()
         val mockScheduler = idleScheduler()
@@ -212,12 +230,44 @@ class SkipperSchedulerManagerConcurrencyTest {
         rejecting.reject = true
 
         schedulerQueue.add(readyTask())
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-        while (schedulerQueue.admittedCount > 0 && System.nanoTime() < deadline) {
-            Thread.sleep(20)
-        }
-        assertEquals(0, schedulerQueue.admittedCount, "a rejected task must not keep its slot")
+        assertTrue(awaitNoneAdmitted(), "a rejected task must not keep its slot")
         rejecting.shutdownNow()
+    }
+
+    @Test
+    fun testKeepsTheSlotWhileTheHandlerOutlivesTheTimeout() {
+        // The scheduler stops waiting after a second, but the handler is still running on its pool.
+        val handled = CompletableFuture<Option<Instant>>()
+        val handler =
+            object : TaskHandler {
+                override fun handle(
+                    task: Task<*>,
+                    executorService: ExecutorService,
+                ): CompletableFuture<Option<Instant>> = handled
+            }
+        manager =
+            createManager(idleScheduler(), handler, knobs, executionTimeout = Duration.ofSeconds(1))
+                .also { it.start() }
+
+        schedulerQueue.add(readyTask())
+        Thread.sleep(2_500)
+        assertEquals(1, schedulerQueue.admittedCount, "the handler has not finished, so the slot is still held")
+
+        handled.complete(Option.none())
+        assertTrue(awaitNoneAdmitted(), "the slot is given back once the handler finishes")
+    }
+
+    @Test
+    fun testReleasesTheSlotWhenSomethingThrowsBeforeTheRunStarts() {
+        val throwingMetrics =
+            object : Metrics by metrics {
+                override fun counter(vararg names: String) =
+                    if ("takenTasks" in names) throw IllegalStateException("metrics backend down") else metrics.counter(*names)
+            }
+        manager = createManager(idleScheduler(), CompletingHandler(), knobs, metrics = throwingMetrics).also { it.start() }
+
+        schedulerQueue.add(readyTask())
+        assertTrue(awaitNoneAdmitted(), "a task that never started must not keep its slot")
     }
 
     @Test
@@ -241,6 +291,17 @@ class SkipperSchedulerManagerConcurrencyTest {
         manager.fetchTasksWithOptionalPartitioning(3)
 
         verify(mockScheduler, times(3)).fetch<Any>(3)
+    }
+
+    private fun awaitNoneAdmitted(): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (schedulerQueue.admittedCount > 0) {
+            if (System.nanoTime() > deadline) {
+                return false
+            }
+            Thread.sleep(20)
+        }
+        return true
     }
 
     private fun scheduleReadyTask() {
@@ -278,6 +339,8 @@ class SkipperSchedulerManagerConcurrencyTest {
         queue: SchedulerExecutionQueue = schedulerQueue,
         cluster: ClusterMembershipManager = SingleMemberClusterMembershipManager(),
         mainExecutor: ExecutorService = executor,
+        executionTimeout: Duration = Duration.ofMinutes(5),
+        metrics: Metrics = this.metrics,
     ): SkipperSchedulerManager =
         SkipperSchedulerManager(
             queue,
@@ -287,7 +350,7 @@ class SkipperSchedulerManagerConcurrencyTest {
             HashMap.of(Task.Type.WORKFLOW, handler),
             metrics,
             10,
-            Duration.ofMinutes(5),
+            executionTimeout,
             leaseManager,
             featureGate,
             knobs,
