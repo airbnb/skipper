@@ -80,8 +80,8 @@ def model_files(events, constants):
         "Partitioning": "FALSE",
         "InMemTasks": "{}",
         # A copy that outlives its lease in the queue, and a run that ends before it has a handler,
-        # both happen in real runs. A slot given back while its handler still runs (finding 1) is
-        # left out, so a run that shows it is rejected.
+        # both happen in real runs. The model has no step that gives a slot back while its handler
+        # still runs, so a run that shows one is rejected.
         "Faults": '{"lapse", "abort"}',
         "MaxFaults": 1000000,
         "MaxHangs": 0,

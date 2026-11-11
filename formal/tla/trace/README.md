@@ -208,8 +208,8 @@ move the way the model says, and does the fetch loop ask for what its free slots
    - The recorder does not see the task rows or other instances. So the conditions on rows are
      opened up: any task may be due, and any lease may have moved. Partitioning and what happens
      across instances are left to the model check.
-   - A slot given back while its handler is still running (finding 1 of the scheduler model) is
-     not allowed, so a run that shows it is rejected.
+   - The model has no step that gives a slot back while its handler is still running, so a run
+     that shows one is rejected.
 
 Replaying is nearly deterministic, so these checks are quick: the longest run so far has a few
 hundred events and takes under a second.
@@ -227,16 +227,17 @@ hundred events and takes under a second.
 
 Two checks, neither of which any end-to-end test notices:
 
-- **Giving the slot back when the scheduler stops waiting.** I changed `AdmittedRun.done` to
+- **Giving the slot back when the scheduler stops waiting.** I changed `AdmittedRun` to
   release the slot as soon as the run ends, instead of holding it until the handler finishes. All
   112 integration tests stayed green. Trace validation rejected the scheduler run of
   `SchedulerTaskExecutionTimeoutTest`: it stops at the slot coming back while the handler that
   outlived the timeout is still running.
-- **Finding 1 of the scheduler model, in the engine as it is.** A handler that blocks inside
-  `handle`, and a run the lease renewer cancels meanwhile. The recorded run reads: handler called,
-  slot given back, future handed back, and then a fetch asking for a task the instance has no room
-  for. It is rejected at the future being handed back, since the model has no handler left to
-  hand one back. The suites do not produce this run on their own (see Limits).
+- **Finding 1 of the scheduler model, before its fix.** A handler that blocks inside `handle`,
+  and a run the lease renewer cancels meanwhile. On the engine as it was, the recorded run read:
+  handler called, slot given back, future handed back, and then a fetch asking for a task the
+  instance had no room for. It was rejected. On the fixed engine the same test records the slot
+  coming back only after the handler finishes, and the run is accepted. The suites do not produce
+  this run on their own (see Limits).
 
 Current results on the traced suites: 119 of 119 scheduler runs accepted (2,066 events, the longest
 112), and 200 of 200 mutants rejected.
@@ -248,7 +249,7 @@ Current results on the traced suites: 119 of 119 scheduler runs accepted (2,066 
 - **Timing.** The recorder's lock serialises the queue's steps, which can hide races that happen
   at full speed.
 - **Only what the suites do.** A race that the suites never hit is never recorded. Finding 1
-  needs the lease renewer to cancel a run within one store read of its start; no suite does that.
+  needed the lease renewer to cancel a run within one store read of its start; no suite does that.
 - **Runtimes only.** Tests that build their own scheduler manager are not recorded.
 - **Stopping looks like being slow**, as for workflows: a handler that never finishes just leaves
   a shorter trace.
