@@ -82,7 +82,7 @@ def mutate_scheduler(events, kind):
             return None
         out[i], out[i + 1] = out[i + 1], out[i]
     elif kind == "release_first":
-        # The last slot in use was given back before its handler finished (finding 1's shape).
+        # The last slot in use was given back before its handler finished.
         i = middle([k for k in range(len(events) - 1) if act(events[k]) == "Done"
                     and act(events[k + 1]) == "Release" and "admitted |-> 0" in events[k + 1]])
         if i is None:

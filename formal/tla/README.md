@@ -243,11 +243,11 @@ the member list. Faults, in-memory schedules, cancels and restarts may or may no
 | `Take` | `SkipperSchedulerManager.startTakingTasks`: `take`, `executor.execute(run)`, `addTaskInFlight` |
 | `RunStart`, `Report` | `AdmittedRun` running `handleTask`: `handler.handle`, then `holdSlotUntil(handled)` |
 | `HandlerDone` | the handler's future completing, and `finishTask` when the run still waits on it |
-| `SlotBack` | `AdmittedRun.done` / `SchedulerExecutionQueue.markFinished` once the handler is done |
+| `SlotBack` | `AdmittedRun` calling `SchedulerExecutionQueue.markFinished` once the run has ended and the handler is done |
 | `RunAborts` | a run that ends before it has a handler: the executor rejects it, the task is past `maxRetries` and is marked failed, or `handler.handle` throws |
 | `Timeout` | `handled.get(taskExecutionTimeout)` giving up in `handleTask` |
 | `Hang` | a handler whose future never completes |
-| `Cancel` | `LeaseRenewalManager.attemptToRenewOneTask` failing and calling `taskFuture.cancel(true)`, then `AdmittedRun.done` |
+| `Cancel` | `LeaseRenewalManager.attemptToRenewOneTask` failing and calling `taskFuture.cancel(true)`: `AdmittedRun.done` gives the slot back for a run that never started, and a run that has started keeps it |
 | `Lapse` | a row's `run_after` passing: the lease is gone and the row can be fetched again |
 | `Crash`, `Join` | the process dying and starting; `JdbcClusterMembershipManager.start` (first heartbeat, then the member list) |
 | `MemberExpire`, `MemberLapse`, `Heartbeat`, `RefreshView` | `JdbcClusterMembershipManager`: `LIVENESS_THRESHOLD` on `last_heartbeat_at`, the heartbeat loop, and the cached `getActiveMemberIds` |
@@ -285,7 +285,7 @@ Every model has two instances, two buckets and a limit of 1 unless it says other
 | `sched_inmem_over_limit` | as above, asking that the whole count stay within the limit | `AdmittedWithinLimit` violated (calibration: in-memory work is never refused) |
 | `sched_faults` | limit 2; two faults among crash, handler timeout, lease lapse and a run that ends before it has a handler; the renewer cancels runs whose lease moved | ok |
 | `sched_partitioned` | partitioning on; two faults among crash and a live member's heartbeat ageing out | ok |
-| `sched_cancel_unreported` | the renewer cancels a run between its start and the moment it reports its handler | **`AdmittedMatchesWork` violated** (finding 1) |
+| `sched_cancel` | a lease lapses under its holder, so the renewer cancels that run at whatever point it has reached | ok (the count was wrong before the fix for finding 1) |
 | `sched_hang` | one instance, one handler that never completes | **a due task never runs** (the documented trade-off) |
 | `sched_hang_spare` | two instances, no partitioning, one hung handler | ok: the other instance runs what the full one cannot |
 | `sched_hang_every_attempt` | as above, one task whose handler hangs on every attempt | **a due task never runs** (finding 3) |
@@ -303,22 +303,25 @@ replayed against this model, and a run it cannot explain fails the `trace-valida
 
 The findings:
 
-1. **A run cancelled before it reports its handler gives its slot back while the handler runs on.**
-   - `AdmittedRun.done` holds the slot for the handler only if the run has reported the handler's
-     future (`holdSlotUntil`). The run reports it after `handler.handle` returns, and
+1. **A run cancelled before it reported its handler gave its slot back while the handler ran on.
+   Fixed in #58 before it merged.**
+   - The run reports its handler's future (`holdSlotUntil`) after `handler.handle` returns, and
      `WorkflowExecutionTaskHandler.handle` reads the workflow from the store before it returns.
-   - If the lease renewer cancels the run in that window (`LeaseRenewalManager`, when another
-     worker has re-leased the row), `done` sees no future and gives the slot back at once. The
-     interrupt does not stop `handle`, which goes on to start the workflow on the handler pool.
-   - From then until that handler finishes, the instance runs one task more than its count says,
-     so a fetch can take it one over its limit.
-   - Confirmed in the engine: with a handler that blocks inside `handle` and a run the renewer
-     cancels, `admittedCount` is 0 while the handler's future is still pending. Trace validation
-     rejects the recorded run.
-     `AdmittedRunTest.testRunCancelledBeforeItReachesTheHandlerGivesTheSlotBackOnce` pins the same
-     behaviour down as the release happening once.
-   - Narrow in practice: the cancel has to land within one store read of the run starting, on a
-     task whose lease was already lost.
+   - `AdmittedRun.done` used to give the slot back for any run with no reported future. If the
+     lease renewer cancelled the run in that window (`LeaseRenewalManager`, when another worker
+     has re-leased the row), the slot came back at once. The interrupt does not stop `handle`,
+     which went on to start the workflow on the handler pool, one task more than the count said.
+   - The model had this as a fault of its own, and `AdmittedMatchesWork` failed with it. In the
+     engine, with a handler that blocks inside `handle` and a run the renewer cancels,
+     `admittedCount` was 0 while the handler's future was still pending, and trace validation
+     rejected the recorded run.
+   - The fix: a run that has started gives the slot back itself when it exits, after the
+     handler's future if it reported one, and `done` does so only for a run that never started.
+     A cancel in the window no longer has a step of its own in the model: the run carries on and
+     reports its future, which is the cancel of a waiting run one step later. `sched_cancel`
+     covers it, and
+     `AdmittedRunTest.testRunCancelledBeforeItReachesTheHandlerKeepsTheSlotUntilTheHandlerFinishes`
+     pins it down in the engine.
 
 2. **With partitioning, a full instance's buckets wait even when another instance is idle.**
    - An instance at its limit stops fetching, but keeps heartbeating, so it stays in the member

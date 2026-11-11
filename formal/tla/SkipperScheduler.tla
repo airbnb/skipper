@@ -42,10 +42,8 @@ FaultKinds == {
     "lapse",             \* a lease lapses under a task its instance still holds
     "member_lapse",      \* a live instance's heartbeat ages out of the member list
     "hang",              \* a handler never completes
-    "abort",             \* a run ends before it has a handler: its submit is rejected, the task is
+    "abort"              \* a run ends before it has a handler: its submit is rejected, the task is
                          \* past its retries, or handler.handle throws
-    "cancel_unreported"  \* the renewer cancels a run between its start and the moment it
-                         \* reports the handler's future (scheduler finding 1 in README.md)
 }
 
 ASSUME /\ NTasks \in Nat \ {0} /\ NInstances \in Nat \ {0} /\ NBuckets \in Nat \ {0}
@@ -70,8 +68,7 @@ Min(a, b) == IF a < b THEN a ELSE b
 (*   finished  the handler completed; the slot is given back next                      *)
 (*   detached  the run is done (timeout or cancel), the handler still runs and still   *)
 (*             holds the slot                                                          *)
-(*   leaked    the run is done and gave the slot back, the handler still runs          *)
-Phases == {"queued", "taken", "started", "waiting", "finished", "detached", "leaked"}
+Phases == {"queued", "taken", "started", "waiting", "finished", "detached"}
 InFlight == {"taken", "started", "waiting"}  \* registered with LeaseRenewalManager
 HoldsLease == {"queued"} \cup InFlight        \* will renew, or start renewing once taken
 
@@ -219,17 +216,16 @@ Report(i, j) ==
 (* 1. Its run was waiting on it: the run wakes and makes the final write, which        *)
 (*    removes the row if it still carries this admission's lease.                      *)
 (* 2. Its run had ended and the slot was held for it.                                  *)
-(* 3. Its run had ended and had given the slot back already: nothing is left of it.    *)
-(* In cases 1 and 2 the slot is given back next (SlotBack).                            *)
+(* Either way the slot is given back next (SlotBack).                                  *)
 HandlerDone(i, j) ==
-    /\ j \in jobs[i] /\ ~j.hung /\ j.phase \in {"waiting", "detached", "leaked"}
+    /\ j \in jobs[i] /\ ~j.hung /\ j.phase \in {"waiting", "detached"}
     /\ row' = IF j.phase = "waiting" /\ row[j.task].gen = j.gen /\ row[j.task].st \in {"leased", "due"}
               THEN [row EXCEPT ![j.task].st = "done"]
               ELSE row
-    /\ IF j.phase = "leaked" THEN Drop(i, j) ELSE Move(i, j, "finished")
+    /\ Move(i, j, "finished")
     /\ UNCHANGED <<alive, members, view, admitted, snap, pending, faults, hangs>>
 
-(* AdmittedRun.done gives the slot back: the run has ended and its handler is done.    *)
+(* AdmittedRun gives the slot back: the run has ended and its handler is done.         *)
 SlotBack(i, j) ==
     /\ j \in jobs[i] /\ j.phase = "finished"
     /\ Drop(i, j) /\ Release(i)
@@ -266,22 +262,22 @@ Hang(i, j) ==
     /\ UNCHANGED <<row, alive, members, view, admitted, snap, pending, faults>>
 
 (* LeaseRenewalManager.attemptToRenewOneTask fails for a run in flight, because        *)
-(* another fetch has leased the row since, and cancels the run. What AdmittedRun.done  *)
-(* then does with the slot:                                                            *)
+(* another fetch has leased the row since, and cancels the run. What AdmittedRun then  *)
+(* does with the slot:                                                                 *)
 (* 1. The run had not started: it never will, and the slot is given back.              *)
 (* 2. The run had reported its handler's future: the slot is held until the handler    *)
 (*    completes.                                                                       *)
-(* 3. The run had started but not reported the future yet: the slot is given back at   *)
-(*    once, and the handler it started runs on without one. Only with                  *)
-(*    "cancel_unreported"; without it the cancel lands once the future is reported.    *)
+(* 3. The run had started but not reported the future yet: the cancel only interrupts  *)
+(*    it. It keeps the slot and goes on to report the future (Report) or to end        *)
+(*    without a handler (RunAborts), so this case is case 2 one step later and has no  *)
+(*    step of its own here.                                                            *)
 LeaseMoved(j) == row[j.task].gen # j.gen  \* replaced in trace validation, which does not see the rows
 
 Cancel(i, j) ==
-    /\ j \in jobs[i] /\ j.phase \in InFlight
+    /\ j \in jobs[i] /\ j.phase \in {"taken", "waiting"}
     /\ LeaseMoved(j)
     /\ \/ j.phase = "taken" /\ Drop(i, j) /\ Release(i)
        \/ j.phase = "waiting" /\ Move(i, j, "detached") /\ admitted' = admitted
-       \/ j.phase = "started" /\ "cancel_unreported" \in Faults /\ Move(i, j, "leaked") /\ Release(i)
     /\ UNCHANGED <<row, alive, members, view, snap, pending, faults, hangs>>
 
 -----------------------------------------------------------------------------------------

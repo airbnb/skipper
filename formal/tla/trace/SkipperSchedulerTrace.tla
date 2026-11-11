@@ -57,10 +57,7 @@ Act(e) ==
       [] e.act = "Take" -> \E j \in jobs[Me] : j.task = e.task /\ Take(Me, j)
       [] e.act = "Start" -> \E j \in jobs[Me] : j.task = e.task /\ RunStart(Me, j)
       [] e.act = "Report" ->
-            \E j \in jobs[Me] :
-                /\ j.task = e.task
-                \* A handler whose run was cancelled before this point still hands back its future.
-                /\ Report(Me, j) \/ (j.phase = "leaked" /\ UNCHANGED vars)
+            \E j \in jobs[Me] : j.task = e.task /\ Report(Me, j)
       [] e.act = "Done" -> \E j \in jobs[Me] : j.task = e.task /\ HandlerDone(Me, j)
       [] e.act = "Release" ->
             \* The recorder does not know whose slot came back; the model has to find a task
