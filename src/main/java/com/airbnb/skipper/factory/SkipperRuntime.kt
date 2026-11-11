@@ -30,6 +30,7 @@ import com.airbnb.skipper.internal.scheduler.ExecutionTimeoutHandler
 import com.airbnb.skipper.internal.scheduler.LeaseRenewalManager
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.SchedulerExecutionQueue
+import com.airbnb.skipper.internal.scheduler.SchedulerInstrumentation
 import com.airbnb.skipper.internal.scheduler.Task
 import com.airbnb.skipper.internal.scheduler.TaskHandler
 import com.airbnb.skipper.internal.scheduler.TimerTaskHandler
@@ -59,7 +60,9 @@ class SkipperRuntime
     @JvmOverloads
     constructor(
         val config: SkipperConfig,
-        val injector: SkipperInjector = config.injector
+        val injector: SkipperInjector = config.injector,
+        /** For Skipper's own test harness; see [SchedulerInstrumentation]. Not a supported extension point. */
+        private val schedulerInstrumentation: SchedulerInstrumentation = SchedulerInstrumentation.None,
     ) {
         init {
             validateStorageBackends(config)
@@ -255,7 +258,7 @@ class SkipperRuntime
         }
 
         val schedulerExecutionQueue: Provider<SchedulerExecutionQueue> = singleton {
-            config.schedulerInstrumentation.executionQueue(
+            schedulerInstrumentation.executionQueue(
                 scheduler.get(),
                 config.utcClock,
                 config.schedulerTaskLeaseDuration
@@ -384,7 +387,7 @@ class SkipperRuntime
                 executionTimeoutHandler.get(),
                 Task.Type.COMPENSATION,
                 compensationFlowTaskHandler.get()
-            ).mapValues { config.schedulerInstrumentation.taskHandler(it) }
+            ).mapValues { schedulerInstrumentation.taskHandler(it) }
             SkipperSchedulerManager(
                 schedulerExecutionQueue.get(),
                 scheduler.get(),
@@ -402,6 +405,6 @@ class SkipperRuntime
                 config.gracefulShutdownTimeout,
                 inFlightCancelWatcher.get(),
                 config.schedulerMaxConcurrentTasks,
-            ).let { config.schedulerInstrumentation.schedulerManager(it) }
+            )
         }
     }

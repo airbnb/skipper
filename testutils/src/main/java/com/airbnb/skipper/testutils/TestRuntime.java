@@ -118,8 +118,8 @@ public class TestRuntime {
 
   public SkipperRuntime getRuntime() {
     if (runtime == null) {
-      Tracing.installIfRequested(config);
-      runtime = new SkipperRuntime(config);
+      runtime =
+          new SkipperRuntime(config, config.getInjector(), Tracing.installIfRequested(config));
       // Register IWorkflowFactory for user code that @Inject-s it.
       // Some code uses @Named("SkipperWorkflowFactory") IWorkflowFactory, some uses unqualified.
       // Skipper-internal fields (ActionExecutor, SkipperEngine, ContextPropagator, RetryStrategy)

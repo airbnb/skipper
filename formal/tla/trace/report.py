@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Summarises a check_traces.sh run: one line per workflow, then totals. Exits 1 on any rejection.
 
-    report.py <workflows.jsonl> [--expect-rejected | --rejected-dirs]
+    report.py <workflows.jsonl> [--expect-rejected | --rejected-dirs | --require-accepted]
 
 A model is accepted when TLC reports TraceNotDone violated, meaning some behaviour consumed every
 event. Otherwise the highest event TLC printed as matched tells how far the model got, and the next
 event is the first write it could not explain.
+
+With --require-accepted it prints nothing unless no workflow run, or no scheduler run, was accepted,
+which fails: a check that covered nothing must not pass.
 
 With --expect-rejected (the mutants.py self-test) the roles swap: every model should be rejected,
 and the ones accepted are listed as survivors.
@@ -40,6 +43,8 @@ def main():
     rows = [json.loads(line) for line in open(sys.argv[1])]
     if "--expect-rejected" in sys.argv[2:]:
         return mutants(rows)
+    if "--require-accepted" in sys.argv[2:]:
+        return require_accepted(rows)
     if "--rejected-dirs" in sys.argv[2:]:
         for r in rows:
             if r["status"] == "model" and verdict(r["dir"])[0] == "REJECTED":
@@ -65,6 +70,18 @@ def main():
         print(f"{status:9} {test}  ({detail})")
     print("totals: " + ", ".join(f"{k} {v}" for k, v in sorted(totals.items())))
     return 1 if totals.get("REJECTED") or totals.get("error") else 0
+
+
+def require_accepted(rows):
+    """Fails unless at least one workflow run and one scheduler run were accepted."""
+    missing = []
+    for kind in ("workflow", "scheduler"):
+        models = [r for r in rows if r.get("kind", "workflow") == kind and r["status"] == "model"]
+        if not any(verdict(r["dir"])[0] == "accepted" for r in models):
+            missing.append(kind)
+    for kind in missing:
+        print(f"no {kind} run was accepted: nothing of that kind was checked")
+    return 1 if missing else 0
 
 
 def mutants(rows):

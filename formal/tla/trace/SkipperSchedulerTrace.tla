@@ -51,7 +51,9 @@ Act(e) ==
       [] e.act = "Add" /\ e.origin = "fetched" ->
             /\ e.added <=> ~QueuedHere(Me, e.task)
             /\ Deliver(Me, e.task)
-      [] e.act = "Add" /\ e.origin = "inmem" -> e.added /\ InMemAdd(Me, e.task)
+      [] e.act = "Add" /\ e.origin = "inmem" ->
+            /\ e.added <=> ~QueuedHere(Me, e.task)
+            /\ InMemAdd(Me, e.task)
       [] e.act = "Take" -> \E j \in jobs[Me] : j.task = e.task /\ Take(Me, j)
       [] e.act = "Start" -> \E j \in jobs[Me] : j.task = e.task /\ RunStart(Me, j)
       [] e.act = "Report" ->

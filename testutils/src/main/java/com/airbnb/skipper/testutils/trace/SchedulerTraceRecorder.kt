@@ -1,5 +1,7 @@
 package com.airbnb.skipper.testutils.trace
 
+import com.airbnb.skipper.Knobs
+import com.airbnb.skipper.SkipperConfig
 import com.airbnb.skipper.internal.SkipperSchedulerManager
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.SchedulerExecutionQueue
@@ -24,12 +26,14 @@ import kotlin.concurrent.withLock
  * Every step that changes the count runs under one lock together with its line, so the order of
  * the lines is the order the steps happened and each count is exact.
  *
- * Nothing reaches the file until the runtime builds its scheduler manager on the traced queue and
- * handlers. A test that drives a manager of its own, with handlers the recorder never sees, leaves
+ * Nothing reaches the file until the runtime builds its scheduler manager, which is when it asks
+ * for its handlers. A test that drives a manager of its own, with handlers the recorder never sees, leaves
  * no trace: its lines are held in memory, up to [MAX_HELD], and dropped.
  */
 internal class SchedulerTraceRecorder(
     private val file: Path,
+    private val config: SkipperConfig,
+    private val knobs: () -> Knobs,
 ) : SchedulerInstrumentation {
     /** The test frames at install time, for when the first event comes from an engine thread. */
     private val installedFrom: List<String> = TraceRecorder.origin()
@@ -42,24 +46,19 @@ internal class SchedulerTraceRecorder(
     private var held: MutableList<Map<String, Any?>>? = ArrayList()
     private var dropped = false
 
-    @Volatile private var manager: SkipperSchedulerManager? = null
-
     override fun executionQueue(
         scheduler: Scheduler,
         clock: Clock,
         leaseDuration: Duration,
     ): SchedulerExecutionQueue = TracingExecutionQueue(scheduler, clock, leaseDuration, this).also { queue = it }
 
-    override fun taskHandler(handler: TaskHandler): TaskHandler = TracingTaskHandler(handler, this)
-
-    /** The runtime built its scheduler manager on the traced queue and handlers: start writing. */
-    override fun schedulerManager(manager: SkipperSchedulerManager): SkipperSchedulerManager {
-        this.manager = manager
+    /** The runtime is building its scheduler manager on the traced queue and handlers: start writing. */
+    override fun taskHandler(handler: TaskHandler): TaskHandler {
         lock.withLock {
             held?.forEach(::write)
             held = null
         }
-        return manager
+        return TracingTaskHandler(handler, this)
     }
 
     /** Runs [step] and records it as one line, under the lock. */
@@ -85,12 +84,19 @@ internal class SchedulerTraceRecorder(
         fields: Map<String, Any?> = emptyMap(),
     ) = event(op, taskId, { fields }) { }
 
-    /** The concurrency limit and fetch size in force, read from the manager as its fetch loop reads them. */
+    /**
+     * The concurrency limit and fetch size in force, read as the runtime's scheduler manager reads
+     * them: the knob if set, else the configured limit or the default fetch size. A fetch size of
+     * -1 is the manager's marker for sizing fetches from the backlog.
+     */
     fun limits(): Map<String, Any?> {
-        val manager = manager ?: return emptyMap()
+        val knobs = knobs()
         return mapOf(
-            "limit" to maxOf(SkipperSchedulerManager.NO_LIMIT, manager.effectiveMaxConcurrentTasks()),
-            "fetchSize" to manager.getMaxTasks(),
+            "limit" to maxOf(
+                SkipperSchedulerManager.NO_LIMIT,
+                knobs.getInteger(Knobs.Keys.SCHEDULER_MAX_CONCURRENT_TASKS).orElse(config.schedulerMaxConcurrentTasks)
+            ),
+            "fetchSize" to knobs.getInteger(Knobs.Keys.SCHEDULER_FETCH_COUNT).orElse(DEFAULT_FETCH_SIZE),
         )
     }
 
@@ -125,5 +131,8 @@ internal class SchedulerTraceRecorder(
 
     private companion object {
         const val MAX_HELD = 10_000
+
+        /** SkipperSchedulerManager's default fetch size, which it keeps private. */
+        const val DEFAULT_FETCH_SIZE = 5
     }
 }

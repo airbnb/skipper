@@ -10,7 +10,9 @@ import com.airbnb.skipper.internal.storage.WorkflowStore
 import com.airbnb.skipper.internal.storage.mysql.MySqlWorkflowStore
 import com.airbnb.skipper.internal.storage.sqlite.SqliteWorkflowStore
 import java.nio.file.Paths
+import java.util.Collections
 import java.util.UUID
+import java.util.WeakHashMap
 
 /**
  * Turns on trace recording for a runtime when the `skipper.trace.dir` system property names a
@@ -28,20 +30,32 @@ import java.util.UUID
 object Tracing {
     const val DIR_PROPERTY = "skipper.trace.dir"
 
+    /** The scheduler recorder of each config tracing was installed on, so a second call returns the same one. */
+    private val installed = Collections.synchronizedMap(WeakHashMap<SkipperConfig, SchedulerInstrumentation>())
+
+    /**
+     * Wraps the config's store and scheduler, and returns what the runtime built from it must be
+     * given to have its scheduler recorded as well. Calling it again on the same config changes
+     * nothing and returns the same thing.
+     */
     @JvmStatic
-    fun installIfRequested(config: SkipperConfig) {
-        val dir = System.getProperty(DIR_PROPERTY)?.takeIf { it.isNotBlank() } ?: return
-        if (!isStockBackend(config)) return
+    fun installIfRequested(config: SkipperConfig): SchedulerInstrumentation {
+        installed[config]?.let { return it }
+        val dir = System.getProperty(DIR_PROPERTY)?.takeIf { it.isNotBlank() } ?: return SchedulerInstrumentation.None
+        if (!isStockBackend(config)) return SchedulerInstrumentation.None
         val recorder = TraceRecorder(Paths.get(dir).resolve("trace-${UUID.randomUUID()}.ndjson"), config)
         config.workflowStore = StoreFactory(config.workflowStore, recorder)
         config.scheduler = SchedulerFactory(config.scheduler, recorder)
-        // A test that observes the scheduler itself keeps its own instrumentation.
-        if (config.schedulerInstrumentation === SchedulerInstrumentation.None) {
-            val schedulerRecorder = SchedulerTraceRecorder(Paths.get(dir).resolve("sched-${UUID.randomUUID()}.ndjson"))
-            config.schedulerInstrumentation = schedulerRecorder
-            val traced = config.scheduler
-            config.scheduler = ComponentFactory { FetchTracingScheduler(traced.create(it), schedulerRecorder) }
-        }
+        // The recorder reads the knobs the scheduler manager reads, so both must get the same ones.
+        val knobsFactory = config.knobs
+        val knobs = lazy { knobsFactory.create(config) }
+        config.knobs = ComponentFactory { knobs.value }
+        val schedulerRecorder =
+            SchedulerTraceRecorder(Paths.get(dir).resolve("sched-${UUID.randomUUID()}.ndjson"), config) { knobs.value }
+        val traced = config.scheduler
+        config.scheduler = ComponentFactory { FetchTracingScheduler(traced.create(it), schedulerRecorder) }
+        installed[config] = schedulerRecorder
+        return schedulerRecorder
     }
 
     private fun isStockBackend(config: SkipperConfig): Boolean =

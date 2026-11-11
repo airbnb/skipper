@@ -15,6 +15,10 @@ The mapping:
   * task ids become 1..n, in order of first appearance;
   * the model's limit and fetch size are the ones in force at the run's fetches. A run in which
     they changed is skipped: they are constants of the model.
+
+Nothing else is skipped. In particular a fetched task that no recorded fetch came back with is
+left for the model to reject, so a recorder that stops seeing fetches fails the check rather than
+quietly emptying it.
 """
 
 import argparse
@@ -35,7 +39,6 @@ def normalise(lines):
     tasks = {}
     number = lambda task_id: tasks.setdefault(task_id, len(tasks) + 1)
     limits = set()
-    leased = set()   # tasks the last fetch came back with and the loop has not queued yet
     events = []
     for line in lines:
         act = ACTIONS[line["op"]]
@@ -45,22 +48,17 @@ def normalise(lines):
             limits.add((line["limit"], line["fetchSize"]))
             event["requested"] = line["requested"]
             event["tasks"] = sorted(number(t) for t in line["tasks"])
-            leased = set(event["tasks"])
         else:
             if act != "Release":
                 event["task"] = number(line["task"])
             if act == "Add":
                 event["origin"], event["added"] = line["origin"], line["added"]
-                if line["origin"] == "fetched":
-                    if event["task"] not in leased:
-                        raise OutOfScope("a task is added to the queue directly, not by a fetch")
-                    leased.discard(event["task"])
         events.append(event)
     if len(limits) > 1:
         raise OutOfScope("the concurrency limit or fetch size changed during the run")
     limit, fetch_size = next(iter(limits), (0, 1))
     if fetch_size < 1:
-        raise OutOfScope("the fetch size is zero")
+        raise OutOfScope("the fetch size is zero, or sized from the backlog")
     return events, {"NTasks": max(1, len(tasks)), "Limit": limit, "FetchSize": fetch_size}
 
 
