@@ -115,7 +115,8 @@ class AdmittedRunTest {
     }
 
     @Test
-    fun testRunCancelledBeforeItReachesTheHandlerGivesTheSlotBackOnce() {
+    fun testRunCancelledBeforeItReachesTheHandlerKeepsTheSlotUntilTheHandlerFinishes() {
+        // A second task keeps the count above zero, so an extra release would show as 0, not throw.
         admit()
         admit()
         val handled = CompletableFuture<Unit>()
@@ -124,8 +125,8 @@ class AdmittedRunTest {
         val run =
             AdmittedRun(queue) { holdSlotUntil ->
                 started.countDown()
-                // Cancelling gives the slot back at once, since no handler has been reported yet.
-                // Reporting one afterwards must not give it back a second time.
+                // The interrupt doesn't stop a body that is on its way to the handler: it goes on
+                // to start it, so the slot has to stay taken.
                 try {
                     cancelled.await(5, TimeUnit.SECONDS)
                 } catch (ignored: InterruptedException) {
@@ -137,10 +138,46 @@ class AdmittedRunTest {
             pool.execute(run)
             assertTrue(started.await(5, TimeUnit.SECONDS))
             run.cancel(true)
+            assertEquals(2, queue.admittedCount, "the body is still running")
             cancelled.countDown()
             pool.shutdown()
             assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
+            assertEquals(2, queue.admittedCount, "the handler is still running")
+
             handled.complete(Unit)
+            assertEquals(1, queue.admittedCount)
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun testRunCancelledWhileItsBodyRunsGivesTheSlotBackWhenTheBodyExits() {
+        admit()
+        admit()
+        val started = CountDownLatch(1)
+        val exit = CountDownLatch(1)
+        val run =
+            AdmittedRun(queue) {
+                started.countDown()
+                // Ignores the interrupt and never reaches the handler.
+                while (exit.count > 0) {
+                    try {
+                        exit.await()
+                    } catch (ignored: InterruptedException) {
+                    }
+                }
+            }
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            pool.execute(run)
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            run.cancel(true)
+            assertEquals(2, queue.admittedCount, "the body is still running")
+
+            exit.countDown()
+            pool.shutdown()
+            assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
             assertEquals(1, queue.admittedCount)
         } finally {
             pool.shutdownNow()

@@ -108,7 +108,13 @@ class SkipperConfig(
      * mid-transaction on a busy host can hold a table lock for seconds. MySQL failures are never retried.
      */
     var lockContentionRetryBudget: Duration = Duration.ofSeconds(10),
-    /** The main thread pool used by Skipper internals. */
+    /**
+     * The main thread pool used by Skipper internals.
+     *
+     * It must either run every task it is given or reject it by throwing. A pool that drops tasks
+     * silently (`DiscardPolicy`, `DiscardOldestPolicy`) loses scheduler runs, and with
+     * [schedulerMaxConcurrentTasks] set each dropped run also keeps its slot for good.
+     */
     var mainThreadPool: ExecutorService = Executors.newCachedThreadPool(ThreadFactoryBuilder().setNameFormat("skipper-main-%d").build()),
     /** The thread pool used to process workflow executions. */
     var taskHandlerThreadPool: ExecutorService = Executors.newCachedThreadPool(ThreadFactoryBuilder().setNameFormat("task-handler-%d").build()),
