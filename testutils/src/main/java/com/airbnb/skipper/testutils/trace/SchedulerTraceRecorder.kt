@@ -53,12 +53,13 @@ internal class SchedulerTraceRecorder(
     override fun taskHandler(handler: TaskHandler): TaskHandler = TracingTaskHandler(handler, this)
 
     /** The runtime built its scheduler manager on the traced queue and handlers: start writing. */
-    override fun schedulerManager(manager: SkipperSchedulerManager) {
+    override fun schedulerManager(manager: SkipperSchedulerManager): SkipperSchedulerManager {
         this.manager = manager
         lock.withLock {
             held?.forEach(::write)
             held = null
         }
+        return manager
     }
 
     /** Runs [step] and records it as one line, under the lock. */

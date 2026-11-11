@@ -30,9 +30,7 @@ class SchedulerInstrumentationTest {
 
                 override fun taskHandler(handler: TaskHandler): TaskHandler = handler.also { handlers.add(it) }
 
-                override fun schedulerManager(manager: SkipperSchedulerManager) {
-                    managers.add(manager)
-                }
+                override fun schedulerManager(manager: SkipperSchedulerManager): SkipperSchedulerManager = manager.also { managers.add(it) }
             }
         val deps = TestRuntime()
         deps.config.schedulerInstrumentation = observing
@@ -61,5 +59,7 @@ class SchedulerInstrumentationTest {
         assertEquals(SchedulerExecutionQueue::class.java, queue.javaClass)
         assertEquals(Duration.ofMinutes(8), queue.leaseDuration)
         assertSame(handler, SchedulerInstrumentation.None.taskHandler(handler))
+        val manager = TestRuntime().schedulerManager
+        assertSame(manager, SchedulerInstrumentation.None.schedulerManager(manager))
     }
 }
