@@ -5,6 +5,7 @@ import com.airbnb.skipper.ApplicationError
 import com.airbnb.skipper.CheckpointMode
 import com.airbnb.skipper.Compensate
 import com.airbnb.skipper.ContextPropagator
+import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.Execute
 import com.airbnb.skipper.ExecutionMetricsCollector
@@ -48,6 +49,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.atLeast
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.times
@@ -117,6 +119,12 @@ class ActionExecutorTest {
             .executorService(executorService)
             .build()
 
+    private fun completedActionDescriptions(): kotlin.collections.List<String?> {
+        val events = argumentCaptor<Event>()
+        verify(mockEventPublisher, atLeast(0)).publishEvent(events.capture())
+        return events.allValues.filter { it.type == Event.Type.ACTION_COMPLETED }.map { it.description }
+    }
+
     @Test
     fun testExecuteHappyPath() {
         val executionContext = newExecContext()
@@ -141,6 +149,7 @@ class ActionExecutorTest {
         assertEquals(Instant.EPOCH, checkpoint.executionEndTime)
         assertFalse(checkpoint.isTransient)
         assertFalse(checkpoint.isResultIsAsync)
+        assertEquals(listOf("DemoActions.hello"), completedActionDescriptions())
     }
 
     @Test
@@ -755,6 +764,28 @@ class ActionExecutorTest {
         assertEquals(Instant.EPOCH, checkpoint.executionEndTime)
         assertFalse(checkpoint.isTransient)
         assertTrue(checkpoint.isResultIsAsync)
+        assertEquals(listOf("DemoActions.helloAsync (async)"), completedActionDescriptions())
+    }
+
+    @Test
+    fun testAsyncActionCompletedEventWaitsForTheFuture() {
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val actions = actionMap[DemoActions::class.java] as DemoActions
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "helloLater" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actions)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val result = actionExecutor.executeAction(req) as CompletableFuture<*>
+        assertEquals(emptyList<String?>(), completedActionDescriptions())
+        actions.later.complete("Hello later")
+        result.join()
+        assertEquals(listOf("DemoActions.helloLater (async)"), completedActionDescriptions())
     }
 
     @Test
@@ -788,11 +819,13 @@ class ActionExecutorTest {
         val result = actionExecutor.executeAction(req)
         assertEquals("Hello Ricky", result)
         assertEquals(1, executionContext.getActionIteration(DemoActions::class.java, "hello"))
+        assertEquals(emptyList<String?>(), completedActionDescriptions())
         // Executing the same method again should NOT pick the checkpoint and should instead run the
         // action again.
         val result2 = actionExecutor.executeAction(req)
         assertEquals("Hello Ricardo", result2)
         assertEquals(2, executionContext.getActionIteration(DemoActions::class.java, "hello"))
+        assertEquals(listOf("DemoActions.hello"), completedActionDescriptions())
     }
 
     @Test
@@ -1057,6 +1090,7 @@ class ActionExecutorTest {
         val err = assertThrows(NonRetryableError::class.java) { actionExecutor.executeAction(req) }
         assertEquals(expectedErrorClass.name, err.cause!!.type)
         assertEquals(expectedErrorMessage, err.cause!!.message)
+        assertEquals(emptyList<String?>(), completedActionDescriptions())
         // Verify that a dirty checkpoint was correctly added
         assertEquals(1, executionContext.getActionIteration(DemoActions::class.java, methodName))
         val checkpoint = executionContext.dirtyCheckpoints.get(0)
@@ -1092,6 +1126,7 @@ class ActionExecutorTest {
         val cause = err.cause as NonRetryableError
         assertEquals(IllegalStateException::class.java.name, cause.cause!!.type)
         assertEquals("error!", cause.cause!!.message)
+        assertEquals(emptyList<String?>(), completedActionDescriptions())
         // Verify that a dirty checkpoint was correctly added
         assertEquals(1, executionContext.getActionIteration(DemoActions::class.java, methodName))
         val checkpoint = executionContext.dirtyCheckpoints.get(0)
@@ -1573,6 +1608,10 @@ class ActionExecutorTest {
     }
 
     private class DemoActions : Actions() {
+        val later = CompletableFuture<String>()
+
+        fun helloLater(): CompletableFuture<String> = later
+
         fun block(): String {
             blockStarted.countDown()
             Thread.sleep(20_000)

@@ -3,6 +3,7 @@ package com.airbnb.skipper.internal
 import com.airbnb.skipper.Actions
 import com.airbnb.skipper.CheckpointMode
 import com.airbnb.skipper.ContextPropagator
+import com.airbnb.skipper.Event
 import com.airbnb.skipper.EventPublisher
 import com.airbnb.skipper.Execute
 import com.airbnb.skipper.ExecutionMetricsCollector
@@ -25,6 +26,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
+import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.atLeast
+import org.mockito.kotlin.verify
 
 /**
  * Tests verifying that [ActionExecutor.executeAction] correctly handles Kotlin suspend
@@ -162,6 +166,11 @@ class ActionExecutorSuspendTest {
         @Suppress("UNCHECKED_CAST")
         val checkpointResult = (checkpoint.generateResult() as CompletableFuture<String>).get()
         assertThat(checkpointResult).isEqualTo("Hello World")
+
+        val events = argumentCaptor<Event>()
+        verify(mockEventPublisher, atLeast(0)).publishEvent(events.capture())
+        assertThat(events.allValues.filter { it.type == Event.Type.ACTION_COMPLETED }.map { it.description })
+            .containsExactly("SuspendDemoActions.greet (async)")
     }
 
     @Test
