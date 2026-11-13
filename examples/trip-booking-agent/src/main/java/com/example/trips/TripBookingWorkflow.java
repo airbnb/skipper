@@ -33,6 +33,7 @@ public class TripBookingWorkflow extends Workflow {
   private final PlannerActions planner = actions(PlannerActions.class);
   private final TravelActions travel = actions(TravelActions.class);
 
+  @StateField TripRequest request;
   @StateField String stage = "NEW";
   @StateField Boolean approved;
   @StateField Itinerary proposal;
@@ -44,6 +45,7 @@ public class TripBookingWorkflow extends Workflow {
     // The method runs again from the top on every resume, replaying recorded action results. The journal is
     // rebuilt by that replay, so start it empty rather than appending to the restored copy.
     journal = Journal.empty();
+    this.request = request;
 
     stage = "UNDERSTANDING";
     TripBrief brief = planner.understand(request);
@@ -133,6 +135,12 @@ public class TripBookingWorkflow extends Workflow {
   @SignalMethod(persist = true)
   public void decide(boolean decision) {
     this.approved = decision;
+  }
+
+  /** What the traveler asked for, so a client holding only the instance id can show it. */
+  @QueryMethod
+  public TripRequest request() {
+    return request;
   }
 
   @QueryMethod

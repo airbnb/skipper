@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trip-booking agent</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --line: #dfe3e8; --text: #1b1f24; --muted: #5f6b7a;
+    --accent: #2f6fed; --ok: #1a7f4b; --warn: #a15c00; --bad: #c0362c; --chip: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --line: #2a313b; --text: #e6e9ee; --muted: #9aa5b4;
+      --accent: #6b9bff; --ok: #4cc38a; --warn: #e0a548; --bad: #f0766c; --chip: #212730;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; padding: 16px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 18px; }
+  header .spacer { flex: 1; }
+  a { color: var(--accent); }
+  main { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 20px; padding: 20px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 16px; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  h2 { margin: 0 0 4px; font-size: 15px; }
+  p.hint { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 13px; }
+  textarea, input[type=number] { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  textarea { min-height: 76px; resize: vertical; }
+  button { font: inherit; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--chip); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { padding: 5px 6px; text-align: left; border-top: 1px solid var(--line); vertical-align: top; }
+  tr:first-child td, tr:first-child th { border-top: 0; }
+  th { color: var(--muted); font-weight: 600; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .gone { text-decoration: line-through; color: var(--muted); }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+  .trip-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+  .trip-head .spacer { flex: 1; }
+  .ask { margin: 8px 0; }
+  ul.journal, ul.ledger { margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; }
+  ul.journal li { padding: 3px 0 3px 10px; border-left: 3px solid var(--line); margin-bottom: 3px; overflow-wrap: anywhere; }
+  ul.journal li.accepted { border-color: var(--ok); }
+  ul.journal li.refused { border-color: var(--bad); }
+  ul.journal li.soldout { border-color: var(--warn); }
+  ul.ledger li { padding: 2px 0; }
+  .empty { color: var(--muted); padding: 8px 0; }
+  .error { color: var(--bad); margin-top: 8px; min-height: 1.2em; }
+  h3 { margin: 14px 0 4px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Trip-booking agent</h1>
+  <span class="muted">Planner: <span id="planner">…</span></span>
+  <span class="spacer"></span>
+  <a href="/skipper/admin/" target="_blank" rel="noopener">Skipper admin UI</a>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Plan a trip</h2>
+      <p class="hint">The planner reads the request and proposes an itinerary. The budget is a hard limit the workflow enforces, whatever the planner says.</p>
+      <form id="new-trip">
+        <label for="request">Request</label>
+        <textarea id="request" required>A long weekend in Lisbon for two, 3 nights from 2027-03-12, somewhere central</textarea>
+        <label for="budget">Budget (USD)</label>
+        <input id="budget" type="number" min="1" step="1" value="1500" required>
+        <div class="row"><button class="primary" type="submit">Plan trip</button></div>
+        <div class="error" id="form-error" role="alert"></div>
+      </form>
+    </section>
+    <section>
+      <h2>Provider inventory</h2>
+      <p class="hint">Mark an offer sold out after a trip has a proposal, then approve the trip, to watch the agent replan around what it has already booked.</p>
+      <table id="offers"></table>
+      <h3>Provider ledger</h3>
+      <ul class="ledger mono" id="ledger"></ul>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>Trips</h2>
+      <p class="hint">Stored in the SQLite file, so they are still here after a restart. A trip waiting for approval can be answered then too.</p>
+      <div id="trips"><div class="empty">Loading…</div></div>
+    </section>
+  </div>
+</main>
+<script>
+(function () {
+  var offersById = {};
+  var lastTrips = '';
+  var lastProvider = '';
+
+  // Builds DOM nodes with text only, so nothing a user or the model wrote is ever parsed as markup.
+  function el(tag, attrs) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (key) {
+      if (key === 'class') node.className = attrs[key];
+      else if (key === 'onclick') node.addEventListener('click', attrs[key]);
+      else node.setAttribute(key, attrs[key]);
+    });
+    for (var i = 2; i < arguments.length; i++) {
+      var child = arguments[i];
+      if (child === null || child === undefined) continue;
+      node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+    }
+    return node;
+  }
+
+  function money(cents) { return '$' + Math.round(cents / 100).toLocaleString('en-US'); }
+
+  function api(path, body) {
+    var options = body === undefined ? {} : {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    };
+    return fetch(path, options).then(function (response) {
+      if (!response.ok) return response.text().then(function (text) { throw new Error(text || response.statusText); });
+      return response.status === 204 ? null : response.json();
+    });
+  }
+
+  function statusChip(trip) {
+    var label = trip.stage === 'AWAITING_APPROVAL' ? 'Awaiting approval'
+      : trip.status === 'COMPENSATION_COMPLETED' ? 'Abandoned, bookings cancelled'
+      : trip.stage === 'BOOKED' ? 'Booked'
+      : trip.stage === 'DECLINED' ? 'Declined'
+      : trip.status === 'ERROR' ? 'Failed, cancelling bookings'
+      : (trip.stage || trip.status).toLowerCase().replace(/_/g, ' ');
+    var tone = trip.stage === 'BOOKED' ? 'ok'
+      : trip.stage === 'AWAITING_APPROVAL' ? 'warn'
+      : (trip.status === 'COMPENSATION_COMPLETED' || trip.status === 'ERROR' || trip.stage === 'DECLINED') ? 'bad' : '';
+    return el('span', { 'class': 'chip ' + tone }, label);
+  }
+
+  function itineraryTable(itinerary) {
+    var table = el('table', {});
+    var total = 0;
+    [['Flight', itinerary.flightOfferId], ['Hotel', itinerary.hotelOfferId], ['Car', itinerary.carOfferId]].forEach(function (leg) {
+      var offer = offersById[leg[1]];
+      if (offer) total += offer.priceCents;
+      table.appendChild(el('tr', {},
+        el('th', {}, leg[0]),
+        el('td', {}, el('span', { 'class': 'mono' }, leg[1]), offer ? ' ' + offer.description : ''),
+        el('td', { 'class': 'num' }, offer ? money(offer.priceCents) : '')));
+    });
+    table.appendChild(el('tr', {}, el('th', {}, 'Total'), el('td', { 'class': 'muted' }, itinerary.rationale || ''), el('td', { 'class': 'num' }, el('strong', {}, money(total)))));
+    return table;
+  }
+
+  function journalClass(line) {
+    return line.indexOf('accepted') === 0 ? 'accepted' : line.indexOf('refused') === 0 ? 'refused' : 'soldout';
+  }
+
+  function tripCard(trip) {
+    var card = el('section', {});
+    card.appendChild(el('div', { 'class': 'trip-head' },
+      el('strong', { 'class': 'mono' }, trip.id),
+      statusChip(trip),
+      el('span', { 'class': 'spacer' }),
+      el('a', { href: '/skipper/admin/#workflow/' + encodeURIComponent(trip.id), target: '_blank', rel: 'noopener' }, 'Timeline')));
+    if (trip.request) {
+      card.appendChild(el('div', { 'class': 'ask' }, '“' + trip.request.request + '”',
+        el('span', { 'class': 'muted' }, '  budget ' + money(trip.request.budgetCents))));
+    }
+    if (trip.result && trip.result.status === 'DECLINED') {
+      card.appendChild(el('div', { 'class': 'muted' }, 'Nothing was booked: ' + trip.result.note + '.'));
+    } else if (trip.proposal) {
+      card.appendChild(itineraryTable(trip.result && trip.result.itinerary ? trip.result.itinerary : trip.proposal));
+    }
+    if (trip.result && trip.result.status === 'BOOKED') {
+      card.appendChild(el('div', { 'class': 'muted' }, 'Confirmations: ' + trip.result.confirmations.join(', ')));
+    }
+    if (trip.stage === 'AWAITING_APPROVAL') {
+      card.appendChild(el('div', { 'class': 'row' },
+        el('button', { 'class': 'primary', onclick: function () { decide(trip.id, true); } }, 'Approve and book'),
+        el('button', { onclick: function () { decide(trip.id, false); } }, 'Decline')));
+    }
+    if (trip.journal && trip.journal.length) {
+      var list = el('ul', { 'class': 'journal' });
+      trip.journal.forEach(function (line) { list.appendChild(el('li', { 'class': journalClass(line) }, line)); });
+      card.appendChild(el('h3', {}, 'What the agent did'));
+      card.appendChild(list);
+    }
+    return card;
+  }
+
+  function decide(id, approve) {
+    api('/api/trips/' + encodeURIComponent(id) + '/decision', { approve: approve }).then(refresh, refresh);
+  }
+
+  function renderTrips(trips) {
+    var serialized = JSON.stringify(trips);
+    if (serialized === lastTrips) return;
+    lastTrips = serialized;
+    var root = document.getElementById('trips');
+    root.textContent = '';
+    if (!trips.length) {
+      root.appendChild(el('div', { 'class': 'empty' }, 'No trips yet. Plan one on the left.'));
+      return;
+    }
+    trips.forEach(function (trip) { root.appendChild(tripCard(trip)); });
+  }
+
+  function renderProvider(provider) {
+    var serialized = JSON.stringify(provider);
+    if (serialized === lastProvider) return;
+    lastProvider = serialized;
+    lastTrips = '';
+    document.getElementById('planner').textContent = provider.planner;
+    offersById = {};
+    var table = document.getElementById('offers');
+    table.textContent = '';
+    table.appendChild(el('tr', {}, el('th', {}, 'Offer'), el('th', {}, 'Rating'), el('th', {}, 'Price'), el('th', {}, 'Sold out')));
+    provider.offers.forEach(function (entry) {
+      var offer = entry.offer;
+      offersById[offer.id] = offer;
+      var box = el('input', { type: 'checkbox', 'aria-label': offer.id + ' sold out' });
+      box.checked = entry.soldOut;
+      box.addEventListener('change', function () {
+        api('/api/provider/offers/' + encodeURIComponent(offer.id) + '/sold-out', { soldOut: box.checked }).then(refresh, refresh);
+      });
+      table.appendChild(el('tr', {},
+        el('td', {}, el('div', { 'class': 'mono' + (entry.soldOut ? ' gone' : '') }, offer.id), el('div', { 'class': 'muted' }, offer.description)),
+        el('td', {}, offer.rating + '/5'),
+        el('td', { 'class': 'num' }, money(offer.priceCents)),
+        el('td', {}, box)));
+    });
+    var ledger = document.getElementById('ledger');
+    ledger.textContent = '';
+    if (!provider.ledger.length) ledger.appendChild(el('li', { 'class': 'muted' }, 'Nothing booked since this process started.'));
+    provider.ledger.forEach(function (line) { ledger.appendChild(el('li', {}, line)); });
+  }
+
+  // The list of instances comes from Skipper's admin API, which reads the store; each one is then asked
+  // for its own view through the workflow's query methods.
+  function refresh() {
+    return api('/api/provider').then(renderProvider).then(function () {
+      return api('/skipper/admin/workflows?limit=20');
+    }).then(function (result) {
+      return Promise.all((result.workflows || []).map(function (workflow) {
+        return api('/api/trips/' + encodeURIComponent(workflow.workflow_id)).catch(function () { return null; });
+      }));
+    }).then(function (trips) {
+      renderTrips(trips.filter(Boolean));
+    }).catch(function (error) {
+      document.getElementById('form-error').textContent = 'Cannot reach the agent: ' + error.message;
+    });
+  }
+
+  document.getElementById('new-trip').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var error = document.getElementById('form-error');
+    error.textContent = '';
+    api('/api/trips', {
+      traveler: 'guest',
+      request: document.getElementById('request').value,
+      budgetCents: Math.round(Number(document.getElementById('budget').value) * 100)
+    }).then(refresh, function (failure) { error.textContent = failure.message; });
+  });
+
+  refresh();
+  setInterval(refresh, 1500);
+})();
+</script>
+</body>
+</html>

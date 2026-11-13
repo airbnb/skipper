@@ -14,7 +14,10 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Runs three trips through {@link TripBookingWorkflow} against a file-backed SQLite store:
+ * Starts the agent on a file-backed SQLite store and serves two pages: a playground for starting trips and
+ * answering their proposals, and Skipper's admin UI for looking inside each instance.
+ *
+ * <p>With {@code --demo} it instead runs three scripted trips through {@link TripBookingWorkflow} and exits:
  *
  * <ol>
  *   <li>one that is planned, approved and booked;
@@ -23,10 +26,6 @@ import java.util.UUID;
  * </ol>
  *
  * With ANTHROPIC_API_KEY set the planner is Claude; otherwise it is the scripted one.
- *
- * <p>Skipper's admin UI is served while this runs. By default a fourth trip is then left waiting for approval
- * and the process stays up, so every instance can be inspected in a browser. Pass {@code --once} to exit as
- * soon as the three trips are done.
  */
 public final class Main {
   private static final String REQUEST = "A long weekend in Lisbon for two, 3 nights from 2027-03-12, somewhere central";
@@ -34,55 +33,59 @@ public final class Main {
 
   public static void main(String[] args) throws Exception {
     List<String> arguments = new ArrayList<>(List.of(args));
-    boolean once = arguments.remove("--once");
+    boolean demo = arguments.remove("--demo");
     String dbPath = arguments.isEmpty() ? "trips.db" : arguments.get(0);
-    int adminPort = Integer.parseInt(System.getenv().getOrDefault("TRIP_AGENT_ADMIN_PORT", "8090"));
+    int port = Integer.parseInt(System.getenv().getOrDefault("TRIP_AGENT_PORT", "8090"));
     boolean useModel = System.getenv("ANTHROPIC_API_KEY") != null;
     String model = System.getenv().getOrDefault("TRIP_AGENT_MODEL", "claude-opus-5-5");
     TripPlanner planner = useModel ? new ClaudePlanner(model) : new ScriptedPlanner();
     InMemoryTravelProvider provider = new InMemoryTravelProvider();
-    System.out.println("planner: " + (useModel ? model : "scripted (set ANTHROPIC_API_KEY to use Claude)"));
+    String plannerName = useModel ? model : "scripted (set ANTHROPIC_API_KEY to use Claude)";
+    System.out.println("planner: " + plannerName);
 
     SkipperRuntime runtime = SkipperSetup.start(dbPath, planner, provider);
     IWorkflowFactory factory = runtime.getWorkflowFactory().get();
-    HttpServer adminUi = AdminUi.start(runtime, adminPort);
-    System.out.println("admin UI: " + AdminUi.url(adminUi));
-    String run = UUID.randomUUID().toString().substring(0, 8);
+    HttpServer web = WebServer.start(
+        port, new TripResource(factory, provider, plannerName), runtime.getAdminResource().get());
     try {
-      // 1. Planned, approved, booked.
-      String booked = propose(factory, "trip-" + run + "-booked");
-      approve(factory, booked);
-      report(factory, booked, WorkflowInstanceStatusView.COMPLETED);
-
-      // 2. The hotel in the approved proposal sells out before it can be booked. The flight is already paid
-      //    for, so the planner has to find another hotel that still fits around it.
-      provider.restock();
-      String replanned = propose(factory, "trip-" + run + "-replanned");
-      provider.sellOut(factory.invoke(TripBookingWorkflow.class, replanned).proposal().hotelOfferId());
-      approve(factory, replanned);
-      report(factory, replanned, WorkflowInstanceStatusView.COMPLETED);
-
-      // 3. Every hotel the budget allows sells out. No replacement fits, the workflow fails, and Skipper
-      //    cancels the flight it had already booked.
-      provider.restock();
-      String abandoned = propose(factory, "trip-" + run + "-abandoned");
-      provider.sellOut("HT-BOUTIQUE", "HT-HOSTEL");
-      approve(factory, abandoned);
-      report(factory, abandoned, WorkflowInstanceStatusView.COMPENSATION_COMPLETED);
-
-      System.out.println("\nprovider ledger: " + provider.ledger());
-
-      if (!once) {
-        // Left parked on purpose: a WAITING instance with its approval timer is the thing worth looking at.
-        provider.restock();
-        propose(factory, "trip-" + run + "-awaiting-approval");
-        System.out.println("\nBrowse the instances at " + AdminUi.url(adminUi) + " and press Ctrl-C to stop.");
+      if (demo) {
+        runDemo(factory, provider);
+      } else {
+        System.out.println("playground: " + WebServer.url(web));
+        System.out.println("admin UI:   " + WebServer.url(web) + "skipper/admin/");
+        System.out.println("Press Ctrl-C to stop. Trips are kept in " + dbPath + " and are still there on the next start.");
         Thread.currentThread().join();
       }
     } finally {
-      adminUi.stop(0);
+      web.stop(0);
       runtime.getSkipperSchedulerManager().get().stop();
     }
+  }
+
+  private static void runDemo(IWorkflowFactory factory, InMemoryTravelProvider provider) throws InterruptedException {
+    String run = UUID.randomUUID().toString().substring(0, 8);
+    // 1. Planned, approved, booked.
+    String booked = propose(factory, "trip-" + run + "-booked");
+    approve(factory, booked);
+    report(factory, booked, WorkflowInstanceStatusView.COMPLETED);
+
+    // 2. The hotel in the approved proposal sells out before it can be booked. The flight is already paid
+    //    for, so the planner has to find another hotel that still fits around it.
+    provider.restock();
+    String replanned = propose(factory, "trip-" + run + "-replanned");
+    provider.sellOut(factory.invoke(TripBookingWorkflow.class, replanned).proposal().hotelOfferId());
+    approve(factory, replanned);
+    report(factory, replanned, WorkflowInstanceStatusView.COMPLETED);
+
+    // 3. Every hotel the budget allows sells out. No replacement fits, the workflow fails, and Skipper
+    //    cancels the flight it had already booked.
+    provider.restock();
+    String abandoned = propose(factory, "trip-" + run + "-abandoned");
+    provider.sellOut("HT-BOUTIQUE", "HT-HOSTEL");
+    approve(factory, abandoned);
+    report(factory, abandoned, WorkflowInstanceStatusView.COMPENSATION_COMPLETED);
+
+    System.out.println("\nprovider ledger: " + provider.ledger());
   }
 
   /** Starts a trip and waits for it to park with a proposal. The future is not held: a parked instance does not complete it. */

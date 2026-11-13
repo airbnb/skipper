@@ -6,7 +6,7 @@ plugins {
 // Pinned to a Skipper release by default. Pass -PskipperVersion=<v> (or set ORG_GRADLE_PROJECT_skipperVersion)
 // to build against a version you published to ~/.m2 with `./gradlew publishToMavenLocal -PVERSION_NAME=<v>` from a
 // Skipper checkout; Skipper's own CI does exactly that so the examples exercise the code under review.
-val skipperVersion = (findProperty("skipperVersion") as String?) ?: "0.6.3"
+val skipperVersion = (findProperty("skipperVersion") as String?) ?: "0.16.0"
 
 repositories {
   if (findProperty("skipperVersion") != null) {
@@ -25,9 +25,9 @@ dependencies {
   implementation("com.anthropic:anthropic-java:3.3.0")
   runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
 
-  // Hosts Skipper's admin UI (AdminUi.java). The UI is a JAX-RS resource on the javax.ws.rs namespace, which is
-  // Jersey 2; Jersey 3 and later are jakarta.ws.rs and would not see its annotations. The JDK HTTP container
-  // needs no separate web server.
+  // Hosts the playground and Skipper's admin UI (WebServer.java). The admin UI is a JAX-RS resource on the
+  // javax.ws.rs namespace, which is Jersey 2; Jersey 3 and later are jakarta.ws.rs and would not see its
+  // annotations. The JDK HTTP container needs no separate web server.
   implementation("org.glassfish.jersey.containers:jersey-container-jdk-http:$jerseyVersion")
   implementation("org.glassfish.jersey.inject:jersey-hk2:$jerseyVersion")
   implementation("org.glassfish.jersey.media:jersey-media-json-jackson:$jerseyVersion")

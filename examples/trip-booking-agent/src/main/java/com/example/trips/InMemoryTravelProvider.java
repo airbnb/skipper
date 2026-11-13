@@ -64,6 +64,19 @@ public class InMemoryTravelProvider implements TravelProvider {
     soldOut.clear();
   }
 
+  public synchronized void restock(String offerId) {
+    soldOut.remove(offerId);
+  }
+
+  public synchronized boolean isSoldOut(String offerId) {
+    return soldOut.contains(offerId);
+  }
+
+  /** Everything the provider sells, sold out or not. */
+  public List<Offer> catalog() {
+    return CATALOG;
+  }
+
   public synchronized void failNext(int times) {
     failuresLeft = times;
   }
