@@ -15,6 +15,8 @@ repositories {
   mavenCentral()
 }
 
+val jerseyVersion = "2.47"
+
 dependencies {
   implementation("com.airbnb.skipper:skipper-core:$skipperVersion")
   // The model behind ClaudePlanner. Only called when ANTHROPIC_API_KEY is set; the default planner is scripted.
@@ -22,6 +24,13 @@ dependencies {
   // persists (records need Jackson 2.12+; Skipper runs on whichever Jackson 2.x the application ships).
   implementation("com.anthropic:anthropic-java:3.3.0")
   runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
+
+  // Hosts Skipper's admin UI (AdminUi.java). The UI is a JAX-RS resource on the javax.ws.rs namespace, which is
+  // Jersey 2; Jersey 3 and later are jakarta.ws.rs and would not see its annotations. The JDK HTTP container
+  // needs no separate web server.
+  implementation("org.glassfish.jersey.containers:jersey-container-jdk-http:$jerseyVersion")
+  implementation("org.glassfish.jersey.inject:jersey-hk2:$jerseyVersion")
+  implementation("org.glassfish.jersey.media:jersey-media-json-jackson:$jerseyVersion")
 
   testImplementation("com.airbnb.skipper:skipper-testutils:$skipperVersion")
   testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")

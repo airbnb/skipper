@@ -37,7 +37,7 @@ The sixth is a different application, for a different question: how to build an 
 
 | Directory | Stack | Store | What it shows |
 | --- | --- | --- | --- |
-| [`trip-booking-agent/`](trip-booking-agent/) | Java 17, Gradle, Anthropic Java SDK | file-backed SQLite | A trip-booking agent that mixes model calls with deterministic steps: the model proposes an itinerary, a validator refuses anything over budget, the workflow parks for approval, books each leg, replans around a sold-out offer, and cancels what it booked if the trip cannot be completed. Runs without an API key on a scripted planner. |
+| [`trip-booking-agent/`](trip-booking-agent/) | Java 17, Gradle, Anthropic Java SDK | file-backed SQLite | A trip-booking agent that mixes model calls with deterministic steps: the model proposes an itinerary, a validator refuses anything over budget, the workflow parks for approval, books each leg, replans around a sold-out offer, and cancels what it booked if the trip cannot be completed. Runs without an API key on a scripted planner, and serves the admin UI so each instance's timeline can be inspected. |
 
 ## Running one
 

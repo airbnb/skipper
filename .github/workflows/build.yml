@@ -349,9 +349,10 @@ jobs:
         run: ./gradlew --stacktrace build run
 
       # No ANTHROPIC_API_KEY here, so the agent runs on its scripted planner: no model is called.
+      # --once: without it the example keeps serving the admin UI until it is interrupted.
       - name: trip-booking-agent
         working-directory: examples/trip-booking-agent
-        run: ./gradlew --stacktrace build run
+        run: ./gradlew --stacktrace build run --args="--once"
 
       - name: spring-boot-mysql (Testcontainers integration test)
         working-directory: examples/spring-boot-mysql

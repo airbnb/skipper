@@ -17,14 +17,16 @@ The model never touches the provider. It returns a structured proposal, `Itinera
 and only a proposal that passes is acted on. A refused proposal goes back to the model with the reason.
 
 ```bash
-./gradlew build     # compiles and runs the tests (16 tests, a few seconds, no network)
-./gradlew run       # runs three trips against ./trips.db and prints what happened
+./gradlew build                  # compiles and runs the tests (17 tests, a few seconds, no network)
+./gradlew run                    # runs three trips against ./trips.db, then serves the admin UI until Ctrl-C
+./gradlew run --args="--once"    # runs the three trips and exits
 ```
 
 `run` needs no API key: the default planner is scripted, so the output is the same every time.
 
 ```
 planner: scripted (set ANTHROPIC_API_KEY to use Claude)
+admin UI: http://localhost:8090/skipper/admin/
 
 trip-61619ead-booked -> WAITING, stage=AWAITING_APPROVAL
   proposal: FL-DIRECT + HT-BOUTIQUE + CAR-SUV (the best-rated combination within budget)
@@ -55,6 +57,17 @@ approval, so the planner picks another that fits around the flight already paid 
 replacement fits the budget, so the workflow fails and Skipper cancels the flight. The WARN lines
 from `com.airbnb.skipper` on the third trip are the engine logging a failure the workflow raises by
 design.
+
+## Looking at it in the admin UI
+
+`run` serves Skipper's admin UI at <http://localhost:8090/skipper/admin/> and, after the three trips,
+starts a fourth and leaves it waiting for approval so there is a parked instance to look at. Open any
+instance for its timeline: each planner call, the search, the approval timer, the `decide` signal,
+each booking, and on the abandoned trip the compensation that cancelled the flight. Click a step to
+see what the planner was given and what it answered.
+
+The UI listens on the loopback interface only, because it can cancel, retry and delete instances.
+Set `TRIP_AGENT_ADMIN_PORT` to move it off 8090.
 
 ## Running it with a model
 
@@ -91,9 +104,11 @@ the workflow lets through will not.
 | `PlannerActions.java` | Inference as checkpointed actions with a retry strategy for model outages |
 | `TravelActions.java` | The side effects, with `@Compensate` on the booking |
 | `TripPlanner.java`, `ScriptedPlanner.java`, `ClaudePlanner.java` | The inference interface and its two implementations |
+| `AdminUi.java` | Skipper's admin UI hosted from a plain Java program: Jersey 2 on the JDK's HTTP server |
 | `PlanningContext.java` | The one input shape that serves the first plan and every replan |
 | `src/test/.../TripBookingWorkflowTest.java` | `WorkflowTest` with a fake planner: refusals, approval, expiry, replanning, compensation, retries |
 | `src/test/.../ClaudePlannerTest.java` | `ClaudePlanner` against a local stand-in for the Messages API |
+| `src/test/.../AdminUiTest.java` | The example booted on a throwaway store, with the admin UI read over HTTP |
 
 ## Design notes
 
@@ -117,6 +132,9 @@ the workflow lets through will not.
   and state as JSON and runs on whichever Jackson 2.x the application ships. The Anthropic SDK brings
   a current one, and records need 2.12 or later. On the Jackson that Skipper compiles against, these
   types would have to be classes with a no-arg constructor, as in the other examples.
+- **The admin UI needs a JAX-RS host on `javax.ws.rs`.** That is Jersey 2; Jersey 3 and later are on
+  `jakarta.ws.rs` and do not see the resource's annotations. Jersey logs a few startup warnings through
+  `java.util.logging` about the resource's root path and optional features; `AdminUi` turns them down.
 - **The future does not complete while the workflow is parked.** `Main` polls the persisted status
   and reads the proposal and the outcome through `@QueryMethod`s instead.
 - **State assigned in the workflow method is rebuilt on every replay.** The journal is reset on the

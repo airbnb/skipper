@@ -4,9 +4,12 @@ import com.airbnb.skipper.IWorkflowFactory;
 import com.airbnb.skipper.api.WorkflowInstanceStatusView;
 import com.airbnb.skipper.api.WorkflowInstanceView;
 import com.airbnb.skipper.factory.SkipperRuntime;
+import com.sun.net.httpserver.HttpServer;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -20,13 +23,20 @@ import java.util.UUID;
  * </ol>
  *
  * With ANTHROPIC_API_KEY set the planner is Claude; otherwise it is the scripted one.
+ *
+ * <p>Skipper's admin UI is served while this runs. By default a fourth trip is then left waiting for approval
+ * and the process stays up, so every instance can be inspected in a browser. Pass {@code --once} to exit as
+ * soon as the three trips are done.
  */
 public final class Main {
   private static final String REQUEST = "A long weekend in Lisbon for two, 3 nights from 2027-03-12, somewhere central";
   private static final long BUDGET_CENTS = 150_000;
 
   public static void main(String[] args) throws Exception {
-    String dbPath = args.length > 0 ? args[0] : "trips.db";
+    List<String> arguments = new ArrayList<>(List.of(args));
+    boolean once = arguments.remove("--once");
+    String dbPath = arguments.isEmpty() ? "trips.db" : arguments.get(0);
+    int adminPort = Integer.parseInt(System.getenv().getOrDefault("TRIP_AGENT_ADMIN_PORT", "8090"));
     boolean useModel = System.getenv("ANTHROPIC_API_KEY") != null;
     String model = System.getenv().getOrDefault("TRIP_AGENT_MODEL", "claude-opus-5-5");
     TripPlanner planner = useModel ? new ClaudePlanner(model) : new ScriptedPlanner();
@@ -35,6 +45,8 @@ public final class Main {
 
     SkipperRuntime runtime = SkipperSetup.start(dbPath, planner, provider);
     IWorkflowFactory factory = runtime.getWorkflowFactory().get();
+    HttpServer adminUi = AdminUi.start(runtime, adminPort);
+    System.out.println("admin UI: " + AdminUi.url(adminUi));
     String run = UUID.randomUUID().toString().substring(0, 8);
     try {
       // 1. Planned, approved, booked.
@@ -59,7 +71,16 @@ public final class Main {
       report(factory, abandoned, WorkflowInstanceStatusView.COMPENSATION_COMPLETED);
 
       System.out.println("\nprovider ledger: " + provider.ledger());
+
+      if (!once) {
+        // Left parked on purpose: a WAITING instance with its approval timer is the thing worth looking at.
+        provider.restock();
+        propose(factory, "trip-" + run + "-awaiting-approval");
+        System.out.println("\nBrowse the instances at " + AdminUi.url(adminUi) + " and press Ctrl-C to stop.");
+        Thread.currentThread().join();
+      }
     } finally {
+      adminUi.stop(0);
       runtime.getSkipperSchedulerManager().get().stop();
     }
   }
