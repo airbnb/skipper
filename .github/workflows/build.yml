@@ -309,7 +309,7 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             ~/.m2/repository
-          key: examples-v1-${{ hashFiles('examples/java-gradle-sqlite/build.gradle.kts', 'examples/java-maven-sqlite/pom.xml', 'examples/kotlin-gradle-sqlite/build.gradle.kts', 'examples/spring-boot-mysql/build.gradle.kts', 'examples/dropwizard-mysql/build.gradle.kts') }}
+          key: examples-v1-${{ hashFiles('examples/java-gradle-sqlite/build.gradle.kts', 'examples/java-maven-sqlite/pom.xml', 'examples/kotlin-gradle-sqlite/build.gradle.kts', 'examples/spring-boot-mysql/build.gradle.kts', 'examples/dropwizard-mysql/build.gradle.kts', 'examples/trip-booking-agent/build.gradle.kts') }}
           restore-keys: |
             examples-v1-
 
@@ -346,6 +346,11 @@ jobs:
 
       - name: kotlin-gradle-sqlite
         working-directory: examples/kotlin-gradle-sqlite
+        run: ./gradlew --stacktrace build run
+
+      # No ANTHROPIC_API_KEY here, so the agent runs on its scripted planner: no model is called.
+      - name: trip-booking-agent
+        working-directory: examples/trip-booking-agent
         run: ./gradlew --stacktrace build run
 
       - name: spring-boot-mysql (Testcontainers integration test)
@@ -414,6 +419,7 @@ jobs:
             examples/java-gradle-sqlite/build/test-results/test
             examples/java-maven-sqlite/target/surefire-reports
             examples/kotlin-gradle-sqlite/build/test-results/test
+            examples/trip-booking-agent/build/test-results/test
             examples/spring-boot-mysql/build/test-results/test
             examples/dropwizard-mysql/build/test-results/test
             examples/dropwizard-mysql/smoke-server.log

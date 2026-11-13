@@ -5,7 +5,7 @@ is its own build against the Skipper artifacts on Maven Central, the way a servi
 them, so what you see is what an adopter gets.
 
 They are also Skipper's integration suite. On every pull request, the `examples` job in GitHub Actions publishes the
-artifacts from that commit to a local Maven repository and builds, tests and runs all five against
+artifacts from that commit to a local Maven repository and builds, tests and runs all of them against
 them, so a change that breaks a Spring, Dropwizard, Guice, Kotlin or plain-Java adopter turns the
 pull request red. To do the same locally:
 
@@ -17,7 +17,7 @@ cd examples/java-maven-sqlite  && ./mvnw verify -Dskipper.version=0.0.0-LOCAL
 
 Without the override each build uses the pinned release.
 
-All five build the same small application, an order-fulfilment workflow, so you can diff two
+Five of them build the same small application, an order-fulfilment workflow, so you can diff two
 directories and see only what the stack changes:
 
 - reserve stock, charge the customer, hand the parcel to a carrier, as three checkpointed actions;
@@ -33,6 +33,12 @@ directories and see only what the stack changes:
 | [`spring-boot-mysql/`](spring-boot-mysql/) | Spring Boot 4, Java 17 | MySQL | A REST service: Spring as Skipper's injector, Flyway applying Skipper's schema, Testcontainers test, Docker Compose. |
 | [`dropwizard-mysql/`](dropwizard-mysql/) | Dropwizard 3, Guice 6, Java 17 | MySQL (or SQLite) | The admin UI mounted on JAX-RS, Guice as Skipper's injector, a smoke test over HTTP. |
 
+The sixth is a different application, for a different question: how to build an AI agent on Skipper.
+
+| Directory | Stack | Store | What it shows |
+| --- | --- | --- | --- |
+| [`trip-booking-agent/`](trip-booking-agent/) | Java 17, Gradle, Anthropic Java SDK | file-backed SQLite | A trip-booking agent that mixes model calls with deterministic steps: the model proposes an itinerary, a validator refuses anything over budget, the workflow parks for approval, books each leg, replans around a sold-out offer, and cancels what it booked if the trip cannot be completed. Runs without an API key on a scripted planner. |
+
 ## Running one
 
 Every directory has a README with the exact commands. The short version:
@@ -41,7 +47,7 @@ Every directory has a README with the exact commands. The short version:
 cd examples/java-gradle-sqlite && ./gradlew build run
 ```
 
-The SQLite examples need nothing but a JDK (the Gradle builds download one if needed). The two
+The SQLite examples, the agent included, need nothing but a JDK (the Gradle builds download one if needed). The two
 MySQL examples need Docker: Spring Boot's test starts MySQL through Testcontainers and its
 `compose.yaml` runs the whole thing; the Dropwizard service also runs on SQLite with
 `config-sqlite.yml` when you only want to click around the admin UI.
@@ -71,7 +77,7 @@ pick a stack. Each example's README has the details and the exact error text.
 
 ## Keeping them current
 
-Each build pins `skipperVersion` (or `skipper.version` in the POM) in one place; bump all five when
+Each build pins `skipperVersion` (or `skipper.version` in the POM) in one place; bump all six when
 a release lands so a copied example starts from the current release. CI does not depend on the pin:
 it always builds against the commit under test. The job needs Docker for the two MySQL examples
 and waits for the core build, so it is the slowest job in the workflow; that is the price

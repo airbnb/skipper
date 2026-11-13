@@ -1,0 +1,49 @@
+plugins {
+  java
+  application
+}
+
+// Pinned to a Skipper release by default. Pass -PskipperVersion=<v> (or set ORG_GRADLE_PROJECT_skipperVersion)
+// to build against a version you published to ~/.m2 with `./gradlew publishToMavenLocal -PVERSION_NAME=<v>` from a
+// Skipper checkout; Skipper's own CI does exactly that so the examples exercise the code under review.
+val skipperVersion = (findProperty("skipperVersion") as String?) ?: "0.6.3"
+
+repositories {
+  if (findProperty("skipperVersion") != null) {
+    mavenLocal()
+  }
+  mavenCentral()
+}
+
+dependencies {
+  implementation("com.airbnb.skipper:skipper-core:$skipperVersion")
+  // The model behind ClaudePlanner. Only called when ANTHROPIC_API_KEY is set; the default planner is scripted.
+  // It also brings a current Jackson, which is what lets this example use Java records for everything Skipper
+  // persists (records need Jackson 2.12+; Skipper runs on whichever Jackson 2.x the application ships).
+  implementation("com.anthropic:anthropic-java:3.3.0")
+  runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
+
+  testImplementation("com.airbnb.skipper:skipper-testutils:$skipperVersion")
+  testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+  // Versioned explicitly: with mavenLocal() in play Gradle may skip the module metadata that would otherwise
+  // align this with junit-jupiter.
+  testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
+}
+
+java {
+  toolchain {
+    languageVersion.set(JavaLanguageVersion.of(17))
+  }
+}
+
+application {
+  mainClass.set("com.example.trips.Main")
+}
+
+tasks.withType<Test> {
+  useJUnitPlatform()
+  testLogging {
+    events("passed", "failed", "skipped")
+    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+  }
+}
