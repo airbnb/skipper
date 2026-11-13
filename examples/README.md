@@ -33,11 +33,11 @@ directories and see only what the stack changes:
 | [`spring-boot-mysql/`](spring-boot-mysql/) | Spring Boot 4, Java 17 | MySQL | A REST service: Spring as Skipper's injector, Flyway applying Skipper's schema, Testcontainers test, Docker Compose. |
 | [`dropwizard-mysql/`](dropwizard-mysql/) | Dropwizard 3, Guice 6, Java 17 | MySQL (or SQLite) | The admin UI mounted on JAX-RS, Guice as Skipper's injector, a smoke test over HTTP. |
 
-The sixth is a different application, for a different question: how to build an AI agent on Skipper.
+The sixth is a different application, for a different question: how to orchestrate several AI agents on Skipper.
 
 | Directory | Stack | Store | What it shows |
 | --- | --- | --- | --- |
-| [`trip-booking-agent/`](trip-booking-agent/) | Java 17, Gradle, Anthropic Java SDK | file-backed SQLite | A trip-booking agent that mixes model calls with deterministic steps: the model proposes an itinerary, a validator refuses anything over budget, the workflow parks for approval, books each leg, replans around a sold-out offer, and cancels what it booked if the trip cannot be completed. Runs without an API key on a scripted planner. Serves a playground page for planning and approving trips, and the admin UI for each instance's timeline. |
+| [`insurance-claim-agents/`](insurance-claim-agents/) | Java 17, Gradle, Anthropic Java SDK | file-backed SQLite | Several agents adjudicating an insurance claim. An intake agent reads it, three specialist agents review it in parallel as child workflows, an adjudicator reconciles them, plain rules decide whether a human adjuster must step in, and a failed payment releases the money set aside. Runs without an API key on scripted agents. Serves a page for making claims and acting as the adjuster, and the admin UI for each instance's timeline. |
 
 ## Running one
 
@@ -47,7 +47,7 @@ Every directory has a README with the exact commands. The short version:
 cd examples/java-gradle-sqlite && ./gradlew build run
 ```
 
-The SQLite examples, the agent included, need nothing but a JDK (the Gradle builds download one if needed). The two
+The SQLite examples, the claim agents included, need nothing but a JDK (the Gradle builds download one if needed). The two
 MySQL examples need Docker: Spring Boot's test starts MySQL through Testcontainers and its
 `compose.yaml` runs the whole thing; the Dropwizard service also runs on SQLite with
 `config-sqlite.yml` when you only want to click around the admin UI.

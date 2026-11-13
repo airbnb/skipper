@@ -183,8 +183,8 @@ Your own store implementation is likewise a config change: see
 
 Prefer a working project to a guide? [`examples/`](examples/) holds complete, CI-tested builds on
 the common JVM stacks: plain Java with Gradle or Maven, Kotlin, Spring Boot on MySQL, and Dropwizard
-with Guice and the admin UI. It also has an [AI agent](examples/trip-booking-agent/) that mixes
-model calls with deterministic, compensable steps.
+with Guice and the admin UI. It also has a [team of AI agents](examples/insurance-claim-agents/)
+adjudicating an insurance claim: parallel child workflows, a human in the loop, and compensation.
 
 ## What comes with it
 

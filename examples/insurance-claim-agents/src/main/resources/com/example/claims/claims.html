@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Car insurance claims</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --line: #e1e5ea; --text: #1c2026; --muted: #667085;
+    --accent: #2563eb; --good: #15803d; --good-bg: #e8f5ec; --wait: #b45309; --wait-bg: #fdf3e2;
+    --bad: #b91c1c; --bad-bg: #fdecec; --soft: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101318; --card: #181c23; --line: #2b323d; --text: #e7eaee; --muted: #9aa4b2;
+      --accent: #7aa7ff; --good: #5ad08a; --good-bg: #16301f; --wait: #f0b25a; --wait-bg: #33260f;
+      --bad: #f58a80; --bad-bg: #3a1a18; --soft: #212730;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .page { max-width: 680px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { margin: 0; font-size: 26px; }
+  .lede { margin: 6px 0 24px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+  h2 { margin: 0 0 14px; font-size: 18px; }
+  label { display: block; margin: 14px 0 6px; font-weight: 600; font-size: 14px; }
+  select, textarea, input[type=number], input[type=text] {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  textarea { min-height: 84px; resize: vertical; }
+  button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--soft); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #0b1220; } }
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; }
+  .examples button { padding: 5px 12px; border-radius: 999px; font-size: 14px; }
+  .small { font-size: 14px; color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+  .error { color: var(--bad); font-size: 14px; margin-top: 8px; min-height: 1.2em; }
+  .box .error:empty { display: none; }
+  .who { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 14px; }
+  .headline { margin: 6px 0 2px; font-size: 20px; font-weight: 650; }
+  .headline.good { color: var(--good); } .headline.wait { color: var(--wait); } .headline.bad { color: var(--bad); }
+  .said { margin: 10px 0 0; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); font-size: 15px; overflow-wrap: anywhere; }
+  .steps { display: flex; gap: 6px; margin: 16px 0 4px; padding: 0; list-style: none; }
+  .steps li { flex: 1; font-size: 13px; color: var(--muted); padding-top: 8px; border-top: 4px solid var(--line); }
+  .steps li.done { border-color: var(--good); color: var(--text); }
+  .steps li.now { border-color: var(--accent); color: var(--text); font-weight: 600; }
+  .steps li.stopped { border-color: var(--bad); color: var(--text); }
+  .box { margin-top: 14px; padding: 14px; border-radius: 10px; background: var(--wait-bg); }
+  .box h3 { margin: 0 0 6px; font-size: 15px; }
+  .box ul { margin: 6px 0 0; padding-left: 20px; }
+  .inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .inline input { flex: 1; min-width: 140px; }
+  .inline input[type=number] { flex: 0 0 130px; }
+  .people { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding: 0; list-style: none; }
+  .people li { font-size: 14px; padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--muted); }
+  .people li.in { background: var(--good-bg); color: var(--good); }
+  .people li.flag { background: var(--wait-bg); color: var(--wait); }
+  .people li.no { background: var(--bad-bg); color: var(--bad); }
+  details { margin-top: 14px; font-size: 14px; }
+  summary { cursor: pointer; color: var(--muted); }
+  details ol { margin: 10px 0 6px; padding-left: 20px; color: var(--text); }
+  details li { margin-bottom: 4px; overflow-wrap: anywhere; }
+  a { color: var(--accent); }
+  footer { margin-top: 24px; text-align: center; }
+  .empty { color: var(--muted); text-align: center; padding: 12px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Car insurance claims</h1>
+  <p class="lede">Make a claim and watch it get reviewed. A team of AI agents handles each one, and a person steps in when it matters.</p>
+
+  <div class="card">
+    <h2>Make a claim</h2>
+    <div class="small" style="margin-bottom:8px">Try an example:</div>
+    <div class="examples" id="examples"></div>
+    <form id="new-claim">
+      <label for="holder">Who is claiming?</label>
+      <select id="holder"></select>
+      <label for="description">What happened?</label>
+      <textarea id="description" required placeholder="Tell us what happened and when."></textarea>
+      <label for="amount">How much are you claiming? (USD)</label>
+      <input id="amount" type="number" min="1" step="1" required>
+      <div class="actions"><button class="primary" type="submit">Send claim</button></div>
+      <div class="error" id="form-error" role="alert"></div>
+    </form>
+  </div>
+
+  <h2 style="margin:28px 0 12px">Claims</h2>
+  <div id="claims"><div class="empty">Loading…</div></div>
+
+  <footer class="small">
+    Agents: <span id="agents">…</span> · <a href="/skipper/admin/" target="_blank" rel="noopener">Skipper admin UI</a>
+  </footer>
+</div>
+<script>
+(function () {
+  var holders = {};
+  var cards = {};   // claim id -> { json, node }, so a card is only rebuilt when its claim changes
+
+  // Builds DOM nodes with text only, so nothing a person or a model wrote is ever parsed as markup.
+  function el(tag, attrs) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (key) {
+      if (key === 'class') node.className = attrs[key];
+      else if (key === 'onclick') node.addEventListener('click', attrs[key]);
+      else node.setAttribute(key, attrs[key]);
+    });
+    for (var i = 2; i < arguments.length; i++) {
+      var child = arguments[i];
+      if (child === null || child === undefined) continue;
+      node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+    }
+    return node;
+  }
+
+  function money(cents) { return '$' + Math.round(cents / 100).toLocaleString('en-US'); }
+
+  function api(path, body) {
+    var options = body === undefined ? {} : {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    };
+    return fetch(path, options).then(function (response) {
+      if (!response.ok) return response.text().then(function (text) { throw new Error(text || response.statusText); });
+      return response.status === 204 ? null : response.json();
+    });
+  }
+
+  // What to say about a claim, in the claimant's terms. step: how far along the four-step bar it is.
+  function describe(view) {
+    var claim = view.claim, stage = claim.stage, result = claim.result;
+    if (view.status === 'COMPENSATION_COMPLETED' || view.status === 'ERROR' || view.status === 'COMPENSATION_ERROR') {
+      return { tone: 'bad', step: 3, stopped: true, headline: 'We could not send the payment',
+        detail: 'The money set aside for this claim has been released. Nothing was paid.' };
+    }
+    if (stage === 'PAID') return { tone: 'good', step: 4, headline: 'Paid ' + money(result.payoutCents), detail: result.explanation };
+    if (stage === 'DENIED') return { tone: 'bad', step: 2, stopped: true, headline: 'Claim denied', detail: result.explanation };
+    if (stage === 'CLOSED') return { tone: 'bad', step: 0, stopped: true, headline: 'Claim closed', detail: result.explanation };
+    if (stage === 'NEEDS_INFO') return { tone: 'wait', step: 0, headline: 'We need a little more information' };
+    if (stage === 'SPECIALIST_REVIEW') return { tone: '', step: 1, headline: 'Three specialists are reviewing the claim' };
+    if (stage === 'ADJUDICATION') return { tone: '', step: 2, headline: 'Reaching a decision' };
+    if (stage === 'WITH_ADJUSTER') return { tone: 'wait', step: 2, headline: 'A person is reviewing this claim' };
+    if (stage === 'PAYING') return { tone: '', step: 3, headline: 'Sending the payment' };
+    return { tone: '', step: 0, headline: 'Reading the claim' };
+  }
+
+  function steps(info) {
+    var list = el('ol', { 'class': 'steps' });
+    ['Received', 'Reviewed', 'Decided', 'Paid'].forEach(function (label, index) {
+      var state = index < info.step ? 'done' : index === info.step ? (info.stopped ? 'stopped' : 'now') : '';
+      list.appendChild(el('li', { 'class': state }, label));
+    });
+    return list;
+  }
+
+  function specialists(claim) {
+    var names = { COVERAGE: 'Coverage', FRAUD: 'Fraud check', DAMAGE: 'Damage estimate' };
+    var list = el('ul', { 'class': 'people' });
+    Object.keys(names).forEach(function (role) {
+      var opinion = (claim.opinions.items || []).filter(function (o) { return o.role === role; })[0];
+      var state = !opinion ? '' : opinion.verdict === 'APPROVE' ? 'in' : opinion.verdict === 'REFER' ? 'flag' : 'no';
+      var mark = !opinion ? '…' : opinion.verdict === 'APPROVE' ? '✓' : opinion.verdict === 'REFER' ? '?' : '✕';
+      list.appendChild(el('li', { 'class': state }, names[role] + ' ' + mark));
+    });
+    return list;
+  }
+
+  function needsInfo(id, claim) {
+    var input = el('input', { type: 'text', 'aria-label': 'Your answer', placeholder: 'Type your answer' });
+    var error = el('div', { 'class': 'error' });
+    var send = function () {
+      api('/api/claims/' + encodeURIComponent(id) + '/info', { text: input.value })
+        .then(refresh, function (failure) { error.textContent = failure.message; });
+    };
+    input.addEventListener('keydown', function (event) { if (event.key === 'Enter') send(); });
+    return el('div', { 'class': 'box' },
+      el('h3', {}, 'Please tell us'),
+      el('div', {}, claim.question + '.'),
+      el('div', { 'class': 'inline' }, input, el('button', { 'class': 'primary', onclick: send }, 'Send')),
+      error);
+  }
+
+  function adjusterDesk(id, claim) {
+    var recommended = claim.recommendation;
+    var amount = el('input', { type: 'number', min: '0', step: '1', 'aria-label': 'Amount to pay in dollars' });
+    amount.value = recommended && recommended.pay ? Math.round(recommended.payoutCents / 100) : '';
+    var error = el('div', { 'class': 'error' });
+    var decide = function (approve) {
+      api('/api/claims/' + encodeURIComponent(id) + '/adjuster', {
+        approve: approve,
+        payoutCents: approve ? Math.round(Number(amount.value) * 100) : 0,
+        note: approve ? 'Approved by an adjuster after review.' : 'Denied by an adjuster after review.'
+      }).then(refresh, function (failure) { error.textContent = failure.message; });
+    };
+    var reasons = el('ul', {});
+    (claim.escalations.lines || []).forEach(function (reason) { reasons.appendChild(el('li', {}, reason)); });
+    return el('div', { 'class': 'box' },
+      el('h3', {}, 'You are the adjuster'),
+      el('div', {}, 'This claim was not decided automatically because:'),
+      reasons,
+      el('div', { style: 'margin-top:10px' }, recommended
+        ? (recommended.pay ? 'The agents recommend paying ' + money(recommended.payoutCents) + '.' : 'The agents recommend denying the claim.')
+        : 'The agents could not agree on a recommendation.'),
+      el('div', { 'class': 'inline' },
+        el('span', {}, 'Pay $'), amount,
+        el('button', { 'class': 'primary', onclick: function () { decide(true); } }, 'Approve'),
+        el('button', { onclick: function () { decide(false); } }, 'Deny')),
+      error);
+  }
+
+  function card(view) {
+    var claim = view.claim, request = claim.claim, info = describe(view);
+    var node = el('div', { 'class': 'card' });
+    node.appendChild(el('div', { 'class': 'who' },
+      el('span', {}, (holders[request.policyNumber] || request.policyNumber) + ' is claiming ' + money(request.claimedCents)),
+      el('span', {}, claim.result && claim.result.decidedBy === 'adjuster' ? 'Decided by a person' : '')));
+    node.appendChild(el('div', { 'class': 'headline ' + info.tone }, info.headline));
+    if (info.detail) node.appendChild(el('div', {}, info.detail));
+    node.appendChild(el('p', { 'class': 'said' }, '“' + request.description + '”'));
+    node.appendChild(steps(info));
+    if (claim.policy && claim.stage !== 'NEEDS_INFO') node.appendChild(specialists(claim));
+    if (claim.stage === 'NEEDS_INFO') node.appendChild(needsInfo(view.id, claim));
+    if (claim.stage === 'WITH_ADJUSTER') node.appendChild(adjusterDesk(view.id, claim));
+    var lines = claim.journal.lines || [];
+    if (lines.length) {
+      var list = el('ol', {});
+      lines.forEach(function (line) { list.appendChild(el('li', {}, line)); });
+      node.appendChild(el('details', {},
+        el('summary', {}, 'How this was handled'),
+        list,
+        el('a', { href: '/skipper/admin/#workflow/' + encodeURIComponent(view.id), target: '_blank', rel: 'noopener' }, 'Technical timeline')));
+    }
+    return node;
+  }
+
+  function render(views) {
+    var root = document.getElementById('claims');
+    if (!views.length) {
+      root.textContent = '';
+      cards = {};
+      root.appendChild(el('div', { 'class': 'empty' }, 'No claims yet. Send one above.'));
+      return;
+    }
+    var next = {};
+    var nodes = views.map(function (view) {
+      var json = JSON.stringify(view);
+      var existing = cards[view.id];
+      // Keep the node when nothing changed, so text being typed into it and an open details section survive.
+      next[view.id] = existing && existing.json === json ? existing : { json: json, node: card(view) };
+      return next[view.id].node;
+    });
+    cards = next;
+    var current = Array.prototype.slice.call(root.children);
+    var same = current.length === nodes.length && nodes.every(function (node, i) { return node === current[i]; });
+    if (!same) {
+      root.textContent = '';
+      nodes.forEach(function (node) { root.appendChild(node); });
+    }
+  }
+
+  // The list of claims comes from Skipper's admin API, which reads the store. Specialists are child
+  // workflows of a claim, so anything with a parent is left out. Each claim is then asked for its own view.
+  function refresh() {
+    return api('/skipper/admin/workflows?limit=100').then(function (result) {
+      var claims = (result.workflows || []).filter(function (w) { return !w.parent_workflow_id; }).slice(0, 12);
+      return Promise.all(claims.map(function (w) {
+        return api('/api/claims/' + encodeURIComponent(w.workflow_id)).catch(function () { return null; });
+      }));
+    }).then(function (views) {
+      render(views.filter(function (view) { return view && view.claim && view.claim.claim; }));
+    }).catch(function () { /* the next poll tries again */ });
+  }
+
+  function fill(sample) {
+    document.getElementById('holder').value = sample.policyNumber;
+    document.getElementById('description').value = sample.description;
+    document.getElementById('amount').value = Math.round(sample.claimedCents / 100);
+  }
+
+  api('/api/setup').then(function (setup) {
+    document.getElementById('agents').textContent = setup.agents;
+    var select = document.getElementById('holder');
+    setup.holders.forEach(function (holder) {
+      holders[holder.policyNumber] = holder.name;
+      select.appendChild(el('option', { value: holder.policyNumber }, holder.name));
+    });
+    var examples = document.getElementById('examples');
+    setup.samples.forEach(function (sample) {
+      examples.appendChild(el('button', { type: 'button', onclick: function () { fill(sample); } }, sample.label));
+    });
+    fill(setup.samples[0]);
+    refresh();
+    setInterval(refresh, 1200);
+  });
+
+  document.getElementById('new-claim').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var error = document.getElementById('form-error');
+    error.textContent = '';
+    api('/api/claims', {
+      policyNumber: document.getElementById('holder').value,
+      description: document.getElementById('description').value,
+      claimedCents: Math.round(Number(document.getElementById('amount').value) * 100)
+    }).then(refresh, function (failure) { error.textContent = failure.message; });
+  });
+})();
+</script>
+</body>
+</html>
