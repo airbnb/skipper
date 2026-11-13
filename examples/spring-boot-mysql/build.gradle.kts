@@ -8,7 +8,7 @@ plugins {
 // Pinned to a Skipper release by default. Pass -PskipperVersion=<v> (or set ORG_GRADLE_PROJECT_skipperVersion)
 // to build against a version you published to ~/.m2 with `./gradlew publishToMavenLocal -PVERSION_NAME=<v>` from a
 // Skipper checkout; Skipper's own CI does exactly that so the examples exercise the code under review.
-val skipperVersion = (findProperty("skipperVersion") as String?) ?: "0.6.3"
+val skipperVersion = (findProperty("skipperVersion") as String?) ?: "0.16.0"
 
 repositories {
   if (findProperty("skipperVersion") != null) {
