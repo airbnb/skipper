@@ -85,10 +85,16 @@ class MySqlScheduler
                             request.id,
                             runAfter,
                         )
+                        val keptTask =
+                            if (request.isResetRetryCountWhenHonoringLease) {
+                                resetRetryCount(conn, existingTask.get())
+                            } else {
+                                existingTask.get()
+                            }
                         if (!request.isBumpVersionWhenHonoringLease) {
-                            return@execute existingTask.get()
+                            return@execute keptTask
                         }
-                        return@execute recordRerunRequest(conn, existingTask.get())
+                        return@execute recordRerunRequest(conn, keptTask)
                     }
                     log.info(
                         "task with id: {} is being overwritten. runAfter={}. hasActiveLease={}." +
@@ -744,6 +750,24 @@ class MySqlScheduler
                     throw InternalError(e)
                 }
             }
+
+        /** Sets a kept task's retry count to zero. Its version stays, so the lease holder keeps ownership. */
+        private fun <T> resetRetryCount(
+            conn: java.sql.Connection,
+            task: Task<T>,
+        ): Task<T> {
+            val sql = "UPDATE $schedulerTasksTable SET retry_count = 0 WHERE task_id = ? AND owner = ?"
+            try {
+                conn.prepareStatement(sql).use { ps ->
+                    ps.setString(1, task.id)
+                    ps.setString(2, owner)
+                    ps.executeUpdate()
+                }
+            } catch (e: SQLException) {
+                throw InternalError("unable to reset retry count for task with id: " + task.id, e)
+            }
+            return task.toBuilder().retryCount(0).build()
+        }
 
         /**
          * Records a rerun request on a task whose lease is being honoured, by bumping only its version.
