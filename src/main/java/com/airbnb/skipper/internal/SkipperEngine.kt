@@ -200,10 +200,20 @@ open class SkipperEngine
          * Whether [workflowInstance] is RUNNING with no task to execute it. The store writes a new
          * instance as RUNNING, and a RUNNING instance keeps its task until an execution persists a
          * new status, so a missing task means the start that wrote it failed to schedule it.
+         *
+         * [workflowInstance] was read before the task lookup, and a fast first start can finish the
+         * workflow and remove its task in between. So the decision is made in this order:
+         * 1. The earlier read is not RUNNING: not stranded, and the task is not looked up.
+         * 2. The workflow has a task: not stranded.
+         * 3. It has no task: read the instance again, and it is stranded only if it is still RUNNING.
+         *    A COMPLETED or WAITING instance here was run by the first start, not left behind.
          */
         private fun isStranded(workflowInstance: WorkflowInstance): Boolean =
             workflowInstance.status == WorkflowInstance.Status.RUNNING &&
-                scheduler.getTask<Any>(workflowInstance.workflowId).isEmpty
+                scheduler.getTask<Any>(workflowInstance.workflowId).isEmpty &&
+                workflowStore.getWorkflow(workflowInstance.workflowId).exists {
+                    it.status == WorkflowInstance.Status.RUNNING
+                }
 
         open fun scheduleExecution(
             workflowInstance: WorkflowInstance,

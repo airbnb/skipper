@@ -304,6 +304,46 @@ class SkipperEngineTest {
         )
 
         verify(mockScheduler, times(0)).schedule<Any>(any())
+        verify(mockWorkflowStore, times(1)).getWorkflow(any<String>())
+    }
+
+    /**
+     * The first start can finish the workflow, and remove its task, between the instance read and the
+     * task lookup. The instance is read again before treating the missing task as stranded.
+     */
+    @Test
+    fun testStartWorkflowWhenTaskIsGoneBecauseTheWorkflowCompletedDoesNotScheduleIt() {
+        assertMissingTaskWithReReadStatusDoesNotSchedule(WorkflowInstance.Status.COMPLETED)
+    }
+
+    @Test
+    fun testStartWorkflowWhenTaskIsGoneBecauseTheWorkflowIsWaitingDoesNotScheduleIt() {
+        assertMissingTaskWithReReadStatusDoesNotSchedule(WorkflowInstance.Status.WAITING)
+    }
+
+    private fun assertMissingTaskWithReReadStatusDoesNotSchedule(reReadStatus: WorkflowInstance.Status) {
+        whenever(mockFeatureGate.isEnabled(FeatureGate.Keys.CREATE_EXISTING_WORKFLOW_IS_NOOP))
+            .thenReturn(true)
+        whenever(mockWorkflowStore.createWorkflow(any())).thenThrow(EntityAlreadyExists())
+        whenever(mockWorkflowStore.getWorkflow(any<String>()))
+            .thenReturn(Option.of(runningInstance()))
+            .thenReturn(Option.of(runningInstance().toBuilder().status(reReadStatus).build()))
+        whenever(mockScheduler.getTask<WorkflowInstance>("test-workflow-id")).thenReturn(Option.none())
+
+        skipperEngine.startWorkflow(
+            RunRequest.builder()
+                .workflowId("test-workflow-id")
+                .workflowClass(Workflow::class.java)
+                .input("test")
+                .workflowMethod("test-method")
+                .requestContext(REQUEST_CONTEXT)
+                .extraRequestData(ExtraRequestData())
+                .build(),
+        )
+
+        verify(mockWorkflowStore, times(2)).getWorkflow(any<String>())
+        verify(mockScheduler, times(0)).scheduleAfterLease(any<ScheduleRequest<WorkflowInstance>>())
+        verify(mockScheduler, times(0)).schedule<Any>(any())
     }
 
     /** A WAITING instance has no task until a signal or timer wakes it, so its task is not looked up. */

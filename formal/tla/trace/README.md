@@ -151,3 +151,7 @@ Running it turned up places where the model didn't describe the code. They were 
   change that makes a handler give up without writing can pass.
 - **One workflow at a time.** Each workflow's run is checked on its own; workers shared across
   workflows are not modelled.
+- **One caller per workflow.** `trace_to_tla.py` sets `Callers = {c1}`, so the model takes a
+  workflow's starts one after another. A traced test that starts the same id twice at truly the
+  same time would be rejected rather than checked against `start_race`'s two callers. No traced
+  suite does that today.

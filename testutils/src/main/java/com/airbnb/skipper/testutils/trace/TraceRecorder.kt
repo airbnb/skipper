@@ -20,6 +20,11 @@ import kotlin.concurrent.withLock
  * reads back, through the untraced delegates, everything the model tracks for each workflow the
  * call touched: the workflow row, its timers and its task rows. The checker compares the model's
  * state with that snapshot after every step, so only calls, never intermediate state, need logging.
+ *
+ * A store or scheduler wrapper that can't be identified, for example because `Class.forName` fails
+ * on it, makes the run fail the check rather than pass with the wrong engine method: its frame
+ * stays innermost, so the handler's reads through it go unlogged and the checker rejects any run
+ * that has them.
  */
 class TraceRecorder internal constructor(
     private val file: Path,
