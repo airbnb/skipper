@@ -10,6 +10,7 @@ import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.FixedRetryStrategy
 import com.airbnb.skipper.IWorkflowFactory
 import com.airbnb.skipper.NonRetryableError
+import com.airbnb.skipper.OptimisticLockingError
 import com.airbnb.skipper.PersistentRetryStrategy
 import com.airbnb.skipper.QueryMethod
 import com.airbnb.skipper.RetriesExhaustedError
@@ -1753,6 +1754,32 @@ abstract class BaseWorkflowIntegTest {
             assertThat(scheduler.getTask<Any>(workflowId).get().status).isEqualTo(Task.Status.PENDING)
 
             skipperEngine.cancelWorkflow(workflowId, "cancelled past max retries")
+
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
+            verify(testClient).action("compensateEventualCheckpoint")
+        }
+
+        @Test
+        fun testCopyReadBeforeTheCancelCannotFailTheSettleRun() {
+            // A worker that read the task before the cancel reset its retries cannot fail it: the run
+            // that settles the cancel still happens and the workflow compensates.
+            val workflow = workflowFactory<CompensateOnCancelWorkflow>(workflowId)
+            workflow.oneStepThenWait()
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.WAITING)
+            val dueSoon = Instant.now().plusSeconds(2)
+            scheduler.schedule(
+                ScheduleRequest.builder<Any>()
+                    .id(workflowId)
+                    .dedupToken(workflowId)
+                    .type(Task.Type.WORKFLOW)
+                    .runAfter(dueSoon)
+                    .build()
+            )
+            repeat(3) { scheduler.rescheduleForRetry(scheduler.getTask<Any>(workflowId).get(), dueSoon) }
+            val readBeforeCancel = scheduler.getTask<Any>(workflowId).get()
+
+            skipperEngine.cancelWorkflow(workflowId, "cancelled past max retries")
+            assertThrows<OptimisticLockingError> { schedulerManager.handleTask(readBeforeCancel) }
 
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.COMPENSATION_COMPLETED)
             verify(testClient).action("compensateEventualCheckpoint")

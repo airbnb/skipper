@@ -76,7 +76,9 @@ public interface Scheduler {
   <T> void remove(Task<T> task);
 
   /**
-   * Mark a task as FAILED.
+   * Mark a task as FAILED. Throws an OptimisticLockingError if the stored task's version changed
+   * since {@code task} was read. It also throws if the stored retry count is lower than {@code
+   * task}'s, so a task whose retries were reset is not failed.
    *
    * @param task The task to mark as failed
    * @param statusMessage The status message to set for debugging purposes
