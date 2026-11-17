@@ -1,40 +1,11 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import Icon from '../components/Icon.astro';
-import LangTabs from '../components/LangTabs.astro';
 import Logo from '../components/Logo.astro';
 import Patterns from '../components/Patterns.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const GITHUB = 'https://github.com/airbnb/skipper';
-
-const heroKotlin = `class CheckoutWorkflow : Workflow() {
-  private val payments = actions<PaymentActions>()
-  private val email = actions<EmailActions>()
-
-  @WorkflowMethod
-  suspend fun checkout(order: Order): Receipt {
-    // Charged once — even if the workflow resumes later.
-    val charge = payments.charge(order)
-    // Retried automatically until it succeeds.
-    email.sendReceipt(order, charge)
-    return Receipt(charge.id)
-  }
-}`;
-
-const heroJava = `public class CheckoutWorkflow extends Workflow {
-  private final PaymentActions payments = actions(PaymentActions.class);
-  private final EmailActions email = actions(EmailActions.class);
-
-  @WorkflowMethod(returnType = Receipt.class)
-  public CompletableFuture<Receipt> checkout(Order order) {
-    // Charged once — even if the workflow resumes later.
-    Charge charge = payments.charge(order);
-    // Retried automatically until it succeeds.
-    email.sendReceipt(order, charge);
-    return CompletableFuture.completedFuture(new Receipt(charge.getId()));
-  }
-}`;
 
 const props = [
   {
@@ -119,10 +90,6 @@ const ctaCards = [
           <code>com.airbnb.skipper:skipper-core</code>, on Maven Central.
         </p>
       </div>
-
-      <div class="hero__code">
-        <LangTabs java={heroJava} kotlin={heroKotlin} />
-      </div>
     </div>
     <div class="container hero__credit">
       <p>
@@ -132,8 +99,20 @@ const ctaCards = [
     </div>
   </section>
 
+  <!-- ===================== SHOW ME THE CODE ===================== -->
+  <section class="section" id="code">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Show me the code</span>
+        <h2>A workflow is just a class</h2>
+        <p>Pick a pattern. Each one is an ordinary method that Skipper makes durable.</p>
+      </div>
+      <Patterns />
+    </div>
+  </section>
+
   <!-- ===================== VALUE PROPS ===================== -->
-  <section class="section" id="why">
+  <section class="section section--surface" id="why">
     <div class="container">
       <div class="section-head">
         <span class="eyebrow">Why Skipper</span>
@@ -149,18 +128,6 @@ const ctaCards = [
           </div>
         ))}
       </div>
-    </div>
-  </section>
-
-  <!-- ===================== SHOW ME THE CODE ===================== -->
-  <section class="section section--surface" id="code">
-    <div class="container">
-      <div class="section-head">
-        <span class="eyebrow">Show me the code</span>
-        <h2>A workflow is just a class</h2>
-        <p>Pick a pattern. Each one is an ordinary method that Skipper makes durable.</p>
-      </div>
-      <Patterns />
     </div>
   </section>
 

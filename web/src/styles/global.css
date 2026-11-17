@@ -244,8 +244,11 @@ code, pre, kbd {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
 }
-.hero__watermark { position: absolute; right: -150px; top: 50%; transform: translateY(-50%); opacity: 0.06; pointer-events: none; z-index: 0; }
-.hero__inner { position: relative; z-index: 1; padding: 96px 24px 64px; display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 56px; align-items: center; }
+.hero__watermark {
+  position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%) scale(1.5);
+  opacity: 0.07; filter: blur(14px); pointer-events: none; z-index: 0;
+}
+.hero__inner { position: relative; z-index: 1; padding: 104px 24px 72px; max-width: 860px; text-align: center; }
 .hero__inner > * { min-width: 0; }
 .hero__badge {
   display: inline-flex; align-items: center; gap: 0.5rem;
@@ -261,14 +264,14 @@ code, pre, kbd {
   line-height: 1.05;
   margin-bottom: 1.1rem;
 }
-.hero h1 .accent { color: var(--orange-light); }
-.hero__sub { font-size: 1.18rem; color: #c3cae8; max-width: 36ch; margin-bottom: 2rem; }
-.hero__actions { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-bottom: 1.6rem; }
+.hero h1 .accent { color: var(--orange-light); display: block; }
+.hero__sub { font-size: 1.22rem; color: #c3cae8; max-width: 56ch; margin: 0 auto 2rem; }
+.hero__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.9rem; margin-bottom: 1.6rem; }
 .hero__note { font-size: 0.82rem; color: #97a1cb; }
 .hero__credit { position: relative; z-index: 1; padding-bottom: 34px; }
 .hero__credit p {
   margin: 0; padding-top: 22px; border-top: 1px solid rgba(255,255,255,0.14);
-  display: flex; align-items: center; gap: 0.7rem;
+  display: flex; align-items: center; justify-content: center; gap: 0.7rem;
   font-size: 1.02rem; color: #b9c1e6;
 }
 .hero__credit a { color: #fff; font-weight: 650; text-decoration: none; }
@@ -278,7 +281,7 @@ code, pre, kbd {
 /* hero code container uses the shared .langtabs component */
 
 @media (max-width: 920px) {
-  .hero__inner { grid-template-columns: 1fr; gap: 36px; padding: 64px 24px 56px; }
+  .hero__inner { padding: 64px 24px 56px; }
   .hero__sub { max-width: none; }
 }
 
