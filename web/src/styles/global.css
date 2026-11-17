@@ -255,6 +255,14 @@ code, pre, kbd {
   font-size: 0.8rem; font-weight: 600; letter-spacing: 0.03em;
   padding: 0.35rem 0.8rem; border-radius: 999px; margin-bottom: 1.4rem;
 }
+.hero__badges { display: flex; flex-wrap: wrap; gap: 0.5rem 0.6rem; margin-bottom: 1.4rem; }
+.hero__badges .hero__badge { margin-bottom: 0; }
+.hero__badge--link { text-decoration: none; transition: background 0.15s, border-color 0.15s; }
+.hero__badge--link:hover { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.45); color: #fff; }
+.hero__badge-tag {
+  background: var(--orange); color: #fff; border-radius: 999px;
+  font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.1rem 0.5rem;
+}
 .hero h1 {
   color: #fff;
   font-size: clamp(2.3rem, 4.6vw, 3.5rem);
@@ -302,6 +310,17 @@ code, pre, kbd {
   width: 8px; height: 8px; border-radius: 50%; background: var(--blue);
 }
 @media (max-width: 920px) { .code-layout { grid-template-columns: 1fr; gap: 28px; } }
+
+/* ---------- ai agents band ---------- */
+.agents { background: linear-gradient(200deg, #232c6e 0%, #18204a 70%); color: #c3cae8; }
+.agents .eyebrow { color: var(--orange-light); }
+.agents h2 { color: #fff; }
+.agents .code-layout li { color: #b4bcdf; }
+.agents .code-layout li strong { color: #fff; }
+.agents .code-layout li::before { background: var(--orange-light); }
+.agents__more { margin: 1.4rem 0 0; }
+.agents__more a { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--orange-light); font-weight: 650; text-decoration: none; }
+.agents__more a:hover { color: #fff; }
 
 /* ---------- lang tabs ---------- */
 .langtabs { border-radius: 14px; overflow: hidden; border: 1px solid #232a55; box-shadow: var(--shadow-md); }

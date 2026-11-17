@@ -87,6 +87,73 @@ const kotlinCode = `class PeerToPeerTransfer : Workflow() {
   }
 }`;
 
+const agentJava = `public class ClaimWorkflow extends Workflow {
+  private final AgentActions agents = actions(AgentActions.class);
+  private final PaymentActions payments = actions(PaymentActions.class);
+
+  @StateField Decision adjuster;
+
+  @WorkflowMethod(returnType = Decision.class)
+  public CompletableFuture<Decision> handle(Claim claim) {
+    // Each model call is a checkpoint: a restart never asks twice.
+    Assessment assessment = agents.assess(claim);
+    Decision decision = agents.adjudicate(assessment);
+
+    // Your code, not the model, decides what needs a person.
+    if (decision.getPayoutCents() > AUTO_APPROVE_LIMIT) {
+      // Hibernate until an adjuster answers, for up to a week.
+      waitUntil(() -> adjuster != null, Duration.ofDays(7));
+      decision = adjuster != null ? adjuster : Decision.deny("not reviewed");
+    }
+    if (decision.isApproved()) {
+      payments.pay(decision);
+    }
+    return CompletableFuture.completedFuture(decision);
+  }
+
+  @SignalMethod
+  public void review(Decision decision) {
+    this.adjuster = decision;
+  }
+}`;
+
+const agentKotlin = `class ClaimWorkflow : Workflow() {
+  private val agents = actions<AgentActions>()
+  private val payments = actions<PaymentActions>()
+
+  @StateField var adjuster: Decision? = null
+
+  @WorkflowMethod
+  suspend fun handle(claim: Claim): Decision {
+    // Each model call is a checkpoint: a restart never asks twice.
+    val assessment = agents.assess(claim)
+    var decision = agents.adjudicate(assessment)
+
+    // Your code, not the model, decides what needs a person.
+    if (decision.payoutCents > AUTO_APPROVE_LIMIT) {
+      // Hibernate until an adjuster answers, for up to a week.
+      waitUntil({ adjuster != null }, Duration.ofDays(7))
+      decision = adjuster ?: Decision.deny("not reviewed")
+    }
+    if (decision.approved) {
+      payments.pay(decision)
+    }
+    return decision
+  }
+
+  @SignalMethod
+  fun review(decision: Decision) {
+    this.adjuster = decision
+  }
+}`;
+
+const agentPoints = [
+  { title: 'Inference is a checkpointed step.', body: 'A finished model or tool call is persisted. After a crash or a deploy the agent picks up after it, without paying for it or acting on it a second time.' },
+  { title: 'Model outages are retried for you.', body: 'Rate limits and timeouts back off on the retry strategy you choose, and the agent carries on when the provider does.' },
+  { title: 'Code sets the limits.', body: 'Which agent runs next, what a decision must pass before it counts, and when to hand over to a person are ordinary Java or Kotlin around the model calls.' },
+  { title: 'People and other agents fit in.', body: 'Wait days for an approval at no cost, fan work out to specialist agents as child workflows, and undo completed steps when a later one fails.' },
+];
+
 const props = [
   {
     icon: 'shield',
@@ -121,6 +188,7 @@ const fitYes = [
   'Your process coordinates multiple steps, long waits, or human approvals.',
   'You would consider Temporal, but you do not want to run and operate a cluster.',
   'Your service is Tier 0 and cannot take a dependency on an external workflow cluster.',
+  'You are adding AI agents to a JVM service and they have to survive failures, retries, and long waits.',
 ];
 const fitNo = [
   'Your workflow does not require durable execution.',
@@ -146,7 +214,12 @@ const ctaCards = [
     <div class="hero__watermark" aria-hidden="true"><Logo variant="white" size={560} /></div>
     <div class="container hero__inner">
       <div>
-        <span class="hero__badge">Open source · Apache 2.0</span>
+        <div class="hero__badges">
+          <span class="hero__badge">Open source · Apache 2.0</span>
+          <a class="hero__badge hero__badge--link" href="#agents">
+            <span class="hero__badge-tag">New</span> Reliable AI agents on Skipper <Icon name="arrow" size={14} />
+          </a>
+        </div>
         <h1>Durable execution, <span class="accent">embedded in your service</span></h1>
         <p class="hero__sub">
           Skipper is a lightweight workflow engine for the JVM. Write complex,
@@ -210,6 +283,36 @@ const ctaCards = [
           </ul>
         </div>
         <LangTabs java={javaCode} kotlin={kotlinCode} />
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== AI AGENTS ===================== -->
+  <section class="section agents" id="agents">
+    <div class="container">
+      <div class="code-layout">
+        <div>
+          <span class="eyebrow">AI agents</span>
+          <h2>Agents you can trust to finish the job</h2>
+          <p>
+            An agent is a long-running process: it calls models and tools, waits on
+            people, and cannot afford to lose its place halfway through. That is a
+            workflow. Skipper brings agentic features to the service you already
+            run, with the durability of the rest of your business logic and no
+            agent platform to operate.
+          </p>
+          <ul>
+            {agentPoints.map((a) => (
+              <li><strong>{a.title}</strong> {a.body}</li>
+            ))}
+          </ul>
+          <p class="agents__more">
+            <a href={`${GITHUB}/tree/main/examples/insurance-claim-agents`}>
+              See five agents adjudicate an insurance claim <Icon name="arrow" size={16} />
+            </a>
+          </p>
+        </div>
+        <LangTabs java={agentJava} kotlin={agentKotlin} />
       </div>
     </div>
   </section>
