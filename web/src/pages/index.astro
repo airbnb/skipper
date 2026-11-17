@@ -3,6 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import Icon from '../components/Icon.astro';
 import LangTabs from '../components/LangTabs.astro';
 import Logo from '../components/Logo.astro';
+import Patterns from '../components/Patterns.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const GITHUB = 'https://github.com/airbnb/skipper';
@@ -32,58 +33,6 @@ const heroJava = `public class CheckoutWorkflow extends Workflow {
     // Retried automatically until it succeeds.
     email.sendReceipt(order, charge);
     return CompletableFuture.completedFuture(new Receipt(charge.getId()));
-  }
-}`;
-
-const javaCode = `public class PeerToPeerTransfer extends Workflow {
-  private final Ledger ledger = actions(Ledger.class);
-
-  @StateField Boolean isApproved;
-
-  @WorkflowMethod(returnType = Boolean.class)
-  public CompletableFuture<Boolean> transfer(TransferRequest request) {
-    // Transfers over $1,000 need a human in the loop.
-    if (request.getAmount() > 1000) {
-      // Hibernate until approved — or up to a day — using zero resources.
-      boolean approved = waitUntil(() -> isApproved != null, Duration.ofDays(1));
-      if (!approved || !isApproved) {
-        return CompletableFuture.completedFuture(false);
-      }
-    }
-    ledger.debit(request.getFrom(), request.getAmount());
-    ledger.credit(request.getTo(), request.getAmount());
-    return CompletableFuture.completedFuture(true);
-  }
-
-  // A signal wakes the waiting workflow up from the outside world.
-  @SignalMethod
-  public void approve(boolean isApproved) {
-    this.isApproved = isApproved;
-  }
-}`;
-
-const kotlinCode = `class PeerToPeerTransfer : Workflow() {
-  private val ledger = actions<Ledger>()
-
-  @StateField var isApproved: Boolean? = null
-
-  @WorkflowMethod
-  suspend fun transfer(request: TransferRequest): Boolean {
-    // Transfers over $1,000 need a human in the loop.
-    if (request.amount > 1000) {
-      // Hibernate until approved — or up to a day — using zero resources.
-      val approved = waitUntil({ isApproved != null }, Duration.ofDays(1))
-      if (!approved || isApproved != true) return false
-    }
-    ledger.debit(request.from, request.amount)
-    ledger.credit(request.to, request.amount)
-    return true
-  }
-
-  // A signal wakes the waiting workflow up from the outside world.
-  @SignalMethod
-  fun approve(isApproved: Boolean) {
-    this.isApproved = isApproved
   }
 }`;
 
@@ -170,6 +119,12 @@ const props = [
     title: 'Reuses your database',
     body: 'Start instantly on an embedded store, then point Skipper at the MySQL your service already runs — all behind pluggable adapters. No new critical dependency.',
   },
+  {
+    icon: 'sparkles',
+    title: 'A steady hand for AI agents',
+    body: 'Models improvise; Skipper keeps the score. Every model call, tool call, and handoff is checkpointed, so a crew of agents can wait days for a person and pick up mid-thought after a crash.',
+    accent: true,
+  },
 ];
 
 const features = [
@@ -214,17 +169,12 @@ const ctaCards = [
     <div class="hero__watermark" aria-hidden="true"><Logo variant="white" size={560} /></div>
     <div class="container hero__inner">
       <div>
-        <div class="hero__badges">
-          <span class="hero__badge">Open source · Apache 2.0</span>
-          <a class="hero__badge hero__badge--link" href="#agents">
-            <span class="hero__badge-tag">New</span> Reliable AI agents on Skipper <Icon name="arrow" size={14} />
-          </a>
-        </div>
+        <span class="hero__badge">Open source · Apache 2.0</span>
         <h1>Durable execution, <span class="accent">embedded in your service</span></h1>
         <p class="hero__sub">
-          Skipper is a lightweight workflow engine for the JVM. Write complex,
-          long-running business logic as plain Java or Kotlin — and let Skipper
-          guarantee it runs to completion, in spite of failures.
+          Skipper is a lightweight workflow engine for the JVM. Write long-running
+          business logic and AI agents as plain Java or Kotlin — and let Skipper
+          guarantee they run to completion, in spite of failures.
         </p>
         <div class="hero__actions">
           <a class="btn btn--primary" href={`${base}/docs/`}>Get Started <Icon name="arrow" size={18} /></a>
@@ -253,7 +203,7 @@ const ctaCards = [
       </div>
       <div class="props">
         {props.map((p) => (
-          <div class="prop">
+          <div class:list={['prop', { 'prop--accent': p.accent }]}>
             <div class="prop__icon"><Icon name={p.icon} size={24} /></div>
             <h3>{p.title}</h3>
             <p>{p.body}</p>
@@ -266,24 +216,12 @@ const ctaCards = [
   <!-- ===================== SHOW ME THE CODE ===================== -->
   <section class="section section--surface" id="code">
     <div class="container">
-      <div class="code-layout">
-        <div>
-          <span class="eyebrow">Show me the code</span>
-          <h2>A workflow is just a class</h2>
-          <p>
-            This peer-to-peer transfer waits for manual approval on large amounts,
-            then moves the money. Notice what is <em>not</em> here: retries, state
-            persistence, and failure handling are the engine's job.
-          </p>
-          <ul>
-            <li><strong>No error-handling boilerplate.</strong> Skipper retries transient failures; your method stays pure business logic.</li>
-            <li><strong><code>waitUntil</code> hibernates.</strong> The workflow can pause for a day or longer, consuming zero resources, then resume exactly where it left off.</li>
-            <li><strong>Signals wake it up.</strong> <code>approve(...)</code> is called from the outside world — an API handler, a queue consumer, or a human.</li>
-            <li><strong>Automatic checkpoints.</strong> Completed actions are persisted, so a resumed workflow never repeats work it has already done.</li>
-          </ul>
-        </div>
-        <LangTabs java={javaCode} kotlin={kotlinCode} />
+      <div class="section-head">
+        <span class="eyebrow">Show me the code</span>
+        <h2>A workflow is just a class</h2>
+        <p>Pick a pattern. Each one is an ordinary method that Skipper makes durable.</p>
       </div>
+      <Patterns />
     </div>
   </section>
 

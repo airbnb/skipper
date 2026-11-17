@@ -255,14 +255,6 @@ code, pre, kbd {
   font-size: 0.8rem; font-weight: 600; letter-spacing: 0.03em;
   padding: 0.35rem 0.8rem; border-radius: 999px; margin-bottom: 1.4rem;
 }
-.hero__badges { display: flex; flex-wrap: wrap; gap: 0.5rem 0.6rem; margin-bottom: 1.4rem; }
-.hero__badges .hero__badge { margin-bottom: 0; }
-.hero__badge--link { text-decoration: none; transition: background 0.15s, border-color 0.15s; }
-.hero__badge--link:hover { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.45); color: #fff; }
-.hero__badge-tag {
-  background: var(--orange); color: #fff; border-radius: 999px;
-  font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.1rem 0.5rem;
-}
 .hero h1 {
   color: #fff;
   font-size: clamp(2.3rem, 4.6vw, 3.5rem);
@@ -283,7 +275,7 @@ code, pre, kbd {
 }
 
 /* ---------- value props ---------- */
-.props { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.props { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
 .prop {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -296,6 +288,9 @@ code, pre, kbd {
   display: grid; place-items: center; margin-bottom: 16px;
   background: var(--blue-soft); color: var(--blue);
 }
+.prop--accent { border-color: #f6c3b0; background: linear-gradient(180deg, #fff6f2, var(--bg) 60%); }
+.prop--accent .prop__icon { background: #ffe6dc; color: var(--orange-strong); }
+@media (max-width: 1040px) { .props { grid-template-columns: repeat(2, 1fr); } }
 .prop h3 { font-size: 1.18rem; }
 .prop p { color: var(--muted); margin: 0; font-size: 0.98rem; }
 
@@ -310,6 +305,19 @@ code, pre, kbd {
   width: 8px; height: 8px; border-radius: 50%; background: var(--blue);
 }
 @media (max-width: 920px) { .code-layout { grid-template-columns: 1fr; gap: 28px; } }
+
+/* ---------- pattern tabs ---------- */
+.patterns__bar { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-bottom: 40px; }
+.patterns__bar button {
+  font-family: var(--font-sans); font-weight: 600; font-size: 0.92rem; cursor: pointer;
+  color: var(--muted); background: var(--bg); border: 1px solid var(--border);
+  padding: 0.5rem 1.05rem; border-radius: 999px; transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.patterns__bar button:hover { color: var(--blue-strong); border-color: var(--blue); }
+.patterns__bar button.is-active { color: #fff; background: var(--blue); border-color: var(--blue); }
+.patterns__panel { align-items: start; }
+.patterns__panel[hidden] { display: none; }
+.patterns__panel h3 { font-size: 1.45rem; }
 
 /* ---------- ai agents band ---------- */
 .agents { background: linear-gradient(200deg, #232c6e 0%, #18204a 70%); color: #c3cae8; }
