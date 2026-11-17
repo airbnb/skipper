@@ -319,17 +319,6 @@ code, pre, kbd {
 .patterns__panel[hidden] { display: none; }
 .patterns__panel h3 { font-size: 1.45rem; }
 
-/* ---------- ai agents band ---------- */
-.agents { background: linear-gradient(200deg, #232c6e 0%, #18204a 70%); color: #c3cae8; }
-.agents .eyebrow { color: var(--orange-light); }
-.agents h2 { color: #fff; }
-.agents .code-layout li { color: #b4bcdf; }
-.agents .code-layout li strong { color: #fff; }
-.agents .code-layout li::before { background: var(--orange-light); }
-.agents__more { margin: 1.4rem 0 0; }
-.agents__more a { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--orange-light); font-weight: 650; text-decoration: none; }
-.agents__more a:hover { color: #fff; }
-
 /* ---------- lang tabs ---------- */
 .langtabs { border-radius: 14px; overflow: hidden; border: 1px solid #232a55; box-shadow: var(--shadow-md); }
 .langtabs__bar { display: flex; gap: 4px; padding: 8px 8px 0; background: #0c123a; }
