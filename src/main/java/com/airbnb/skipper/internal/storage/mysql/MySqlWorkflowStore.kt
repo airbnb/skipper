@@ -221,6 +221,10 @@ class MySqlWorkflowStore
                         .update(stateBytes)
                 }
                 return workflowInstance
+            } catch (e: SQLIntegrityConstraintViolationException) {
+                // A duplicate the database reports at commit rather than at the INSERT. TiDB's
+                // optimistic transactions check unique keys at commit.
+                throw EntityAlreadyExists()
             } catch (
                 @Suppress("TooGenericExceptionCaught") ex: Throwable
             ) {
