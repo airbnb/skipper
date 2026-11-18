@@ -265,6 +265,7 @@ code, pre, kbd {
   margin-bottom: 1.1rem;
 }
 .hero h1 .accent { color: var(--orange-light); display: block; }
+.hero h1 .accent .plain { color: #fff; }
 .hero__sub { font-size: 1.22rem; color: #c3cae8; max-width: 56ch; margin: 0 auto 2rem; }
 .hero__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.9rem; margin-bottom: 1.6rem; }
 .hero__note { font-size: 0.82rem; color: #97a1cb; }
