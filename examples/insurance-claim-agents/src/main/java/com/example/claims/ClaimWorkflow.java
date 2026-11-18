@@ -8,7 +8,6 @@ import com.airbnb.skipper.Workflow;
 import com.airbnb.skipper.WorkflowMethod;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import javax.inject.Inject;
 
 /**
@@ -26,13 +25,25 @@ import javax.inject.Inject;
  * </ol>
  *
  * The agents propose; the workflow and the rules decide what happens. Every model call, lookup and payment
- * is a checkpointed action, so a crash at any point resumes from the last completed step.
+ * is an action whose result Skipper saves, and a resumed claim replays the saved results instead of
+ * repeating the work. When a result is saved depends on the action:
+ *
+ * <ol>
+ *   <li>model calls and payments are saved the moment they return ({@code IMMEDIATE_CHECKPOINT}), because
+ *       a second inference can give a different answer and a second payment is a second payment;
+ *   <li>lookups keep Skipper's default and are saved when the run next waits or ends, so a crash before
+ *       that repeats them, which is harmless for a read.
+ * </ol>
+ *
+ * An action that was still running when the process died has no saved result and runs again: delivery is
+ * at-least-once, so the payment calls are keyed on the claim id and repeating one changes nothing.
  */
 public class ClaimWorkflow extends Workflow {
   static final int MAX_INFO_ROUNDS = 2;
   static final int MAX_ADJUDICATION_ATTEMPTS = 3;
   static final Duration INFO_WINDOW = Duration.ofDays(7);
   static final Duration REVIEW_WINDOW = Duration.ofMinutes(10);
+  static final Duration ADJUSTER_WINDOW = Duration.ofDays(30);
 
   @Inject IWorkflowFactory workflows;
 
@@ -54,8 +65,11 @@ public class ClaimWorkflow extends Workflow {
   @StateField ClaimResult result;
   @StateField Journal journal = Journal.empty();
 
-  @WorkflowMethod(returnType = ClaimResult.class)
-  public CompletableFuture<ClaimResult> handle(ClaimRequest claim) {
+  /**
+   * Returns nothing: a claim can wait for days, so callers start it detached and read {@link #snapshot()}.
+   */
+  @WorkflowMethod
+  public void handle(ClaimRequest claim) {
     // The method runs again from the top on every resume, replaying recorded action results. The journal is
     // rebuilt by that replay, so start it empty rather than appending to the restored copy.
     journal = Journal.empty();
@@ -67,7 +81,8 @@ public class ClaimWorkflow extends Workflow {
     intake = agent.intake(description);
     for (int round = 0; !intake.missing().isEmpty(); round++) {
       if (round == MAX_INFO_ROUNDS) {
-        return finish(ClaimResult.closed("We could not get the details needed to review this claim."));
+        finish(ClaimResult.closed("We could not get the details needed to review this claim."));
+        return;
       }
       question = String.join(", and ", intake.missing());
       stage = "NEEDS_INFO";
@@ -75,7 +90,8 @@ public class ClaimWorkflow extends Workflow {
       int expected = round + 1;
       // Parks the instance (status WAITING) with no thread held. A signal or the deadline wakes it.
       if (!waitUntil(() -> answers.lines().size() >= expected, INFO_WINDOW)) {
-        return finish(ClaimResult.closed("We did not hear back within " + INFO_WINDOW.toDays() + " days."));
+        finish(ClaimResult.closed("We did not hear back within " + INFO_WINDOW.toDays() + " days."));
+        return;
       }
       description = description + "\n" + answers.lines().get(round);
       stage = "INTAKE";
@@ -87,7 +103,8 @@ public class ClaimWorkflow extends Workflow {
     // 2. The policy. Deterministic: no agent gets a say on a policy that does not exist or has lapsed.
     policy = records.policy(claim.policyNumber());
     if (policy == null || !policy.active()) {
-      return finish(ClaimResult.denied("There is no active policy " + claim.policyNumber() + ".", "automatic"));
+      finish(ClaimResult.denied("There is no active policy " + claim.policyNumber() + ".", "automatic"));
+      return;
     }
     CaseFile file = new CaseFile(claim, description, intake, policy);
 
@@ -120,12 +137,16 @@ public class ClaimWorkflow extends Workflow {
     List<String> reasons = ClaimRules.escalations(decision, reviewed);
     String decidedBy = "automatic";
 
-    // 5. Anything the rules will not carry out automatically waits for a person, however long that takes.
+    // 5. Anything the rules will not carry out automatically waits for a person. The wait has a deadline
+    // like every other: a claim nobody picks up is closed with a reason rather than left parked.
     if (!reasons.isEmpty()) {
       escalations = new Journal(reasons);
       stage = "WITH_ADJUSTER";
       note("Sent to an adjuster because " + String.join("; ", reasons));
-      waitUntil(() -> adjuster != null);
+      if (!waitUntil(() -> adjuster != null, ADJUSTER_WINDOW)) {
+        finish(ClaimResult.closed("No adjuster reviewed this claim within " + ADJUSTER_WINDOW.toDays() + " days."));
+        return;
+      }
       decision = adjuster.approve()
           ? Decision.pay(adjuster.payoutCents(), adjuster.note())
           : Decision.deny(adjuster.note());
@@ -133,7 +154,8 @@ public class ClaimWorkflow extends Workflow {
       note("The adjuster " + (decision.pay() ? "approved " + Money.format(decision.payoutCents()) : "denied the claim"));
     }
     if (!decision.pay()) {
-      return finish(ClaimResult.denied(decision.explanation(), decidedBy));
+      finish(ClaimResult.denied(decision.explanation(), decidedBy));
+      return;
     }
 
     // 6. Pay. If the payment cannot be made, the workflow fails and Skipper releases the reservation.
@@ -141,7 +163,7 @@ public class ClaimWorkflow extends Workflow {
     PayoutRequest payout = new PayoutRequest(getId(), policy.payoutAccount(), decision.payoutCents());
     payments.reserve(payout);
     payments.pay(payout);
-    return finish(ClaimResult.paid(decision.payoutCents(), decision.explanation(), decidedBy));
+    finish(ClaimResult.paid(decision.payoutCents(), decision.explanation(), decidedBy));
   }
 
   /**
@@ -171,10 +193,9 @@ public class ClaimWorkflow extends Workflow {
     return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
   }
 
-  private CompletableFuture<ClaimResult> finish(ClaimResult outcome) {
+  private void finish(ClaimResult outcome) {
     stage = outcome.status();
     result = outcome;
-    return CompletableFuture.completedFuture(outcome);
   }
 
   /** The claimant's reply to a request for more information. */
@@ -192,28 +213,21 @@ public class ClaimWorkflow extends Workflow {
   }
 
   /**
-   * The human adjuster's answer. The rules bind people too: an approval above what the policy can pay is
-   * not accepted, and the claim keeps waiting.
+   * The human adjuster's answer. The rules bind people too: a decision they refuse is not stored and the
+   * claim keeps waiting. A signal runs on the caller's thread and its failure is returned to the caller, so
+   * throwing here is how the adjuster is told why.
    */
   @SignalMethod(persist = true)
   public void adjusterDecides(AdjusterDecision decision) {
-    if (adjusterViolations(decision).isEmpty()) {
-      adjuster = decision;
-    }
-  }
-
-  /** Why an adjuster's decision would be refused; empty when it is acceptable. Lets a client check before signalling. */
-  @QueryMethod
-  public Journal adjusterCheck(AdjusterDecision decision) {
-    return new Journal(adjusterViolations(decision));
-  }
-
-  private List<String> adjusterViolations(AdjusterDecision decision) {
     if (!"WITH_ADJUSTER".equals(stage)) {
-      return List.of("this claim is not waiting for an adjuster");
+      throw new DecisionRefusedException("this claim is not waiting for an adjuster");
     }
     Decision asDecision = decision.approve() ? Decision.pay(decision.payoutCents(), decision.note()) : Decision.deny(decision.note());
-    return ClaimRules.violations(asDecision, new CaseFile(claim, claim.description(), intake, policy), reviewed);
+    List<String> violations = ClaimRules.violations(asDecision, new CaseFile(claim, claim.description(), intake, policy), reviewed);
+    if (!violations.isEmpty()) {
+      throw new DecisionRefusedException(String.join("; ", violations));
+    }
+    adjuster = decision;
   }
 
   /** Everything a client needs to show the claim, without holding a future. */

@@ -132,9 +132,27 @@
   // What to say about a claim, in the claimant's terms. step: how far along the four-step bar it is.
   function describe(view) {
     var claim = view.claim, stage = claim.stage, result = claim.result;
-    if (view.status === 'COMPENSATION_COMPLETED' || view.status === 'ERROR' || view.status === 'COMPENSATION_ERROR') {
+    // The instance failed. What that means for the money depends on how far it got:
+    // 1. COMPENSATION_COMPLETED: the payment failed and the reservation was released.
+    // 2. COMPENSATION_ERROR: the payment failed and the release failed too, so the money is still set aside.
+    // 3. ERROR while paying: the payment has just failed and the release is about to run.
+    // 4. ERROR anywhere earlier (an agent could not answer, say): nothing was ever set aside.
+    if (view.status === 'COMPENSATION_COMPLETED') {
       return { tone: 'bad', step: 3, stopped: true, headline: 'We could not send the payment',
         detail: 'The money set aside for this claim has been released. Nothing was paid.' };
+    }
+    if (view.status === 'COMPENSATION_ERROR') {
+      return { tone: 'bad', step: 3, stopped: true, headline: 'We could not send the payment',
+        detail: 'Nothing was paid, but the money set aside for this claim could not be released. A person needs to look at it.' };
+    }
+    if (view.status === 'ERROR' && stage === 'PAYING') {
+      return { tone: 'bad', step: 3, stopped: true, headline: 'We could not send the payment',
+        detail: 'Releasing the money set aside for this claim.' };
+    }
+    if (view.status === 'ERROR') {
+      return { tone: 'bad', step: stage === 'ADJUDICATION' ? 2 : stage === 'SPECIALIST_REVIEW' ? 1 : 0, stopped: true,
+        headline: 'We could not finish reviewing this claim',
+        detail: 'Something went wrong before a decision was reached. Nothing was set aside or paid.' };
     }
     if (stage === 'PAID') return { tone: 'good', step: 4, headline: 'Paid ' + money(result.payoutCents), detail: result.explanation };
     if (stage === 'DENIED') return { tone: 'bad', step: 2, stopped: true, headline: 'Claim denied', detail: result.explanation };

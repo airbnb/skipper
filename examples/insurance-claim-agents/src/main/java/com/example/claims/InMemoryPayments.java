@@ -1,43 +1,47 @@
 package com.example.claims;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Set;
 
-/** A stand-in for the payment system: a ledger, one account that always bounces, and a switch to fail calls. */
+/** A stand-in for the payment system: a ledger, and one account that always bounces. */
 public class InMemoryPayments implements Payments {
   public static final String CLOSED_ACCOUNT = "acct-closed";
 
   private final List<String> ledger = new ArrayList<>();
-  private final AtomicInteger reservations = new AtomicInteger();
-  private int failuresLeft;
+  private final Set<String> reserved = new HashSet<>();
+  private final Set<String> paid = new HashSet<>();
+
+  /** The reservation id is derived from the claim id, so a repeated call finds the first reservation. */
+  public static String reservationId(String claimId) {
+    return "rsv-" + claimId;
+  }
 
   @Override
   public synchronized String reserve(String claimId, long amountCents) throws PaymentsUnavailableException {
-    if (failuresLeft > 0) {
-      failuresLeft--;
-      throw new PaymentsUnavailableException("503 from the payment system");
+    String reservationId = reservationId(claimId);
+    if (reserved.add(reservationId)) {
+      ledger.add("RESERVE " + reservationId + " " + Money.format(amountCents));
     }
-    String reservationId = "rsv-" + reservations.incrementAndGet();
-    ledger.add("RESERVE " + reservationId + " " + Money.format(amountCents));
     return reservationId;
   }
 
   @Override
   public synchronized void release(String reservationId) {
-    ledger.add("RELEASE " + reservationId);
+    if (reserved.remove(reservationId)) {
+      ledger.add("RELEASE " + reservationId);
+    }
   }
 
   @Override
-  public synchronized void pay(String claimId, String account, long amountCents) {
+  public synchronized void pay(String claimId, String account, long amountCents) throws PaymentsUnavailableException {
     if (CLOSED_ACCOUNT.equals(account)) {
       throw new IllegalStateException("the claimant's bank account is closed");
     }
-    ledger.add("PAY " + Money.format(amountCents) + " to " + account);
-  }
-
-  public synchronized void failNext(int times) {
-    failuresLeft = times;
+    if (paid.add(claimId)) {
+      ledger.add("PAY " + Money.format(amountCents) + " to " + account);
+    }
   }
 
   public synchronized List<String> ledger() {

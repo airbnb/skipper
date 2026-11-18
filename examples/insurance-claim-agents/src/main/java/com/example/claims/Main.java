@@ -27,6 +27,19 @@ public final class Main {
       WorkflowInstanceStatusView.COMPENSATION_COMPLETED,
       WorkflowInstanceStatusView.COMPENSATION_ERROR);
 
+  /**
+   * Whether an instance has stopped for good. ERROR needs a second look:
+   *
+   * <ol>
+   *   <li>a claim that failed before it reached the payment has nothing to undo, and ERROR is where it stays;
+   *   <li>a claim that failed while paying passes through ERROR on its way to COMPENSATION_COMPLETED, so
+   *       it is not done until the reservation has been released.
+   * </ol>
+   */
+  private static boolean ended(WorkflowInstanceStatusView status, String stage) {
+    return ENDED.contains(status) || (status == WorkflowInstanceStatusView.ERROR && !"PAYING".equals(stage));
+  }
+
   public static void main(String[] args) throws Exception {
     List<String> arguments = new ArrayList<>(List.of(args));
     boolean demo = arguments.remove("--demo");
@@ -59,6 +72,17 @@ public final class Main {
     }
   }
 
+  private static String failure(WorkflowInstanceStatusView status) {
+    switch (status) {
+      case COMPENSATION_COMPLETED:
+        return "the payment failed and the reservation was released";
+      case COMPENSATION_ERROR:
+        return "the payment failed and the reservation could not be released; it needs a person";
+      default:
+        return "the claim failed before anything was reserved or paid";
+    }
+  }
+
   /** Runs each sample to its end, playing the claimant and an adjuster who accepts the recommendation. */
   private static void runDemo(IWorkflowFactory factory) throws InterruptedException {
     String run = UUID.randomUUID().toString().substring(0, 8);
@@ -66,15 +90,15 @@ public final class Main {
     for (Samples.Sample sample : Samples.ALL) {
       String id = "claim-" + run + "-" + ++number;
       System.out.println("\n" + sample.label() + " (" + Money.format(sample.claimedCents()) + " on " + sample.policyNumber() + ")");
-      factory.builder(ClaimWorkflow.class, id).build()
+      factory.builder(ClaimWorkflow.class, id).runAsync().detached().build()
           .handle(new ClaimRequest(id, sample.policyNumber(), sample.description(), sample.claimedCents()));
 
-      // The future is not held: a parked instance does not complete it. Watch the persisted state instead.
+      // Started detached, so there is no result to wait on. Watch the persisted state instead.
       ClaimWorkflow claim = factory.invoke(ClaimWorkflow.class, id);
       String answered = "";
       Instant deadline = Instant.now().plus(Duration.ofMinutes(5));
       WorkflowInstanceStatusView status;
-      while (!ENDED.contains(status = claim.getWorkflowInstanceView().getStatus())) {
+      while (!ended(status = claim.getWorkflowInstanceView().getStatus(), claim.snapshot().stage())) {
         if (Instant.now().isAfter(deadline)) {
           throw new IllegalStateException(id + " is still " + status + " at stage " + claim.snapshot().stage());
         }
@@ -99,7 +123,7 @@ public final class Main {
       ClaimSnapshot end = claim.snapshot();
       end.journal().lines().forEach(line -> System.out.println("  " + line));
       System.out.println("  => " + (end.result() == null
-          ? status + ": the payment failed and the reservation was released"
+          ? status + ": " + failure(status)
           : end.result().status() + (end.result().payoutCents() > 0 ? " " + Money.format(end.result().payoutCents()) : "")
               + " (" + end.result().decidedBy() + "): " + end.result().explanation()));
     }

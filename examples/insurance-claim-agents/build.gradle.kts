@@ -16,12 +16,16 @@ repositories {
 }
 
 val jerseyVersion = "2.47"
+val jacksonVersion = "2.19.4"
 
 dependencies {
   implementation("com.airbnb.skipper:skipper-core:$skipperVersion")
+  // Everything Skipper persists here is a Java record, and records need Jackson 2.12 or later. Skipper
+  // compiles against an older Jackson but runs on whichever 2.x the application ships, so the application
+  // says which one: the BOM keeps every Jackson module Skipper uses on the same version.
+  implementation(platform("com.fasterxml.jackson:jackson-bom:$jacksonVersion"))
+  implementation("com.fasterxml.jackson.core:jackson-databind")
   // The model behind ClaudeModel. Only called when ANTHROPIC_API_KEY is set; the default agents are scripted.
-  // It also brings a current Jackson, which is what lets this example use Java records for everything Skipper
-  // persists (records need Jackson 2.12+; Skipper runs on whichever Jackson 2.x the application ships).
   implementation("com.anthropic:anthropic-java:3.3.0")
   runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
 

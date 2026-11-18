@@ -1,6 +1,7 @@
 package com.example.claims;
 
 import com.airbnb.skipper.IWorkflowFactory;
+import com.airbnb.skipper.TerminalWorkflowError;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,8 +18,8 @@ import javax.ws.rs.core.Response;
 
 /**
  * The claims page and the small JSON API behind it. Everything here is what any client of a Skipper workflow
- * does: it starts an instance without waiting for it, reads its progress through a {@code @QueryMethod}, and
- * delivers the claimant's reply and the adjuster's decision as signals.
+ * does: it starts an instance detached, reads its progress through a {@code @QueryMethod}, and delivers
+ * the claimant's reply and the adjuster's decision as signals.
  */
 @Path("/")
 public class ClaimResource {
@@ -70,9 +71,9 @@ public class ClaimResource {
       throw refuse(Response.Status.BAD_REQUEST, "Please describe what happened and give an amount.");
     }
     String id = "claim-" + UUID.randomUUID().toString().substring(0, 8);
-    // The returned future is dropped on purpose: a claim can park for days, and a parked instance does not
-    // complete it. The page reads progress through the query below instead.
-    factory.builder(ClaimWorkflow.class, id).build()
+    // Detached: the call returns once the instance is stored and scheduled. A claim can wait for days, so
+    // nothing here waits for it; the page reads progress through the query below instead.
+    factory.builder(ClaimWorkflow.class, id).runAsync().detached().build()
         .handle(new ClaimRequest(id, claim.policyNumber(), claim.description().trim(), claim.claimedCents()));
     return new Started(id);
   }
@@ -105,12 +106,15 @@ public class ClaimResource {
   @Consumes(MediaType.APPLICATION_JSON)
   public Response adjuster(@PathParam("id") String id, AdjusterDecision decision) {
     ClaimWorkflow claim = find(id);
-    // Asked first so the adjuster is told why; the workflow applies the same check when the signal arrives.
-    List<String> problems = claim.adjusterCheck(decision).lines();
-    if (!problems.isEmpty()) {
-      throw refuse(Response.Status.CONFLICT, "That decision cannot be accepted: " + String.join("; ", problems) + ".");
+    try {
+      // A signal runs on this thread, and what its method throws comes back here. The workflow refuses a
+      // decision the rules do not allow, and Skipper refuses any signal to a claim that has ended.
+      claim.adjusterDecides(decision);
+    } catch (TerminalWorkflowError ended) {
+      throw refuse(Response.Status.CONFLICT, "That decision cannot be accepted: this claim is not waiting for an adjuster.");
+    } catch (DecisionRefusedException refused) {
+      throw refuse(Response.Status.CONFLICT, "That decision cannot be accepted: " + refused.getMessage() + ".");
     }
-    claim.adjusterDecides(decision);
     return Response.noContent().build();
   }
 

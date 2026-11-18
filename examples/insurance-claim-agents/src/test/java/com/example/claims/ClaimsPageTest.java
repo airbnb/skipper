@@ -22,12 +22,19 @@ class ClaimsPageTest {
   private final InMemoryClaimRecords records = new InMemoryClaimRecords();
   private final InMemoryPayments payments = new InMemoryPayments();
   private final HttpClient http = HttpClient.newHttpClient();
+  private String dbPath;
   private SkipperRuntime runtime;
   private HttpServer web;
 
   @BeforeEach
   void start(@TempDir Path dir) throws Exception {
-    runtime = SkipperSetup.start(dir.resolve("claims.db").toString(), new ScriptedModel(), records, payments);
+    dbPath = dir.resolve("claims.db").toString();
+    boot();
+  }
+
+  /** What Main does on every start: a runtime on the store file, and the two pages in front of it. */
+  private void boot() throws Exception {
+    runtime = SkipperSetup.start(dbPath, new ScriptedModel(), records, payments);
     web = WebServer.start(
         0,
         new ClaimResource(runtime.getWorkflowFactory().get(), records, "scripted"),
@@ -58,6 +65,25 @@ class ClaimsPageTest {
     assertTrue(paid.contains("\"decidedBy\":\"adjuster\""), paid);
     assertEquals(2, payments.ledger().size());
     assertEquals(409, post("api/claims/" + id + "/adjuster", "{\"approve\":false,\"payoutCents\":0,\"note\":\"late\"}").statusCode());
+  }
+
+  @Test
+  void aClaimWaitingForTheAdjusterSurvivesARestart() throws Exception {
+    String id = send("{\"policyNumber\":\"P-1001\",\"description\":\"I was rear-ended on 2027-03-05.\",\"claimedCents\":420000}");
+    String before = awaitClaim(id, "\"stage\":\"WITH_ADJUSTER\"");
+
+    // Stop everything and start again on the same file, as a redeploy would. Nothing is kept in memory:
+    // the new runtime has only what is in the store.
+    stop();
+    boot();
+
+    assertEquals(before, get("api/claims/" + id).body(), "the claim, its opinions and its journal came back from the store");
+    assertEquals(204, post("api/claims/" + id + "/adjuster", "{\"approve\":true,\"payoutCents\":395000,\"note\":\"ok\"}").statusCode());
+    String paid = awaitClaim(id, "\"stage\":\"PAID\"");
+    assertTrue(paid.contains("\"decidedBy\":\"adjuster\""), paid);
+    assertEquals(
+        java.util.List.of("RESERVE " + InMemoryPayments.reservationId(id) + " $3,950", "PAY $3,950 to acct-alice"),
+        payments.ledger());
   }
 
   @Test

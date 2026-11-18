@@ -116,12 +116,12 @@ const agentJava = `public class ResearchAgent extends Workflow {
     Transcript transcript = Transcript.startingWith(question);
 
     for (int turn = 0; turn < MAX_TURNS; turn++) {
-      // One model call per turn. Checkpointed: never re-asked on resume.
+      // One model call per turn. On resume its saved answer is replayed, not asked for again.
       Step step = model.next(transcript);
       if (step.isFinal()) {
         return CompletableFuture.completedFuture(step.getAnswer());
       }
-      // The tool the model picked runs once, and is retried on outages.
+      // The tool the model picked. Once its result is saved it is not run again; keep tools idempotent.
       ToolResult result = tools.call(step.getToolCall());
       transcript = transcript.plus(step, result);
     }
@@ -139,11 +139,11 @@ const agentKotlin = `class ResearchAgent : Workflow() {
     var transcript = Transcript.startingWith(question)
 
     repeat(MAX_TURNS) {
-      // One model call per turn. Checkpointed: never re-asked on resume.
+      // One model call per turn. On resume its saved answer is replayed, not asked for again.
       val step = model.next(transcript)
       if (step.isFinal) return step.answer
 
-      // The tool the model picked runs once, and is retried on outages.
+      // The tool the model picked. Once its result is saved it is not run again; keep tools idempotent.
       val result = tools.call(step.toolCall)
       transcript = transcript.plus(step, result)
     }
@@ -293,10 +293,10 @@ const patterns = [
     tab: 'AI agent',
     title: 'An agent loop that survives a restart',
     intro:
-      'An agent asks a model what to do next, runs the tool it picked, and repeats. Written as a workflow, every turn is saved, so a crash on turn nine resumes on turn nine.',
+      'An agent asks a model what to do next, runs the tool it picked, and repeats. Written as a workflow, each step is checkpointed, so an agent that restarts replays what it already did instead of doing it again.',
     points: [
-      ['Model calls are checkpointed.', 'A finished inference is never paid for twice, and the agent never acts on a second, different answer.'],
-      ['Tools run once.', 'A tool call that sent an email or moved money is not repeated when the agent resumes.'],
+      ['Model calls are checkpointed.', 'Save each answer as it returns (IMMEDIATE_CHECKPOINT) and a finished inference is not paid for again, nor swapped for a different answer on resume.'],
+      ['Completed tools are not repeated.', 'A tool call whose result was saved is replayed, not re-run, when the agent resumes. Delivery is at-least-once, so make tool calls idempotent.'],
       ['Outages are retried.', 'Rate limits and timeouts back off on the retry strategy you choose.'],
     ],
     java: agentJava,
