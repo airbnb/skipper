@@ -309,7 +309,7 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             ~/.m2/repository
-          key: examples-v1-${{ hashFiles('examples/java-gradle-sqlite/build.gradle.kts', 'examples/java-maven-sqlite/pom.xml', 'examples/kotlin-gradle-sqlite/build.gradle.kts', 'examples/spring-boot-mysql/build.gradle.kts', 'examples/dropwizard-mysql/build.gradle.kts') }}
+          key: examples-v1-${{ hashFiles('examples/java-gradle-sqlite/build.gradle.kts', 'examples/java-maven-sqlite/pom.xml', 'examples/kotlin-gradle-sqlite/build.gradle.kts', 'examples/spring-boot-mysql/build.gradle.kts', 'examples/dropwizard-mysql/build.gradle.kts', 'examples/insurance-claim-agents/build.gradle.kts') }}
           restore-keys: |
             examples-v1-
 
@@ -347,6 +347,12 @@ jobs:
       - name: kotlin-gradle-sqlite
         working-directory: examples/kotlin-gradle-sqlite
         run: ./gradlew --stacktrace build run
+
+      # No ANTHROPIC_API_KEY here, so the agents are the scripted ones: no model is called.
+      # --demo runs the sample claims and exits; without it the example serves its pages until interrupted.
+      - name: insurance-claim-agents
+        working-directory: examples/insurance-claim-agents
+        run: ./gradlew --stacktrace build run --args="--demo"
 
       - name: spring-boot-mysql (Testcontainers integration test)
         working-directory: examples/spring-boot-mysql
@@ -414,6 +420,7 @@ jobs:
             examples/java-gradle-sqlite/build/test-results/test
             examples/java-maven-sqlite/target/surefire-reports
             examples/kotlin-gradle-sqlite/build/test-results/test
+            examples/insurance-claim-agents/build/test-results/test
             examples/spring-boot-mysql/build/test-results/test
             examples/dropwizard-mysql/build/test-results/test
             examples/dropwizard-mysql/smoke-server.log

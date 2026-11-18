@@ -1,91 +1,11 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import Icon from '../components/Icon.astro';
-import LangTabs from '../components/LangTabs.astro';
 import Logo from '../components/Logo.astro';
+import Patterns from '../components/Patterns.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const GITHUB = 'https://github.com/airbnb/skipper';
-
-const heroKotlin = `class CheckoutWorkflow : Workflow() {
-  private val payments = actions<PaymentActions>()
-  private val email = actions<EmailActions>()
-
-  @WorkflowMethod
-  suspend fun checkout(order: Order): Receipt {
-    // Charged once — even if the workflow resumes later.
-    val charge = payments.charge(order)
-    // Retried automatically until it succeeds.
-    email.sendReceipt(order, charge)
-    return Receipt(charge.id)
-  }
-}`;
-
-const heroJava = `public class CheckoutWorkflow extends Workflow {
-  private final PaymentActions payments = actions(PaymentActions.class);
-  private final EmailActions email = actions(EmailActions.class);
-
-  @WorkflowMethod(returnType = Receipt.class)
-  public CompletableFuture<Receipt> checkout(Order order) {
-    // Charged once — even if the workflow resumes later.
-    Charge charge = payments.charge(order);
-    // Retried automatically until it succeeds.
-    email.sendReceipt(order, charge);
-    return CompletableFuture.completedFuture(new Receipt(charge.getId()));
-  }
-}`;
-
-const javaCode = `public class PeerToPeerTransfer extends Workflow {
-  private final Ledger ledger = actions(Ledger.class);
-
-  @StateField Boolean isApproved;
-
-  @WorkflowMethod(returnType = Boolean.class)
-  public CompletableFuture<Boolean> transfer(TransferRequest request) {
-    // Transfers over $1,000 need a human in the loop.
-    if (request.getAmount() > 1000) {
-      // Hibernate until approved — or up to a day — using zero resources.
-      boolean approved = waitUntil(() -> isApproved != null, Duration.ofDays(1));
-      if (!approved || !isApproved) {
-        return CompletableFuture.completedFuture(false);
-      }
-    }
-    ledger.debit(request.getFrom(), request.getAmount());
-    ledger.credit(request.getTo(), request.getAmount());
-    return CompletableFuture.completedFuture(true);
-  }
-
-  // A signal wakes the waiting workflow up from the outside world.
-  @SignalMethod
-  public void approve(boolean isApproved) {
-    this.isApproved = isApproved;
-  }
-}`;
-
-const kotlinCode = `class PeerToPeerTransfer : Workflow() {
-  private val ledger = actions<Ledger>()
-
-  @StateField var isApproved: Boolean? = null
-
-  @WorkflowMethod
-  suspend fun transfer(request: TransferRequest): Boolean {
-    // Transfers over $1,000 need a human in the loop.
-    if (request.amount > 1000) {
-      // Hibernate until approved — or up to a day — using zero resources.
-      val approved = waitUntil({ isApproved != null }, Duration.ofDays(1))
-      if (!approved || isApproved != true) return false
-    }
-    ledger.debit(request.from, request.amount)
-    ledger.credit(request.to, request.amount)
-    return true
-  }
-
-  // A signal wakes the waiting workflow up from the outside world.
-  @SignalMethod
-  fun approve(isApproved: Boolean) {
-    this.isApproved = isApproved
-  }
-}`;
 
 const props = [
   {
@@ -102,6 +22,12 @@ const props = [
     icon: 'database',
     title: 'Reuses your database',
     body: 'Start instantly on an embedded store, then point Skipper at the MySQL your service already runs — all behind pluggable adapters. No new critical dependency.',
+  },
+  {
+    icon: 'sparkles',
+    title: 'A steady hand for AI agents',
+    body: 'An agent is a workflow whose actions call a model. Model and tool calls are actions, so their saved results are replayed on resume, and an agent can wait days for a person without holding a thread.',
+    accent: true,
   },
 ];
 
@@ -121,6 +47,7 @@ const fitYes = [
   'Your process coordinates multiple steps, long waits, or human approvals.',
   'You would consider Temporal, but you do not want to run and operate a cluster.',
   'Your service is Tier 0 and cannot take a dependency on an external workflow cluster.',
+  'You are adding AI agents to a JVM service and they have to survive failures, retries, and long waits.',
 ];
 const fitNo = [
   'Your workflow does not require durable execution.',
@@ -147,11 +74,11 @@ const ctaCards = [
     <div class="container hero__inner">
       <div>
         <span class="hero__badge">Open source · Apache 2.0</span>
-        <h1>Durable execution, <span class="accent">embedded in your service</span></h1>
+        <h1>Durable execution for <span class="accent">workflows and AI agents<span class="plain">,</span></span> embedded in your service</h1>
         <p class="hero__sub">
-          Skipper is a lightweight workflow engine for the JVM. Write complex,
-          long-running business logic as plain Java or Kotlin — and let Skipper
-          guarantee it runs to completion, in spite of failures.
+          Build reliable agent orchestration and business workflows in plain Java or
+          Kotlin. Skipper handles durable state, retries, and recovery, without
+          a separate orchestration cluster.
         </p>
         <div class="hero__actions">
           <a class="btn btn--primary" href={`${base}/docs/`}>Get Started <Icon name="arrow" size={18} /></a>
@@ -163,15 +90,29 @@ const ctaCards = [
           <code>com.airbnb.skipper:skipper-core</code>, on Maven Central.
         </p>
       </div>
+    </div>
+    <div class="container hero__credit">
+      <p>
+        <img src={`${base}/brand/airbnb-mark-white.svg`} alt="" width="26" height="26" />
+        <span>An <a href="https://airbnb.tech/">Airbnb Engineering</a> project</span>
+      </p>
+    </div>
+  </section>
 
-      <div class="hero__code">
-        <LangTabs java={heroJava} kotlin={heroKotlin} />
+  <!-- ===================== SHOW ME THE CODE ===================== -->
+  <section class="section" id="code">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Show me the code</span>
+        <h2>A workflow is just a class</h2>
+        <p>Pick a pattern. Each one is an ordinary method that Skipper makes durable.</p>
       </div>
+      <Patterns />
     </div>
   </section>
 
   <!-- ===================== VALUE PROPS ===================== -->
-  <section class="section" id="why">
+  <section class="section section--surface" id="why">
     <div class="container">
       <div class="section-head">
         <span class="eyebrow">Why Skipper</span>
@@ -180,36 +121,12 @@ const ctaCards = [
       </div>
       <div class="props">
         {props.map((p) => (
-          <div class="prop">
+          <div class:list={['prop', { 'prop--accent': p.accent }]}>
             <div class="prop__icon"><Icon name={p.icon} size={24} /></div>
             <h3>{p.title}</h3>
             <p>{p.body}</p>
           </div>
         ))}
-      </div>
-    </div>
-  </section>
-
-  <!-- ===================== SHOW ME THE CODE ===================== -->
-  <section class="section section--surface" id="code">
-    <div class="container">
-      <div class="code-layout">
-        <div>
-          <span class="eyebrow">Show me the code</span>
-          <h2>A workflow is just a class</h2>
-          <p>
-            This peer-to-peer transfer waits for manual approval on large amounts,
-            then moves the money. Notice what is <em>not</em> here: retries, state
-            persistence, and failure handling are the engine's job.
-          </p>
-          <ul>
-            <li><strong>No error-handling boilerplate.</strong> Skipper retries transient failures; your method stays pure business logic.</li>
-            <li><strong><code>waitUntil</code> hibernates.</strong> The workflow can pause for a day or longer, consuming zero resources, then resume exactly where it left off.</li>
-            <li><strong>Signals wake it up.</strong> <code>approve(...)</code> is called from the outside world — an API handler, a queue consumer, or a human.</li>
-            <li><strong>Automatic checkpoints.</strong> Completed actions are persisted, so a resumed workflow never repeats work it has already done.</li>
-          </ul>
-        </div>
-        <LangTabs java={javaCode} kotlin={kotlinCode} />
       </div>
     </div>
   </section>

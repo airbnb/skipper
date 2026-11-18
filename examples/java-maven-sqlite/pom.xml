@@ -17,7 +17,7 @@
     <!-- Pinned to a Skipper release by default. Override with -Dskipper.version=<v> to build against a version
          you published to ~/.m2 with `./gradlew publishToMavenLocal -PVERSION_NAME=<v>` from a Skipper checkout
          (Maven consults the local repository by itself); Skipper's own CI does exactly that. -->
-    <skipper.version>0.6.3</skipper.version>
+    <skipper.version>0.16.0</skipper.version>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <junit.version>5.11.4</junit.version>

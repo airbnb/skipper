@@ -140,7 +140,11 @@ Types must be serializable — a primitive, or a POJO/data class that Jackson ca
 (no top-level generics). Before persisting an argument, Skipper checks it by serializing it,
 reading it back, and comparing the two with `equals()`, so **the type must implement `equals()`
 and `hashCode()` over its serialized fields**. Kotlin data classes do this automatically; a
-Java class needs them written out (or Lombok's `@Value`/`@Data`). Java records are not
-supported, because the bundled Jackson predates record support. Serialization is kept
+Java class needs them written out (or Lombok's `@Value`/`@Data`). Java records work when your
+service runs on Jackson 2.12 or later: Skipper compiles against Jackson 2.9, which predates
+records, but runs on whichever Jackson 2.x your build resolves. Declare the version yourself
+rather than relying on what another dependency brings; the
+[`insurance-claim-agents`](https://github.com/airbnb/skipper/tree/main/examples/insurance-claim-agents)
+example does this with the Jackson BOM. Serialization is kept
 backwards compatible so that data written by an older version can still be read after an
 upgrade. See **[Troubleshooting](/docs/troubleshooting/)** if you hit a serialization error.
