@@ -735,7 +735,7 @@ open class SkipperEngine
          * is scheduled when the execution finishes (WorkflowExecutionTaskHandler), the first point
          * where every completed action's checkpoint is stored. A running execution keeps its lease
          * and is not rerun, so it settles once. An idle workflow gets a new run that sees CANCELLED
-         * at the start.
+         * at the start. A kept task's retries start over, so it still runs if it had used them all.
          */
         private fun scheduleSettleRun(instance: WorkflowInstance) {
             scheduler.schedule(
@@ -746,6 +746,7 @@ open class SkipperEngine
                     .type(Task.Type.WORKFLOW)
                     .honorActiveLeaseWhenOverwriting(true)
                     .bumpVersionWhenHonoringLease(false)
+                    .resetRetryCountWhenHonoringLease(true)
                     .inMemoryExecutionEnabled(false)
                     .build()
             )
