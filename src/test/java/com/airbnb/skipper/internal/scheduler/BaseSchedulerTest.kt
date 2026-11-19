@@ -354,6 +354,45 @@ abstract class BaseSchedulerTest {
     }
 
     @Test
+    fun testMarkAsFailedLosesToARetryCountReset() {
+        // A copy leased before its retry count was reset can no longer fail the task.
+        val t1 = Instant.EPOCH
+        val retryAt = t1.plusMillis(500)
+        whenever(mockClock.instant()).thenReturn(t1)
+        scheduler()
+            .schedule(
+                ScheduleRequest.builder<String>()
+                    .id("test")
+                    .payload("payload")
+                    .type(Task.Type.WORKFLOW)
+                    .dedupToken("test")
+                    .runAfter(t1)
+                    .build()
+            )
+        scheduler().rescheduleForRetry(scheduler().fetch<String>(10).get(0), retryAt)
+        whenever(mockClock.instant()).thenReturn(retryAt)
+        val stale: Task<String> = scheduler().fetch<String>(10).get(0)
+        assertTrue(stale.retryCount > 0)
+
+        scheduler()
+            .schedule(
+                ScheduleRequest.builder<String>()
+                    .id("test")
+                    .payload("payload2")
+                    .type(Task.Type.WORKFLOW)
+                    .dedupToken("test")
+                    .honorActiveLeaseWhenOverwriting(true)
+                    .resetRetryCountWhenHonoringLease(true)
+                    .build()
+            )
+        assertThrows(OptimisticLockingError::class.java) { scheduler().markAsFailed(stale, "max retries reached") }
+
+        val stored: Task<String> = scheduler().getTask<String>("test").get()
+        assertEquals(0, stored.retryCount)
+        assertEquals(Task.Status.RUNNING, stored.status)
+    }
+
+    @Test
     fun testMarkJobAsFailed() {
         val t1 = Instant.EPOCH
         whenever(mockClock.instant()).thenReturn(t1)

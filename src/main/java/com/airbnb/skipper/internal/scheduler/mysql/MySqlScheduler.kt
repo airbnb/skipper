@@ -465,7 +465,7 @@ class MySqlScheduler
         ) {
             val sql =
                 "UPDATE $schedulerTasksTable SET status = ?, version = ?, status_message = ?" +
-                    " WHERE task_id = ? AND owner = ? AND version = ?"
+                    " WHERE task_id = ? AND owner = ? AND version = ? AND retry_count >= ?"
             transactionManager.execute<Void?> { conn ->
                 if (getTaskForUpdate<Any>(task.id).isEmpty) {
                     throw IllegalArgumentException("task not found with id: " + task.id)
@@ -481,6 +481,7 @@ class MySqlScheduler
                             ps.setString(++i, task.id)
                             ps.setString(++i, owner)
                             ps.setInt(++i, task.version)
+                            ps.setInt(++i, task.retryCount)
                             val rowsUpdated = ps.executeUpdate()
                             if (rowsUpdated != 1) {
                                 throw OptimisticLockingError(
