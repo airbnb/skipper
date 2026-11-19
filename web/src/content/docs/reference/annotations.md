@@ -19,6 +19,7 @@ abstract base classes and are honored on concrete subclasses.
 | `@QueryMethod` | Workflow method | Reads workflow state without mutating it. No parameters. |
 | `@Execute` | Actions method | Declares an action. Optional `returnType`, `retryStrategy`, `exceptionClassifier`, and `checkpointMode`. |
 | `@Compensate` | Actions method | Rollback logic for the action named by `forExecute`. Optional `checkpointMode`. |
+| `@Encrypted` | `@Execute` method or `@StateField` field | Stores the action's result and compensation input, or the field's value, encrypted. Optional `encryptor`, the name of an encryptor in `SkipperConfig.encryptors` (default `Encrypted.DEFAULT`). See [Encrypting Sensitive Data](/docs/encryption/). |
 
 A workflow using several of them:
 

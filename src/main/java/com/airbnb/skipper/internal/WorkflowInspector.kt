@@ -7,6 +7,7 @@ import com.airbnb.skipper.SuspendSupport
 import com.airbnb.skipper.ValidationError
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.WorkflowMethod
+import com.airbnb.skipper.encryption.Encrypted
 import com.airbnb.skipper.internal.reflection.ReflectionUtils
 import io.vavr.collection.List
 import io.vavr.collection.Map
@@ -20,7 +21,15 @@ import java.util.stream.Stream
  * WorkflowInspector provides a convenient interface to interact with a workflow object by
  * abstracting away the reflection low level details.
  */
-class WorkflowInspector(private val workflow: Workflow) {
+class WorkflowInspector(
+    private val workflow: Workflow,
+    /** Encrypts [Encrypted] state fields in [getState] and decrypts them in [setState]. */
+    private val valueEncryption: ValueEncryption,
+) {
+    // Encrypts nothing: an [Encrypted] field with a value makes [getState] fail rather than return
+    // it in plaintext.
+    constructor(workflow: Workflow) : this(workflow, ValueEncryption.UNCONFIGURED)
+
     private val workflowClass: Class<out Workflow> = workflow.javaClass
 
     /** Validates that the workflow object adheres to the specification. */
@@ -46,9 +55,10 @@ class WorkflowInspector(private val workflow: Workflow) {
     }
 
     /**
-     * Returns the current state of the workflow object.
+     * Returns the current state of the workflow object, in the form it is persisted in.
      *
-     * @return A map with the state field names as keys and their values as values.
+     * @return A map with the state field names as keys and their values as values. The values of
+     *   fields annotated with [Encrypted] are encrypted.
      */
     fun getState(): Map<String, Any?> {
         val result: MutableMap<String, Any?> = HashMap()
@@ -57,7 +67,9 @@ class WorkflowInspector(private val workflow: Workflow) {
                 if (!field.isAccessible) {
                     field.isAccessible = true
                 }
-                result[field.name] = field.get(workflow)
+                val value = field.get(workflow)
+                val encrypted = field.getAnnotation(Encrypted::class.java)
+                result[field.name] = if (encrypted != null) valueEncryption.encrypt(encrypted.encryptor, value) else value
             } catch (e: IllegalAccessException) {
                 throw ValidationError(
                     "unable to access state field %s, it must be public",
@@ -71,7 +83,8 @@ class WorkflowInspector(private val workflow: Workflow) {
     /**
      * Sets the state of the workflow object.
      *
-     * @param newState A map with the state field names as keys and their values as values. In case
+     * @param newState A map with the state field names as keys and their values as values, in the
+     *   form [getState] returns them: encrypted values are decrypted before they are set. In case
      *   a field is not present in the map, it will be left unchanged. In case a field is present in
      *   the map but does not exist in the workflow object, a warning is logged and the field is
      *   skipped — this allows safe rolling deploys and workflow evolution (adding/removing
@@ -108,7 +121,7 @@ class WorkflowInspector(private val workflow: Workflow) {
                         if (!s.isAccessible) {
                             s.isAccessible = true
                         }
-                        s.set(workflow, newState.get(s.name).get())
+                        s.set(workflow, valueEncryption.decrypt(newState.get(s.name).get()))
                     }
                 } catch (e: IllegalArgumentException) {
                     val rawVal: Any? = newState.get(s.name).getOrElse(null as Any?)

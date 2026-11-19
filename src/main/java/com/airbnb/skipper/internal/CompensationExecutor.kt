@@ -121,7 +121,7 @@ open class CompensationExecutor
                                 workflowInstance.workflowId,
                             )
                         workflow.executionContext = executionContext
-                        val inspector = WorkflowInspector(workflow)
+                        val inspector = WorkflowInspector(workflow, internalDeps.valueEncryption)
                         inspector.validate()
                         inspector.setState(workflowInstance.state)
                         middleware.rawBeforeExecution(invocation)
@@ -332,7 +332,7 @@ open class CompensationExecutor
          */
         private fun getOriginalActionInput(checkpoint: ActionCheckpoint): Option<Any?> {
             // Return the stored input from the checkpoint, or None if no input was stored
-            return Option.of(checkpoint.input)
+            return Option.of(internalDeps.valueEncryption.decrypt(checkpoint.input))
         }
 
         /**
@@ -351,7 +351,7 @@ open class CompensationExecutor
             // Note: For async actions (CompletableFuture<T>), checkpoint.getResult().get() returns
             // the unwrapped T value, not the CompletableFuture<T>
             if (checkpoint.isSuccessful && checkpoint.result.isRight) {
-                return Option.of(checkpoint.result.get())
+                return Option.of(internalDeps.valueEncryption.decrypt(checkpoint.result.get()))
             }
             return Option.none()
         }

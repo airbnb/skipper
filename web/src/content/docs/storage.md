@@ -148,3 +148,5 @@ rather than relying on what another dependency brings; the
 example does this with the Jackson BOM. Serialization is kept
 backwards compatible so that data written by an older version can still be read after an
 upgrade. See **[Troubleshooting](/docs/troubleshooting/)** if you hit a serialization error.
+To keep sensitive values encrypted in the store, see
+**[Encrypting Sensitive Data](/docs/encryption/)**.

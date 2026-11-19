@@ -20,6 +20,7 @@ import com.airbnb.skipper.internal.InFlightCancelWatcher
 import com.airbnb.skipper.internal.NoOpEventPublisher
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.SkipperSchedulerManager
+import com.airbnb.skipper.internal.ValueEncryption
 import com.airbnb.skipper.internal.VersionGateEnforcer
 import com.airbnb.skipper.internal.WorkflowExecutor
 import com.airbnb.skipper.internal.cluster.BucketPartitioner
@@ -146,6 +147,10 @@ class SkipperRuntime
             config.serde.create(config)
         }
 
+        val valueEncryption: Provider<ValueEncryption> = singleton {
+            ValueEncryption(config.encryptors, serde.get())
+        }
+
         val clusterMembershipManager: Provider<ClusterMembershipManager> = singleton {
             config.clusterMembershipManager.create(config)
         }
@@ -202,15 +207,16 @@ class SkipperRuntime
                 config.contextPropagator,
                 featureGate.get(),
                 inFlightActions.get(),
+                valueEncryption.get(),
             )
         }
 
         val actionValidator: Provider<ActionValidator> = provider {
-            ActionValidator(serde.get())
+            ActionValidator(serde.get(), valueEncryption.get())
         }
 
         val workflowValidator: Provider<WorkflowValidator> = provider {
-            WorkflowValidator(serde.get())
+            WorkflowValidator(serde.get(), valueEncryption.get())
         }
 
         val versionGateEnforcer: Provider<VersionGateEnforcer> = singleton {
@@ -223,7 +229,8 @@ class SkipperRuntime
                 skipperEngineProvider = skipperEngine,
                 contextPropagator = config.contextPropagator,
                 defaultRetryStrategy = config.defaultRetryStrategy,
-                versionGateEnforcer = versionGateEnforcer.get()
+                versionGateEnforcer = versionGateEnforcer.get(),
+                valueEncryption = valueEncryption.get(),
             )
         }
 
