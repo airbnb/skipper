@@ -4,6 +4,7 @@ import com.airbnb.skipper.ComponentFactory
 import com.airbnb.skipper.SkipperConfig
 import com.airbnb.skipper.internal.common.SneakyThrow
 import java.sql.Connection
+import java.sql.SQLIntegrityConstraintViolationException
 import java.time.Duration
 import java.util.UUID
 import java.util.function.Function
@@ -94,6 +95,20 @@ class JdbcTransactionManager(
             } finally {
                 closeCurrentTransaction()
             }
+        }
+    }
+
+    /**
+     * Runs [lambda] like [execute], but a duplicate key reported at commit is thrown as
+     * [EntityAlreadyExists]. TiDB's optimistic transactions report a duplicate at commit rather than at
+     * the INSERT. Inside an outer transaction nothing commits here, so the duplicate surfaces at the outer
+     * transaction's commit instead.
+     */
+    fun <T> executeInsert(lambda: Function<Connection, T>): T {
+        try {
+            return execute(lambda)
+        } catch (e: SQLIntegrityConstraintViolationException) {
+            throw EntityAlreadyExists()
         }
     }
 

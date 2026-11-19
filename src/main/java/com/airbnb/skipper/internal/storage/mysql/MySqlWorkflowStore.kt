@@ -119,7 +119,7 @@ class MySqlWorkflowStore
                         " extra_request_data, timeout_time, created_at, updated_at,version," +
                         " parent_workflow_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 val insertedRows =
-                    transactionManager.execute { conn ->
+                    transactionManager.executeInsert { conn ->
                         try {
                             conn.prepareStatement(sql).use { ps ->
                                 metrics.timer(METRICS_COMPONENT, "createWorkflow").time().use { c ->
@@ -179,7 +179,7 @@ class MySqlWorkflowStore
                                     ps.setTimestamp(++i, Timestamp.from(workflowInstance.updatedAt))
                                     ps.setInt(++i, workflowInstance.version)
                                     ps.setString(++i, workflowInstance.parentWorkflowId)
-                                    return@execute ps.executeUpdate()
+                                    return@executeInsert ps.executeUpdate()
                                 }
                             }
                         } catch (e: SQLException) {
@@ -221,10 +221,6 @@ class MySqlWorkflowStore
                         .update(stateBytes)
                 }
                 return workflowInstance
-            } catch (e: SQLIntegrityConstraintViolationException) {
-                // A duplicate the database reports at commit rather than at the INSERT. TiDB's
-                // optimistic transactions check unique keys at commit.
-                throw EntityAlreadyExists()
             } catch (
                 @Suppress("TooGenericExceptionCaught") ex: Throwable
             ) {
