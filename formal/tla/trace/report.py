@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Summarises a check_traces.sh run: one line per workflow, then totals. Exits 1 on any rejection.
 
-    report.py <workflows.jsonl> [--expect-rejected | --rejected-dirs]
+    report.py <workflows.jsonl> [--expect-rejected | --rejected-dirs | --require-accepted]
 
 A model is accepted when TLC reports TraceNotDone violated, meaning some behaviour consumed every
 event. Otherwise the highest event TLC printed as matched tells how far the model got, and the next
 event is the first write it could not explain.
+
+With --require-accepted it prints nothing unless no workflow run, or no scheduler run that fetched
+a task, was accepted,
+which fails: a check that covered nothing must not pass.
 
 With --expect-rejected (the mutants.py self-test) the roles swap: every model should be rejected,
 and the ones accepted are listed as survivors.
@@ -40,6 +44,8 @@ def main():
     rows = [json.loads(line) for line in open(sys.argv[1])]
     if "--expect-rejected" in sys.argv[2:]:
         return mutants(rows)
+    if "--require-accepted" in sys.argv[2:]:
+        return require_accepted(rows)
     if "--rejected-dirs" in sys.argv[2:]:
         for r in rows:
             if r["status"] == "model" and verdict(r["dir"])[0] == "REJECTED":
@@ -65,6 +71,19 @@ def main():
         print(f"{status:9} {test}  ({detail})")
     print("totals: " + ", ".join(f"{k} {v}" for k, v in sorted(totals.items())))
     return 1 if totals.get("REJECTED") or totals.get("error") else 0
+
+
+def require_accepted(rows):
+    """Fails unless a workflow run and a scheduler run that fetched a task were accepted."""
+    accepted = [r for r in rows if r["status"] == "model" and verdict(r["dir"])[0] == "accepted"]
+    missing = []
+    if not any(r.get("kind", "workflow") == "workflow" for r in accepted):
+        missing.append("no workflow run was accepted")
+    if not any(r.get("kind") == "scheduler" and r["fetched"] > 0 for r in accepted):
+        missing.append("no scheduler run with a fetched task was accepted")
+    for line in missing:
+        print(f"{line}: nothing of that kind was checked")
+    return 1 if missing else 0
 
 
 def mutants(rows):

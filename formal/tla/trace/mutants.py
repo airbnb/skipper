@@ -3,7 +3,8 @@
 
     mutants.py <workflows.jsonl> --out <dir>
 
-For every workflow model check_traces.sh built, writes one mutant per kind below into <dir> and
+For every workflow model check_traces.sh built, and for the longest scheduler runs, writes one
+mutant per kind below into <dir> and
 prints a workflows.jsonl-style line for each, so the same TLC runner and report.py (with
 --expect-rejected) check them. A mutant the checker still accepts means validation is looser than
 it should be, or the corruption happens to be another behaviour the engine could have taken; each
@@ -33,6 +34,62 @@ def wf_status(line):
 
 def task_version(line):
     return ROW0.sub(lambda m: f'row |-> (0 :> [st |-> "{m.group(1)}", ver |-> {int(m.group(2)) + 1}', line, 1)
+
+
+ADMITTED = re.compile(r"admitted \|-> (\d+)")
+REQUESTED = re.compile(r"requested \|-> (\d+)")
+TASK = re.compile(r"task \|-> (\d+)")
+SCHEDULER_KINDS = ("count", "requested", "drop_take", "report_first", "release_first")
+# The self-test mutates this many scheduler runs, the longest ones: there is one per runtime, and
+# five TLC runs for each would dwarf the check itself.
+SCHEDULER_SAMPLE = 40
+
+
+def act(event):
+    return event.split('"')[1]
+
+
+def task(event):
+    return TASK.search(event).group(1)
+
+
+def mutate_scheduler(events, kind):
+    """As mutate(), for a scheduler run's events."""
+    out = list(events)
+    middle = lambda candidates: candidates[len(candidates) // 2] if candidates else None
+    if kind == "count":
+        # The queue counted one task more than the scheduler took on.
+        i = len(events) // 2
+        out[i] = ADMITTED.sub(lambda m: f"admitted |-> {int(m.group(1)) + 1}", events[i], 1)
+    elif kind == "requested":
+        # A fetch asked for one task more than the free slots (or the fetch size) allowed.
+        i = middle([k for k, e in enumerate(events) if act(e) == "Fetch"])
+        if i is None:
+            return None
+        out[i] = REQUESTED.sub(lambda m: f"requested |-> {int(m.group(1)) + 1}", events[i], 1)
+    elif kind == "drop_take":
+        # A task ran without being taken from the queue.
+        i = middle([k for k, e in enumerate(events) if act(e) == "Take"
+                    and any(act(later) == "Start" and task(later) == task(e) for later in events[k + 1:])])
+        if i is None:
+            return None
+        del out[i]
+    elif kind == "report_first":
+        # A handler handed back its future before it was called.
+        i = middle([k for k in range(len(events) - 1) if act(events[k]) == "Start"
+                    and act(events[k + 1]) == "Report" and task(events[k]) == task(events[k + 1])])
+        if i is None:
+            return None
+        out[i], out[i + 1] = out[i + 1], out[i]
+    elif kind == "release_first":
+        # The last slot in use was given back before its handler finished.
+        i = middle([k for k in range(len(events) - 1) if act(events[k]) == "Done"
+                    and act(events[k + 1]) == "Release" and "admitted |-> 0" in events[k + 1]])
+        if i is None:
+            return None
+        out[i] = ADMITTED.sub("admitted |-> 0", events[i + 1], 1)
+        out[i + 1] = ADMITTED.sub("admitted |-> 0", events[i], 1)
+    return out
 
 
 def mutate(events, kind):
@@ -68,15 +125,19 @@ def main():
     parser.add_argument("workflows")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
-    for r in map(json.loads, open(args.workflows)):
-        if r["status"] != "model":
+    rows = [r for r in map(json.loads, open(args.workflows)) if r["status"] == "model"]
+    scheduler_runs = sorted((r for r in rows if r.get("kind") == "scheduler"), key=lambda r: -r["events"])
+    skipped = {r["dir"] for r in scheduler_runs[SCHEDULER_SAMPLE:]}
+    for r in rows:
+        if r["dir"] in skipped:
             continue
+        scheduler = r.get("kind") == "scheduler"
         tla = open(os.path.join(r["dir"], "MC.tla")).read().splitlines()
         cfg = open(os.path.join(r["dir"], "MC.cfg")).read()
         idx = [k for k, line in enumerate(tla) if line.strip().startswith("[act")]
         events = [tla[k].strip().rstrip(",") for k in idx]
-        for kind in ("wf_version", "wf_status", "task_version", "drop", "swap"):
-            mutated = mutate(events, kind)
+        for kind in SCHEDULER_KINDS if scheduler else ("wf_version", "wf_status", "task_version", "drop", "swap"):
+            mutated = mutate_scheduler(events, kind) if scheduler else mutate(events, kind)
             if mutated is None:
                 continue
             body = ",\n    ".join(mutated)
