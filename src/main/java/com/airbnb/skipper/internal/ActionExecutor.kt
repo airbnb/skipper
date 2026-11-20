@@ -184,6 +184,7 @@ open class ActionExecutor
                 )
             val span = executionMetricsCollector.createActionSpan(request)
             var interruptedByCancel = false
+            var futureRegistration: InFlightActions.Registration? = null
             try {
                 timer.time().use { _ ->
                     tracer.activateSpan(span).use { _ ->
@@ -266,18 +267,30 @@ open class ActionExecutor
                                     request.executionContext.workflow.workflowId,
                                 )
                             }
+                            // The method returned, but its work goes on behind the future, so a cancel cancels the future instead.
+                            // Skip a compensable action: its work may still finish, and it must stay compensable.
+                            // Skip an action the cancel already interrupted: a cancel reaches each action only once.
+                            if (registration != null && !interruptedByCancel && !isCompensable &&
+                                result is CompletableFuture<*>
+                            ) {
+                                futureRegistration =
+                                    inFlightActions.enter(request.executionContext.workflow.workflowId, result)
+                            }
                         }
-                        // TODO: a cancel cannot interrupt the work behind a returned future, because the
-                        //  action leaves InFlightActions when its method returns. Cancel the future instead.
                         if (result is CompletableFuture<*>) {
                             shouldIncrementIteration = false
                             shouldAddCheckpoint = false
                             isAsyncResult = true
+                            val cancellable = futureRegistration
                             // If the result is a CompletableFuture, we'll create the checkpoint once the
                             // CompletableFuture
                             // completes.
                             return result
                                 .exceptionally { e ->
+                                    if (cancellable != null && inFlightActions.exit(cancellable)) {
+                                        // A cancel cancelled the future: end as cancelled, with no checkpoint.
+                                        throw cancelledMidAction(request)
+                                    }
                                     var err = e
                                     if (err is CompletionException) {
                                         err = err.cause
@@ -289,6 +302,11 @@ open class ActionExecutor
                                     )
                                 }
                                 .whenComplete { r, e ->
+                                    val cancelled = cancellable != null && inFlightActions.exit(cancellable)
+                                    if (cancelled && e != null) {
+                                        span.finish()
+                                        return@whenComplete
+                                    }
                                     var err = e
                                     val eitherResult: Either<Throwable, Any?>
                                     var isTransient = false
@@ -414,19 +432,7 @@ open class ActionExecutor
                     // retryable error, with no checkpoint.
                     shouldAddCheckpoint = false
                     shouldIncrementIteration = false
-                    metrics
-                        .counter(
-                            ImmutableMap.of(ACTION_CLASS_TAG, request.baseActionClass.simpleName),
-                            METRIC_COMPONENT_NAME,
-                            "inflightCancellationInterrupted",
-                        )
-                        .inc()
-                    val interruptedAction = request.baseActionClass.simpleName + "#" + request.actionMethodName
-                    throw WorkflowCancelledException(
-                        "workflow " + request.executionContext.workflow.workflowId +
-                            " was CANCELLED; interrupted action " + interruptedAction,
-                        interruptedAction,
-                    )
+                    throw cancelledMidAction(request)
                 }
                 // All errors thrown by the action method are considered retryable unless explicitly
                 // marked
@@ -501,6 +507,23 @@ open class ActionExecutor
                     )
                 }
             }
+        }
+
+        /** Counts an action stopped mid-flight by a cancel, and returns the error that ends the run as cancelled. */
+        private fun cancelledMidAction(request: ExecuteActionRequest): WorkflowCancelledException {
+            metrics
+                .counter(
+                    ImmutableMap.of(ACTION_CLASS_TAG, request.baseActionClass.simpleName),
+                    METRIC_COMPONENT_NAME,
+                    "inflightCancellationInterrupted",
+                )
+                .inc()
+            val interruptedAction = request.baseActionClass.simpleName + "#" + request.actionMethodName
+            return WorkflowCancelledException(
+                "workflow " + request.executionContext.workflow.workflowId +
+                    " was CANCELLED; interrupted action " + interruptedAction,
+                interruptedAction,
+            )
         }
 
         /**
