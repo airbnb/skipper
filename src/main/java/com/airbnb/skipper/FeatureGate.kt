@@ -84,12 +84,14 @@ interface FeatureGate {
         INFLIGHT_CANCELLATION_CHECKPOINTS("inflight_cancellation_checkpoints", enabledByDefault = false),
 
         /**
-         * Interrupt the thread running a synchronous action when its workflow is cancelled. A cancel
-         * taken in another process reaches the action within about one
-         * [SkipperConfig.inflightCancellationPollInterval]. An action that ignores the interrupt still
-         * completes. The interrupt can close an NIO channel the action is blocked on, and a library not
-         * written for interrupts can put a broken connection back in a pool other workflows share, so
-         * check what your actions block on before opting in. Requires
+         * Interrupt the thread running a synchronous action when its workflow is cancelled, and cancel the
+         * future a non-compensable action returned. A cancel taken in another process reaches the action
+         * within about one [SkipperConfig.inflightCancellationPollInterval]. An action that ignores the
+         * interrupt still completes. Cancelling a future stops only the workflow's wait, not the work behind
+         * it. Every holder of that future sees the cancel, so do not return a shared one. The interrupt
+         * can close an NIO channel the action is blocked on, and a library not written for interrupts can
+         * put a broken connection back in a pool other workflows share, so check what your actions block
+         * on before opting in. Requires
          * [INFLIGHT_CANCELLATION_CHECKPOINTS], which stops actions that start after the cancel.
          */
         INFLIGHT_CANCELLATION_INTERRUPT("inflight_cancellation_interrupt", enabledByDefault = false),
