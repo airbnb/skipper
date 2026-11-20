@@ -152,20 +152,7 @@ open class ExecutionContext(
      * @return true if there are any successful, non-transient checkpoints for actions
      *   with @Compensate methods
      */
-    open fun hasCompensationFlow(): Boolean {
-        // Check persisted action checkpoints
-        return List.ofAll(actionCheckpoints)
-            .appendAll(mutableDirtyCheckpoints)
-            .filter { checkpoint -> !checkpoint.isTransient }
-            .filter { checkpoint -> checkpoint.isSuccessful }
-            .exists { checkpoint ->
-                @Suppress("UNCHECKED_CAST")
-                val actionClass =
-                    checkpoint.checkpointTag.actionClass as Class<out Actions>
-                val inspector = ActionInspector(actionClass)
-                inspector.hasCompensationMethod(checkpoint.checkpointTag.actionMethod)
-            }
-    }
+    open fun hasCompensationFlow(): Boolean = hasCompensationFlow(List.ofAll(actionCheckpoints).appendAll(mutableDirtyCheckpoints))
 
     open fun toBuilder(): ExecutionContextBuilder =
         ExecutionContextBuilder()
@@ -377,6 +364,20 @@ open class ExecutionContext(
     companion object {
         @JvmStatic
         fun builder(): ExecutionContextBuilder = ExecutionContextBuilder()
+
+        /** Whether any of [checkpoints] is a successful, non-transient action that has a @Compensate method. */
+        @JvmStatic
+        fun hasCompensationFlow(checkpoints: List<ActionCheckpoint>): Boolean =
+            checkpoints
+                .filter { checkpoint -> !checkpoint.isTransient }
+                .filter { checkpoint -> checkpoint.isSuccessful }
+                .exists { checkpoint ->
+                    @Suppress("UNCHECKED_CAST")
+                    val actionClass =
+                        checkpoint.checkpointTag.actionClass as Class<out Actions>
+                    val inspector = ActionInspector(actionClass)
+                    inspector.hasCompensationMethod(checkpoint.checkpointTag.actionMethod)
+                }
 
         private fun defaultActionCheckpoints(): List<ActionCheckpoint> = List.empty()
 

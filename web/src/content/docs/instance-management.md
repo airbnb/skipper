@@ -78,6 +78,53 @@ workflowsService.reExecuteWorkflows(List.of("wf-1", "wf-2"));
 workflowsService.cancelWorkflows(List.of("wf-3", "wf-4"), "Cleaning up");
 ```
 
+## Re-running a workflow for the same key
+
+A workflow id is never reused, so running the same job twice, such as reindexing the same customer,
+needs a new id. `WorkflowsService` names the runs after a key you choose: `key`, `key_r2`, `key_r3`,
+and so on. Every run keeps its own history.
+
+`nextRunId` returns the id for the next run, or empty while the latest run is not finished. A run is
+finished once it has completed, timed out, or finished compensating. A failed run is finished too,
+unless Skipper is about to compensate it. A cancelled run is finished too, unless its workflow
+method sets `compensateOnCancel`. For that run `nextRunId` throws, because `WorkflowsService` cannot
+tell whether it will still compensate.
+
+```kotlin
+val key = "reindex-${customer.id}"
+val nextId = workflowsService.nextRunId(key)
+if (nextId.isPresent) {
+    workflowFactory.builder(ReindexWorkflow::class.java, nextId.get()).runAsync().build().reindex(customer)
+} else {
+    val live = workflowsService.findLatestRun(key).get()
+    println("${live.id} is still ${live.status}")
+}
+```
+
+```java
+String key = "reindex-" + customer.getId();
+Optional<String> nextId = workflowsService.nextRunId(key);
+if (nextId.isPresent()) {
+    workflowFactory.builder(ReindexWorkflow.class, nextId.get()).runAsync().build().reindex(customer);
+} else {
+    WorkflowInstanceView live = workflowsService.findLatestRun(key).get();
+    System.out.println(live.getId() + " is still " + live.getStatus());
+}
+```
+
+Start the run as soon as you get the id. If two callers start at once, they get the same id and
+start one run between them. The second caller joins the first run, and its own input is ignored.
+
+A cancel does not stop an execution that is already running, so a cancelled run may still run
+actions after `nextRunId` returns. A run parked in `RETRIES_EXHAUSTED` or `COMPENSATION_ERROR` blocks
+the next run until an operator resolves it, for example with `reExecuteWorkflows`.
+
+Use one key for one workflow class, and do not end a key in `_r` followed by a number. Otherwise two
+keys can end up with the same run ids. Finding the latest run reads every run of the key, so it suits
+keys with a handful of runs. Deleting a run hides every later run from the lookup, so delete only the
+latest run. Reviving an older run with `resetWorkflowsFromError` or `rewindWorkflow` gives the key two
+live runs, so revive only the latest run.
+
 ## Rewinding a workflow
 
 For incident recovery, `rewindWorkflow` resets a workflow to a chosen checkpoint (the

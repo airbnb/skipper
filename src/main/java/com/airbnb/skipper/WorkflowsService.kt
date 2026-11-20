@@ -3,7 +3,9 @@ package com.airbnb.skipper
 import com.airbnb.skipper.api.WorkflowInstanceStatusView
 import com.airbnb.skipper.api.WorkflowInstanceView
 import com.airbnb.skipper.internal.CheckpointTag
+import com.airbnb.skipper.internal.ExecutionContext
 import com.airbnb.skipper.internal.SkipperEngine
+import com.airbnb.skipper.internal.WorkflowInspector
 import com.airbnb.skipper.internal.api.ActionCheckpoint
 import com.airbnb.skipper.internal.scheduler.Scheduler
 import com.airbnb.skipper.internal.scheduler.Task
@@ -104,13 +106,7 @@ open class WorkflowsService
                     WorkflowSortField.UPDATED_AT,
                     WorkflowSortDirection.ASC,
                 )
-                .map { w ->
-                    w.toView {
-                        workflowStore
-                            .getActionCheckpoints(w.workflowId)
-                            .map { it.toView() }
-                    }
-                }
+                .map { toView(it) }
                 .toJavaList()
         }
 
@@ -352,6 +348,64 @@ open class WorkflowsService
                     }
             return rewindWorkflow(workflowId, pivot)
         }
+
+        /**
+         * Returns the latest run of a workflow that is re-run under one [key]. Runs have the ids
+         * `key`, `key_r2`, `key_r3`, and so on. The latest run is the last one found counting up
+         * from `key`; counting stops at the first missing id.
+         *
+         * Finding it reads each run once, so this suits keys with a handful of runs.
+         */
+        fun findLatestRun(key: String): Optional<WorkflowInstanceView> = Optional.ofNullable(latestRun(key)?.second?.let { toView(it) })
+
+        /**
+         * Returns the id for the next run of [key], or empty while its latest run is not finished.
+         * A finished run is terminal and Skipper will not compensate it. Parked runs, such as
+         * RETRIES_EXHAUSTED and COMPENSATION_ERROR, are not finished. If two callers get the same id,
+         * only one run starts and the second caller joins it.
+         *
+         * @throws IllegalStateException if the latest run is CANCELLED and its workflow method sets
+         *     `compensateOnCancel`, because this service cannot tell whether it will still compensate.
+         */
+        fun nextRunId(key: String): Optional<String> {
+            val (run, instance) = latestRun(key) ?: return Optional.of(runId(key, 1))
+            return if (isFinished(instance)) Optional.of(runId(key, run + 1)) else Optional.empty()
+        }
+
+        private fun latestRun(key: String): Pair<Int, WorkflowInstance>? =
+            generateSequence(1) { it + 1 }
+                .map { run -> workflowStore.getWorkflow(runId(key, run)).orNull?.let { run to it } }
+                .takeWhile { it != null }
+                .lastOrNull()
+
+        private fun isFinished(instance: WorkflowInstance): Boolean {
+            if (!instance.status.isTerminal()) {
+                return false
+            }
+            return when (instance.status) {
+                // An ERROR run with actions to compensate is about to be compensated.
+                WorkflowInstance.Status.ERROR -> !hasCompensationFlow(instance)
+                WorkflowInstance.Status.CANCELLED -> {
+                    check(!WorkflowInspector.isCompensateOnCancel(instance.workflowClass, instance.workflowMethod)) {
+                        "Cannot tell whether cancelled workflow ${instance.workflowId} will still be compensated"
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+
+        // The same check the engine makes when it decides whether to compensate a run.
+        private fun hasCompensationFlow(instance: WorkflowInstance): Boolean =
+            ExecutionContext.hasCompensationFlow(workflowStore.getActionCheckpoints(instance.workflowId))
+
+        private fun toView(instance: WorkflowInstance): WorkflowInstanceView =
+            instance.toView { workflowStore.getActionCheckpoints(instance.workflowId).map { it.toView() } }
+
+        private fun runId(
+            key: String,
+            run: Int
+        ): String = if (run == 1) key else "${key}_r$run"
 
         companion object {
             private val log = LoggerFactory.getLogger(WorkflowsService::class.java)

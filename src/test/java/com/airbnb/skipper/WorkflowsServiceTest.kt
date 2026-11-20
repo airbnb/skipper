@@ -441,14 +441,120 @@ class WorkflowsServiceTest {
         verify(skipperEngine, never()).scheduleExecution(any(), eq(false))
     }
 
+    @Test
+    fun findLatestRun_shouldReturnTheHighestNumberedRunThatExists() {
+        givenRuns(
+            createWorkflowInstance("job", WorkflowInstance.Status.COMPLETED),
+            createWorkflowInstance("job_r2", WorkflowInstance.Status.RUNNING)
+        )
+
+        assertEquals("job_r2", workflowsService.findLatestRun("job").get().id)
+        assertFalse(workflowsService.findLatestRun("other").isPresent)
+    }
+
+    @Test
+    fun nextRunId_withNoRuns_shouldBeTheKeyItself() {
+        givenRuns()
+
+        assertEquals(Optional.of("job"), workflowsService.nextRunId("job"))
+    }
+
+    @Test
+    fun nextRunId_afterAFinishedRun_shouldBeTheNextNumber() {
+        for (status in listOf(
+            WorkflowInstance.Status.COMPLETED,
+            WorkflowInstance.Status.TIMEOUT,
+            WorkflowInstance.Status.COMPENSATION_COMPLETED,
+            WorkflowInstance.Status.ERROR,
+            WorkflowInstance.Status.CANCELLED
+        )) {
+            givenRuns(
+                createWorkflowInstance("job", WorkflowInstance.Status.COMPLETED),
+                createWorkflowInstance("job_r2", status)
+            )
+
+            assertEquals(Optional.of("job_r3"), workflowsService.nextRunId("job"), "after $status")
+        }
+    }
+
+    @Test
+    fun nextRunId_whileTheLatestRunIsNotFinished_shouldBeEmpty() {
+        for (status in listOf(
+            WorkflowInstance.Status.CREATED,
+            WorkflowInstance.Status.RUNNING,
+            WorkflowInstance.Status.WAITING,
+            WorkflowInstance.Status.TRANSIENT_ERROR,
+            WorkflowInstance.Status.RETRIES_EXHAUSTED,
+            WorkflowInstance.Status.COMPENSATION_IN_PROGRESS,
+            WorkflowInstance.Status.COMPENSATION_ERROR
+        )) {
+            givenRuns(createWorkflowInstance("job", status))
+
+            assertEquals(Optional.empty<String>(), workflowsService.nextRunId("job"), "while $status")
+        }
+    }
+
+    /** A failed run with a completed compensable action is about to roll back, so it is not finished. */
+    @Test
+    fun nextRunId_whileAFailedRunHasActionsToCompensate_shouldBeEmpty() {
+        givenRuns(createWorkflowInstance("job", WorkflowInstance.Status.ERROR))
+        whenever(workflowStore.getActionCheckpoints("job")).thenReturn(of(compensableCheckpoint("job")))
+
+        assertEquals(Optional.empty<String>(), workflowsService.nextRunId("job"))
+    }
+
+    /** A cancelled run is finished when its workflow method never compensates on cancel. */
+    @Test
+    fun nextRunId_afterACancelledRunThatIsNotCompensatedOnCancel_shouldBeTheNextNumber() {
+        givenRuns(createWorkflowInstance("job", WorkflowInstance.Status.CANCELLED, "notCompensatedOnCancel"))
+        whenever(workflowStore.getActionCheckpoints("job")).thenReturn(of(compensableCheckpoint("job")))
+
+        assertEquals(Optional.of("job_r2"), workflowsService.nextRunId("job"))
+    }
+
+    /** The store cannot show whether a cancel with compensateOnCancel will still compensate, so nextRunId throws. */
+    @Test
+    fun nextRunId_afterACancelledRunThatMayCompensate_shouldThrow() {
+        givenRuns(createWorkflowInstance("job", WorkflowInstance.Status.CANCELLED, "compensatedOnCancel"))
+
+        assertThrows(IllegalStateException::class.java) { workflowsService.nextRunId("job") }
+    }
+
+    /** Stubs the store so exactly [runs] exist, with no checkpoints. */
+    private fun givenRuns(vararg runs: WorkflowInstance) {
+        whenever(workflowStore.getWorkflow(any())).thenReturn(Option.none())
+        whenever(workflowStore.getActionCheckpoints(any())).thenReturn(io.vavr.collection.List.empty())
+        for (run in runs) {
+            whenever(workflowStore.getWorkflow(run.workflowId)).thenReturn(Option.of(run))
+        }
+    }
+
+    private fun compensableCheckpoint(workflowId: String): ActionCheckpoint =
+        ActionCheckpoint.builder()
+            .checkpointTag(
+                CheckpointTag.builder()
+                    .workflowId(workflowId)
+                    .actionClass(CompensableActions::class.java)
+                    .actionMethod("charge")
+                    .iteration(0L)
+                    .build()
+            )
+            .executionStartTime(Instant.now())
+            .executionEndTime(Instant.now())
+            .result(Either.right("charged"))
+            .isTransient(false)
+            .resultIsAsync(false)
+            .build()
+
     private fun createWorkflowInstance(
         workflowId: String,
-        status: WorkflowInstance.Status
+        status: WorkflowInstance.Status,
+        workflowMethod: String = "execute"
     ): WorkflowInstance {
         return WorkflowInstance.builder()
             .workflowId(workflowId)
             .workflowClass(TestWorkflow::class.java)
-            .workflowMethod("execute")
+            .workflowMethod(workflowMethod)
             .input(null)
             .version(1)
             .status(status)
@@ -512,5 +618,19 @@ class WorkflowsServiceTest {
         fun execute() {
             // Test workflow implementation
         }
+
+        @WorkflowMethod(compensateOnCancel = true)
+        fun compensatedOnCancel() {}
+
+        @WorkflowMethod
+        fun notCompensatedOnCancel() {}
+    }
+
+    class CompensableActions : Actions() {
+        @Execute
+        fun charge(): String = "charged"
+
+        @Compensate(forExecute = "charge")
+        fun refund() {}
     }
 }
