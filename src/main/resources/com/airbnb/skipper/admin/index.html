@@ -169,11 +169,15 @@
     .tabs em { font-style: normal; font-size: 11px; color: var(--faint); margin-left: 4px; }
 
     /* Workflow timeline (waterfall) */
-    .tl-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
-    .tl { min-width: 0; border-right: 1px solid var(--border); overflow-x: auto; }
-    .tl-body { position: relative; min-width: 860px; }
-    .tl-row { display: grid; grid-template-columns: var(--tl-cols) minmax(0, 1fr); align-items: center; height: 28px; border-bottom: 1px solid var(--row-line); position: relative; cursor: pointer; }
+    /* The detail drawer overlays the timeline's right edge, so the wrapper is its positioning box. */
+    .tl-wrap { position: relative; }
+    .tl { min-width: 0; overflow-x: auto; }
+    /* The lane keeps a readable width: below this the timeline scrolls sideways instead of squeezing the bars. */
+    .tl-body { position: relative; min-width: 1040px; }
+    .tl-row { display: grid; grid-template-columns: var(--tl-cols) minmax(0, 1fr); align-items: center; height: 28px; border-bottom: 1px solid var(--row-line); position: relative; cursor: pointer; background: var(--panel); }
     .tl-row > div { padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* The name stays put while the timeline scrolls sideways, painted in its row's own background. */
+    .tl-row > div:first-child { position: sticky; left: 0; z-index: 3; background: inherit; }
     .tl-row:hover { background: #171c24; }
     .tl-row.sel { background: var(--sel); }
     .tl-row.hdr { height: 30px; background: var(--panel-2); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; border-bottom-color: var(--border); cursor: default; }
@@ -208,9 +212,6 @@
     .vlabel.timeout { background: var(--err); color: #fff; }
     .brk { position: absolute; top: 0; bottom: 0; width: 8px; transform: translateX(-4px); background: repeating-linear-gradient(90deg, transparent 0 3px, var(--bg) 3px 5px, transparent 5px 8px); opacity: .9; }
     .ov-seg { position: absolute; height: 6px; border-radius: 1px; min-width: 2px; }
-    .tl-legend { display: flex; gap: 16px; padding: 9px 14px; color: var(--muted); font-size: 11.5px; border-top: 1px solid var(--border); flex-wrap: wrap; }
-    .tl-legend span { display: inline-flex; align-items: center; gap: 6px; }
-    .tl-legend i { width: 18px; height: 9px; border-radius: 2px; display: inline-block; }
     .hatch-swatch { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.14) 0 3px, transparent 3px 7px); }
     .c-ok { background-color: var(--ok); } .c-warn { background-color: var(--warn); } .c-err { background-color: var(--err); }
     .c-wait { background-color: var(--wait); } .c-timer { background-color: var(--timer); } .c-signal { background-color: var(--signal); }
@@ -223,8 +224,12 @@
     .t-wait { color: var(--muted); } .t-signal { color: var(--signal); } .t-child { color: var(--child); } .t-comp { color: var(--comp); }
 
     /* Timeline detail drawer */
-    .drawer { background: #12161c; min-width: 0; border-bottom-right-radius: 10px; }
-    .dr-h { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    /* Opens over the timeline when a row is clicked. z-index keeps it above the pinned name column. */
+    .drawer { position: absolute; top: 0; right: 0; width: 480px; max-width: 100%; min-height: 100%; z-index: 5; background: #12161c; border-left: 1px solid var(--border-2);
+      border-bottom-right-radius: 10px; box-shadow: -12px 0 28px #0008; }
+    .dr-h { position: relative; padding: 12px 40px 12px 14px; border-bottom: 1px solid var(--border); }
+    .dr-x { position: absolute; top: 8px; right: 10px; background: transparent; border: 0; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 4px; }
+    .dr-x:hover { color: var(--text); }
     .dr-h .t { font-family: var(--mono); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
     .dr-h .s { color: var(--muted); margin-top: 3px; }
     .dr-b { padding: 12px 14px; }
@@ -247,6 +252,11 @@
     .kv .k { color: var(--muted); }
     .kv .v { overflow-wrap: anywhere; }
     .dr-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    /* Popover shown while its anchor is hovered or holds focus. */
+    .pop-anchor { position: relative; display: inline-flex; }
+    .pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 300px; max-width: 80vw; padding: 9px 11px; background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 6px;
+      box-shadow: 0 8px 24px #0009; color: var(--text); font-size: 12px; line-height: 1.45; z-index: 20; pointer-events: none; visibility: hidden; opacity: 0; transition: opacity .12s; }
+    .pop-anchor:hover .pop, .pop-anchor:focus-within .pop { visibility: visible; opacity: 1; }
 
     /* Cluster */
     .bucket-stack { display: flex; height: 40px; border-radius: 8px; overflow: hidden; margin: 6px 0 8px; border: 1px solid var(--border); }
@@ -281,8 +291,6 @@
     .err-sum .h { color: var(--err); font-weight: 600; margin-bottom: 2px; }
 
     @media (max-width: 1180px) {
-      .tl-wrap { grid-template-columns: minmax(0, 1fr); }
-      .tl { border-right: 0; border-bottom: 1px solid var(--border); }
       .details { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
       .details .f:nth-child(odd) { border-left: 0; }
     }
@@ -417,19 +425,7 @@ Workflow detail view
     </div>
     <div class="tl-wrap">
       <div class="tl"><div class="tl-body" id="tl-body"></div></div>
-      <div class="drawer" id="tl-drawer"></div>
-    </div>
-    <div class="tl-legend">
-      <span><i class="c-ok"></i>Action ran</span>
-      <span><i class="c-warn"></i>Transient failure</span>
-      <span><i class="c-err"></i>Failed</span>
-      <span><i class="c-wait hatch-swatch"></i>Retry backoff</span>
-      <span><i class="c-timer hatch-swatch"></i>Timer wait</span>
-      <span><i style="border:1px dashed var(--timer)"></i>Planned, not reached</span>
-      <span><i class="c-signal" style="width:9px;transform:rotate(45deg)"></i>Signal</span>
-      <span><i class="c-child"></i>Child workflow</span>
-      <span><i style="border-left:2px dashed var(--err);width:2px;border-radius:0"></i>Workflow timeout</span>
-      <span><i style="border-left:2px solid #e6edf3;width:2px;border-radius:0"></i>Now</span>
+      <div class="drawer" id="tl-drawer" hidden></div>
     </div>
   </div>
 
@@ -957,7 +953,9 @@ Workflows list view
   $(document).on('keydown', function(e) {
     if (e.key === 'Escape') {
       closeDropdowns(null);
-      closeModal();
+      // Escape closes the topmost thing: an open modal first, else the timeline's detail drawer.
+      if (!$('#data_modal').prop('hidden')) closeModal();
+      else Timeline.close();
     } else if (e.key === '/' && !$(e.target).is('input, textarea')) {
       e.preventDefault();
       $('#searchBox').focus();
@@ -1280,21 +1278,13 @@ Workflows list view
       groups.forEach(function(r) {
         if (st.collapsed[r.id] === undefined) st.collapsed[r.id] = st.model.rows.length > 40;
       });
-      st.selected = prevSelected && rowById(prevSelected) ? prevSelected : defaultSelection();
+      // Nothing is selected until a row is clicked; a redraw keeps the selection while its row still exists.
+      st.selected = prevSelected && rowById(prevSelected) ? prevSelected : null;
       render();
     }
 
     function rowById(id) {
       return st.model.rows.find(function(r) { return r.id === id; });
-    }
-
-    // The most interesting row: the latest action still retrying or failed, else the latest retried one.
-    function defaultSelection() {
-      const actions = st.model.rows.filter(function(r) { return r.kind === 'action'; });
-      const failing = actions.filter(function(r) { return r.statusCls !== 't-ok'; });
-      const retried = actions.filter(function(r) { return r.attempts.length > 1; });
-      const pick = failing[failing.length - 1] || retried[retried.length - 1] || actions[actions.length - 1] || st.model.rows[0];
-      return pick ? pick.id : null;
     }
 
     // ---------------------------------------------------------------------------------------------- model
@@ -1723,9 +1713,11 @@ Workflows list view
       render();
     });
     $(document).on('click', '#tl-body .tl-row[data-row]', function() {
-      st.selected = String($(this).data('row'));
+      // Clicking a row opens its details; clicking the open row again closes them.
+      const id = String($(this).data('row'));
+      st.selected = st.selected === id ? null : id;
       render();
-      const r = rowById(st.selected);
+      const r = st.selected ? rowById(st.selected) : null;
       if (r && r.checkpoint && !r.checkpoint.isSuccessful && r.checkpoint.execution_end_time) {
         showError(r.groupId, rowById(r.groupId).attempts.indexOf(r.checkpoint));
       }
@@ -1735,7 +1727,8 @@ Workflows list view
 
     function renderDrawer() {
       const r = st.selected ? rowById(st.selected) : null;
-      if (!r) { $('#tl-drawer').html('<div class="dr-b muted">Select a row to see its details.</div>'); return; }
+      const $wrap = $('#tl-drawer').parent().css('min-height', '');
+      if (!r) { $('#tl-drawer').prop('hidden', true).empty(); return; }
       const group = r.groupId ? rowById(r.groupId) : null;
       let html;
       if (r.kind === 'action') html = actionDrawer(r, null);
@@ -1745,11 +1738,18 @@ Workflows list view
       else if (r.kind === 'child') html = childDrawer(r);
       else if (r.kind === 'task') html = taskDrawer(r);
       else html = workflowDrawer(r);
-      $('#tl-drawer').html(html);
+      // A drawer taller than the timeline stretches the card rather than being clipped or scrolling inside.
+      $wrap.css('min-height', $('#tl-drawer').prop('hidden', false).html(html).outerHeight() + 'px');
+    }
+
+    function close() {
+      if (!st || !st.selected) return;
+      st.selected = null;
+      render();
     }
 
     function head(title, sub, statusLine) {
-      return '<div class="dr-h"><div class="t">' + escapeHtml(title) + (sub ? ' <span class="faint">' + escapeHtml(sub) + '</span>' : '') + '</div>' +
+      return '<div class="dr-h"><button class="dr-x" onclick="Timeline.close()" title="Close" aria-label="Close details">×</button><div class="t">' + escapeHtml(title) + (sub ? ' <span class="faint">' + escapeHtml(sub) + '</span>' : '') + '</div>' +
         '<div class="s">' + statusLine + '</div></div>';
     }
 
@@ -1814,14 +1814,16 @@ Workflows list view
       if (focusCp.isSuccessful && focusCp.result !== null && focusCp.result !== undefined) {
         html += '<button class="btn" onclick="Timeline.viewResult()">View result</button>';
       }
-      html += '<button class="btn" onclick="Timeline.rewind()">⏮ Rewind to here</button></div>';
+      // What the rewind deletes is spelled out in a popover on the button, and again in its confirm dialog.
       const impact = rewindImpact(g.tag);
+      html += '<span class="pop-anchor"><button class="btn" onclick="Timeline.rewind()"' + (impact ? ' aria-describedby="rewind-impact"' : '') + '>⏮ Rewind to here</button>';
       if (impact) {
-        html += '<p class="muted" style="font-size:12px;margin:10px 0 0">Rewinding here deletes ' + impact.total + ' checkpoint' + (impact.total === 1 ? '' : 's') +
+        html += '<span class="pop" id="rewind-impact" role="tooltip">Rewinding here deletes ' + impact.total + ' checkpoint' + (impact.total === 1 ? '' : 's') +
           ' from ' + impact.actions + ' action' + (impact.actions === 1 ? '' : 's') + (impact.earlier.length
             ? ', including <span class="t-warn">' + escapeHtml(impact.earlier.join(', ')) + '</span>, which started earlier but finished later'
-            : '') + '.</p>';
+            : '') + '.</span>';
       }
+      html += '</span></div>';
       html += '</div>';
       return html;
     }
@@ -2052,7 +2054,7 @@ Workflows list view
 
     $(window).on('resize', function() { if (st && $('#tl-body').length) render(); });
 
-    return { init: init, setSignals: setSignals, setChildren: setChildren, viewResult: viewResult, rewind: rewind };
+    return { init: init, setSignals: setSignals, setChildren: setChildren, viewResult: viewResult, rewind: rewind, close: close };
   })();
 
   // ===================================================================================================================
