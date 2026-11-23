@@ -65,9 +65,10 @@ import org.sqlite.SQLiteException
  * - Backtick identifier quoting is removed; SQLite uses bare identifiers.
  * - Duplicate-key detection uses SQLite's `SQLITE_CONSTRAINT` (primary result code 19, e.g.
  *   extended `SQLITE_CONSTRAINT_PRIMARYKEY`) rather than MySQL's
- *   [java.sql.SQLIntegrityConstraintViolationException]. See [isUniqueConstraintViolation]. As in
- *   MySQL, [EntityAlreadyExists] is thrown from exactly two places — [createWorkflow] and
- *   [createTimer].
+ *   [java.sql.SQLIntegrityConstraintViolationException]. See [isUniqueConstraintViolation].
+ *   [EntityAlreadyExists] is thrown from exactly two places — [createWorkflow] and [createTimer].
+ *   `MySqlWorkflowStore` throws it from the same two, and also from [createWorkflow] when the
+ *   database reports the duplicate only at commit.
  * - Generated-key retrieval ([Statement.RETURN_GENERATED_KEYS] +
  *   [PreparedStatement.getGeneratedKeys]) is used only by [persistSignal]; the
  *   `INTEGER PRIMARY KEY AUTOINCREMENT` column aliases SQLite's `rowid` so the generated id is

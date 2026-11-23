@@ -99,15 +99,18 @@ class JdbcTransactionManager(
     }
 
     /**
-     * Runs [lambda] like [execute], but a duplicate key reported at commit is thrown as
-     * [EntityAlreadyExists]. TiDB's optimistic transactions report a duplicate at commit rather than at
-     * the INSERT. Inside an outer transaction nothing commits here, so the duplicate surfaces at the outer
-     * transaction's commit instead.
+     * Runs [lambda] like [execute], but a duplicate-key error becomes [EntityAlreadyExists].
+     * That includes a duplicate the database reports only at commit, as TiDB's optimistic transactions do.
+     * Inside an outer transaction nothing commits here, so the duplicate surfaces at the outer commit instead.
+     * Only MySQL's duplicate-key code (1062) is matched. SQLite reports a duplicate at the statement.
      */
     fun <T> executeInsert(lambda: Function<Connection, T>): T {
         try {
             return execute(lambda)
         } catch (e: SQLIntegrityConstraintViolationException) {
+            if (e.errorCode != MYSQL_DUPLICATE_KEY_ERROR) {
+                throw e
+            }
             throw EntityAlreadyExists()
         }
     }
@@ -226,6 +229,9 @@ class JdbcTransactionManager(
 
         /** Upper bound (inclusive) of the random jitter added to each retry back-off. */
         private const val RETRY_JITTER_MILLIS = 15L
+
+        /** MySQL's error code for a duplicate entry on a primary or unique key; TiDB uses the same code. */
+        private const val MYSQL_DUPLICATE_KEY_ERROR = 1062
     }
 
     /**

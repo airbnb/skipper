@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 /** What schedule throws when it inserts a new task and the commit fails. */
@@ -59,6 +60,8 @@ class MySqlSchedulerCommitTest {
         )
 
         assertThrows(EntityAlreadyExists::class.java) { scheduler.schedule(request) }
+        verify(connection).rollback()
+        verify(connection).close()
     }
 
     @Test

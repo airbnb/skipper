@@ -2,6 +2,7 @@ package com.airbnb.skipper.internal.storage
 
 import java.sql.Connection
 import java.sql.SQLException
+import java.sql.SQLIntegrityConstraintViolationException
 import java.time.Duration
 import java.util.function.Function
 import java.util.function.Supplier
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -110,5 +112,36 @@ class JdbcTransactionManagerTest {
             Thread.interrupted()
         }
         assertEquals(1, calls)
+    }
+
+    @Test
+    fun testANestedInsertLeavesADuplicateAtCommitToTheOuterTransaction() {
+        val manager = JdbcTransactionManager(dataSource, Duration.ofSeconds(5))
+        val duplicate = SQLIntegrityConstraintViolationException("Duplicate entry for key 'PRIMARY'", "23000", 1062)
+        whenever(connection.commit()).thenThrow(duplicate)
+
+        val thrown =
+            assertThrows(SQLIntegrityConstraintViolationException::class.java) {
+                manager.execute(
+                    Function<Connection, String> { manager.executeInsert(Function<Connection, String> { "inserted" }) },
+                )
+            }
+
+        assertSame(duplicate, thrown)
+        verify(connection, times(1)).commit()
+    }
+
+    @Test
+    fun testAnInsertReportsOnlyADuplicateKeyAsAlreadyExisting() {
+        val manager = JdbcTransactionManager(dataSource, Duration.ofSeconds(5))
+        val foreignKeyViolation = SQLIntegrityConstraintViolationException("Cannot add or update a child row", "23000", 1452)
+
+        val thrown =
+            assertThrows(SQLIntegrityConstraintViolationException::class.java) {
+                manager.executeInsert(Function<Connection, String> { throw foreignKeyViolation })
+            }
+
+        assertSame(foreignKeyViolation, thrown)
+        verify(connection, never()).commit()
     }
 }

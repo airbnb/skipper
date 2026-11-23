@@ -18,6 +18,8 @@ public interface Scheduler {
    * @param request The request to schedule a task.
    * @return A completable future with the task that was just created.
    * @param <T> The type of payload.
+   * @throws com.airbnb.skipper.internal.storage.EntityAlreadyExists when a concurrent schedule
+   *     created a task with the same new id first.
    */
   <T> Task<T> schedule(ScheduleRequest<T> request);
 
