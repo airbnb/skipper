@@ -63,7 +63,7 @@ class MySqlScheduler
         private val schedulerTasksTable: String = tablePrefix + "scheduler_tasks"
 
         override fun <T> schedule(request: ScheduleRequest<T>): Task<T> =
-            transactionManager.execute { conn ->
+            transactionManager.executeInsert { conn ->
                 val existingTask: Option<Task<T>> = getTaskForUpdate(request.id)
                 if (existingTask.isDefined) {
                     // Update if the task already exists
@@ -92,9 +92,9 @@ class MySqlScheduler
                                 existingTask.get()
                             }
                         if (!request.isBumpVersionWhenHonoringLease) {
-                            return@execute keptTask
+                            return@executeInsert keptTask
                         }
-                        return@execute recordRerunRequest(conn, keptTask)
+                        return@executeInsert recordRerunRequest(conn, keptTask)
                     }
                     log.info(
                         "task with id: {} is being overwritten. runAfter={}. hasActiveLease={}." +
@@ -143,7 +143,7 @@ class MySqlScheduler
                                         "failed to update task with id: " + request.id,
                                     )
                                 }
-                                return@execute overwrittenTask
+                                return@executeInsert overwrittenTask
                             }
                         }
                     } catch (e: SQLException) {
@@ -183,7 +183,7 @@ class MySqlScheduler
                             if (rowsInserted != 1) {
                                 throw InternalError("failed to insert new task with id: " + request.id)
                             }
-                            return@execute Task.builder<T>()
+                            return@executeInsert Task.builder<T>()
                                 .id(request.id)
                                 .createdAt(now)
                                 .runAfter(runAfter)
