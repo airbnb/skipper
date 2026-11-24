@@ -221,6 +221,13 @@ class MySqlWorkflowStore
                         .update(stateBytes)
                 }
                 return workflowInstance
+            } catch (e: SQLException) {
+                // TiDB can fail the loser of two creators racing on one id with a write conflict at commit,
+                // not a duplicate. If the winner's row is there, the workflow already exists.
+                if (e.errorCode == TIDB_WRITE_CONFLICT && getWorkflow(request.workflowId).isDefined) {
+                    throw EntityAlreadyExists()
+                }
+                throw e
             } catch (
                 @Suppress("TooGenericExceptionCaught") ex: Throwable
             ) {
@@ -1669,5 +1676,8 @@ class MySqlWorkflowStore
             private const val FIELD_INPUT = "input"
             private const val FIELD_STATE = "state"
             private const val FIELD_RESULT = "result"
+
+            /** TiDB's error code for a write conflict in an optimistic transaction. */
+            private const val TIDB_WRITE_CONFLICT = 9007
         }
     }
