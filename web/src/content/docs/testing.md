@@ -55,7 +55,7 @@ the actions themselves.
 | `helper` | Wait helpers: `waitForWorkflowToComplete()`, `expectWorkflowToWait()`, `waitForWorkflowToReachStatus(...)`, `waitForCondition { }`, `currentView()`; and `fastForwardUntilWorkflowCompletes()` / `fastForwardUntilWorkflowReachesStatus(...)`, which also advance the clock so retries and timers fire. |
 | `clock` | A `MutableClock` over real time that you can jump ahead with `clock.fastForward(...)`. `waitUntil` deadlines, `sleep`s **and retry delays** are all timers on it. Override `createClock()` to return `MutableClock()` for time fixed at the epoch that moves only when you say so. |
 | `@Bind` | Annotate a field to hand its value to workflows and actions that `@Inject` that type. |
-| `configure(config)` | Override to adjust the `SkipperConfig` (retry strategy, checkpoint mode, ...) before the runtime starts. |
+| `configure(config)` | Override to adjust the `SkipperConfig` (retry strategy, checkpoint mode, ...) before the runtime starts. For `@Encrypted` workflows, register `TestEncryptor()` in `config.encryptors` here (see [Encrypting Sensitive Data](/docs/encryption/#testing)). |
 | `printHistory()` | Dumps the instance's status, state and checkpoints; useful when a wait times out. |
 
 If you add your own `@BeforeEach`, there is nothing to call: the base class's setup runs on its

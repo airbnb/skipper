@@ -11,6 +11,7 @@ import com.airbnb.skipper.SkipperInjector
 import com.airbnb.skipper.Workflow
 import com.airbnb.skipper.internal.ActionExecutor
 import com.airbnb.skipper.internal.SkipperEngine
+import com.airbnb.skipper.internal.ValueEncryption
 import com.airbnb.skipper.internal.VersionGateEnforcer
 import java.lang.reflect.Field
 import javax.inject.Provider
@@ -29,6 +30,8 @@ data class SkipperInternalDeps
         val defaultRetryStrategy: RetryStrategy,
         // The default logs out-of-range versions but never enforces or counts them.
         val versionGateEnforcer: VersionGateEnforcer = VersionGateEnforcer(InMemoryFeatureGate(), NoOpMetrics.INSTANCE),
+        // The default encrypts nothing and refuses to store an @Encrypted value in plaintext.
+        val valueEncryption: ValueEncryption = ValueEncryption.UNCONFIGURED,
     )
 
 /**

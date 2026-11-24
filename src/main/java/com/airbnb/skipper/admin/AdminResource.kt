@@ -4,6 +4,7 @@ import com.airbnb.skipper.FeatureGate
 import com.airbnb.skipper.Timer
 import com.airbnb.skipper.WorkflowInstance
 import com.airbnb.skipper.WorkflowsService
+import com.airbnb.skipper.encryption.EncryptedValue
 import com.airbnb.skipper.internal.CheckpointTag
 import com.airbnb.skipper.internal.SkipperEngine
 import com.airbnb.skipper.internal.api.ActionCheckpoint
@@ -18,14 +19,18 @@ import com.airbnb.skipper.internal.storage.WorkflowSearchFilter
 import com.airbnb.skipper.internal.storage.WorkflowSortDirection
 import com.airbnb.skipper.internal.storage.WorkflowSortField
 import com.airbnb.skipper.internal.storage.WorkflowStore
+import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.PropertyNamingStrategy
 import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.databind.SerializerProvider
 import com.fasterxml.jackson.databind.cfg.MapperConfig
 import com.fasterxml.jackson.databind.introspect.AnnotatedField
 import com.fasterxml.jackson.databind.introspect.AnnotatedMethod
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter
+import com.fasterxml.jackson.databind.module.SimpleModule
 import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider
+import com.fasterxml.jackson.databind.ser.std.StdSerializer
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.google.common.collect.ImmutableList
@@ -86,6 +91,9 @@ class AdminResource
                 )
                 .registerModule(JavaTimeModule())
                 .registerModule(Jdk8Module())
+                // The admin UI never decrypts: an encrypted value shows as a placeholder naming its
+                // encryptor, and its ciphertext is left out.
+                .registerModule(SimpleModule().addSerializer(EncryptedValue::class.java, EncryptedValuePlaceholder()))
                 .setPropertyNamingStrategy(SkipperSnakeCase())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
@@ -1012,3 +1020,14 @@ class AdminResource
             }
         }
     }
+
+/** Renders an [EncryptedValue] in the admin UI as `[encrypted: <encryptor>]`. */
+internal class EncryptedValuePlaceholder : StdSerializer<EncryptedValue>(EncryptedValue::class.java) {
+    override fun serialize(
+        value: EncryptedValue,
+        gen: JsonGenerator,
+        provider: SerializerProvider,
+    ) {
+        gen.writeString(value.placeholder())
+    }
+}
