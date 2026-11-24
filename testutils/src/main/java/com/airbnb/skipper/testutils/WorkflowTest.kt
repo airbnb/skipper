@@ -84,9 +84,8 @@ abstract class WorkflowTest {
         config.gracefulShutdownTimeout = Duration.ofSeconds(1)
         config.injector = injectorFromBoundFields()
         configure(config)
-        Tracing.installIfRequested(config)
         this.config = config
-        runtime = SkipperRuntime(config)
+        runtime = SkipperRuntime(config, schedulerInstrumentation = Tracing.installIfRequested(config))
         workflowFactory = runtime.workflowFactory.get()
         helper = WorkflowTestHelper(runtime, workflowId, clock = clock)
         runtime.skipperSchedulerManager.get().start()
