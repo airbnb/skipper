@@ -22,14 +22,16 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.kotlin.whenever
 
 /**
  * A step that outlives its lease runs only one time while it stays within
  * `schedulerTaskExecutionTimeout`. When it runs past the timeout, a second run starts alongside the first.
+ * Both hold whether the run started in memory or was fetched from the scheduler.
  */
 @Execution(ExecutionMode.SAME_THREAD)
 class SchedulerTaskExecutionTimeoutTest {
@@ -57,10 +59,11 @@ class SchedulerTaskExecutionTimeoutTest {
         if (::manager.isInitialized) manager.forceStop()
     }
 
-    @Test
-    fun stepLongerThanItsLeaseRunsOnceWithinTheTimeout() {
+    @ParameterizedTest(name = "inMemory={0}")
+    @ValueSource(booleans = [false, true])
+    fun stepLongerThanItsLeaseRunsOnceWithinTheTimeout(inMemory: Boolean) {
         start(executionTimeout = Duration.ofSeconds(30))
-        val id = startSlowWorkflow()
+        val id = startSlowWorkflow(inMemory)
         val probe = SlowActions.probes.getValue(id)
         val helper = TestHelper(engine, scheduler, id)
         helper.waitForCondition { probe.executions.get() == 1 }
@@ -77,10 +80,11 @@ class SchedulerTaskExecutionTimeoutTest {
         assertEquals(1, probe.maxInFlight.get())
     }
 
-    @Test
-    fun stepOutlastingTheTimeoutRunsAgain() {
+    @ParameterizedTest(name = "inMemory={0}")
+    @ValueSource(booleans = [false, true])
+    fun stepOutlastingTheTimeoutRunsAgain(inMemory: Boolean) {
         start(executionTimeout = Duration.ofSeconds(1))
-        val id = startSlowWorkflow()
+        val id = startSlowWorkflow(inMemory)
         val probe = SlowActions.probes.getValue(id)
         val helper = TestHelper(engine, scheduler, id)
 
@@ -89,7 +93,8 @@ class SchedulerTaskExecutionTimeoutTest {
         assertEquals(2, probe.executions.get())
     }
 
-    private fun startSlowWorkflow(): String {
+    /** Starts the workflow in this process when [inMemory], else leaves it for the scheduler to fetch. */
+    private fun startSlowWorkflow(inMemory: Boolean): String {
         val id = "slow-${System.nanoTime()}"
         SlowActions.probes[id] = SlowActions.Probe()
         engine.startWorkflow(
@@ -100,7 +105,7 @@ class SchedulerTaskExecutionTimeoutTest {
                 .input(id)
                 .requestContext(TestRequestContext.builder().build())
                 .extraRequestData(ExtraRequestData())
-                .runAsync(true)
+                .runAsync(!inMemory)
                 .build(),
         )
         return id
