@@ -789,6 +789,132 @@ class ActionExecutorTest {
     }
 
     @Test
+    fun testCancelledFutureEndsAsCancelled() {
+        // A cancel while the workflow waits on a returned future cancels that future. The wait ends as
+        // cancelled with no checkpoint, as for an interrupted synchronous action.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val recording = RecordingMetrics()
+        val actions = actionMap[DemoActions::class.java] as DemoActions
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "helloLater" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actions)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val waited = interruptGatedExecutor(recording).executeAction(req) as CompletableFuture<*>
+        assertFalse(waited.isDone)
+
+        assertTrue(inFlightActions.interrupt(executionContext.workflow.workflowId))
+
+        val thrown = assertThrows(java.util.concurrent.ExecutionException::class.java) { waited.get(5, TimeUnit.SECONDS) }
+        assertTrue(thrown.cause is WorkflowCancelledException, "was: ${thrown.cause}")
+        assertTrue(actions.later.isCancelled)
+        assertEquals(0, executionContext.dirtyCheckpoints.size())
+        assertEquals(0, executionContext.getActionIteration(DemoActions::class.java, "helloLater"))
+        assertTrue(recording.incremented.contains("actionExecutor.inflightCancellationInterrupted"))
+        assertFalse(inFlightActions.interrupt(executionContext.workflow.workflowId))
+    }
+
+    @Test
+    fun testReturnedFutureIsNotCancellableWithTheGateOff() {
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val actions = actionMap[DemoActions::class.java] as DemoActions
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "helloLater" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actions)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val waited = actionExecutor.executeAction(req) as CompletableFuture<*>
+
+        assertFalse(inFlightActions.interrupt(executionContext.workflow.workflowId))
+
+        assertFalse(actions.later.isCancelled)
+        actions.later.complete("Hello later")
+        assertEquals("Hello later", waited.join())
+        assertEquals(1, executionContext.dirtyCheckpoints.size())
+    }
+
+    @Test
+    fun testFutureOfACompensableActionIsNotCancelled() {
+        // A compensable action's work may still finish after a cancel, so its future is left to complete
+        // and is checkpointed, which keeps it compensable.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        val actions = actionMap[DemoActions::class.java] as DemoActions
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "compensableLater" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actions)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .arg(arrayOf<Any?>("data"))
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val waited = interruptGatedExecutor(metrics).executeAction(req) as CompletableFuture<*>
+
+        assertFalse(inFlightActions.interrupt(executionContext.workflow.workflowId))
+
+        actions.later.complete("done")
+        assertEquals("done", waited.join())
+        assertEquals(1, executionContext.dirtyCheckpoints.size())
+    }
+
+    @Test
+    fun testFutureReturnedAfterTheInterruptIsNotCancelledAgain() {
+        // A cancel reaches an action once: the interrupt landed while the method ran, so the future it
+        // then returned is left to complete and is checkpointed.
+        val executionContext = newExecContext()
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH)
+        blockStarted = CountDownLatch(1)
+        val actions = actionMap[DemoActions::class.java] as DemoActions
+        val method = DemoActions::class.java.declaredMethods.first { it.name == "laterOnceInterrupted" }
+        val req =
+            ActionExecutor.ExecuteActionRequest.builder()
+                .actionObject(actions)
+                .proxyMethod(method)
+                .originalMethod(method)
+                .executionContext(executionContext)
+                .retryStrategy(FixedRetryStrategy(Duration.ofSeconds(1), 1))
+                .build()
+        val returned = CompletableFuture<CompletableFuture<*>>()
+        Thread { returned.complete(interruptGatedExecutor(metrics).executeAction(req) as CompletableFuture<*>) }.start()
+        assertTrue(blockStarted.await(5, TimeUnit.SECONDS))
+        assertTrue(inFlightActions.interrupt(executionContext.workflow.workflowId))
+        val waited = returned.get(5, TimeUnit.SECONDS)
+
+        assertFalse(inFlightActions.interrupt(executionContext.workflow.workflowId))
+
+        assertFalse(actions.later.isCancelled)
+        actions.later.complete("done")
+        assertEquals("done", waited.join())
+        assertEquals(1, executionContext.dirtyCheckpoints.size())
+    }
+
+    private fun interruptGatedExecutor(metrics: Metrics) =
+        ActionExecutor(
+            mockWorkflowStore,
+            CheckpointMode.EVENTUAL_CHECKPOINT,
+            metrics,
+            errorMapper,
+            mockEventPublisher,
+            mockExecutionMetricsCollector,
+            mockTracer,
+            ContextPropagator.NOOP,
+            InMemoryFeatureGate(mapOf(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT to true)),
+            inFlightActions,
+        )
+
+    @Test
     fun testExecuteActionWhenCheckpointExistsAndIsSuccess() {
         val executionContext =
             newExecContext().toBuilder()
@@ -1611,6 +1737,22 @@ class ActionExecutorTest {
         val later = CompletableFuture<String>()
 
         fun helloLater(): CompletableFuture<String> = later
+
+        fun laterOnceInterrupted(): CompletableFuture<String> {
+            blockStarted.countDown()
+            while (!Thread.currentThread().isInterrupted) {
+                Thread.onSpinWait()
+            }
+            return later
+        }
+
+        @Execute
+        fun compensableLater(data: String): CompletableFuture<String> = later
+
+        @Compensate(forExecute = "compensableLater")
+        fun compensateLater(data: String) {
+            // Compensation logic would go here
+        }
 
         fun block(): String {
             blockStarted.countDown()

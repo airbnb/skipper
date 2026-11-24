@@ -1,5 +1,6 @@
 package com.airbnb.skipper.internal
 
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -154,6 +155,49 @@ class InFlightActionsTest {
         assertTrue(interruptedOf["stayer"] == true)
         assertFalse(interruptedOf.containsKey("leaver"))
         assertFalse(registry.interrupt("wf"))
+    }
+
+    @Test
+    fun interruptCancelsARegisteredFutureOnceWithoutInterruptingTheCaller() {
+        val future = CompletableFuture<String>()
+        val registration = registry.enter("wf", future)
+
+        assertTrue(registry.interrupt("wf"))
+
+        assertTrue(future.isCancelled)
+        assertFalse(Thread.currentThread().isInterrupted)
+        assertTrue(registry.exit(registration))
+        assertFalse(registry.interrupt("wf"))
+    }
+
+    @Test
+    fun aFutureCallbackCanExitItsRegistrationWhileTheCancelRuns() {
+        // Cancelling runs the future's callbacks on the cancelling thread. A callback there that exits
+        // its own registration must still report the cancel and leave nothing registered.
+        val future = CompletableFuture<String>()
+        val registration = registry.enter("wf", future)
+        val exitReported = AtomicReference<Boolean>()
+        future.whenComplete { _, _ -> exitReported.set(registry.exit(registration)) }
+
+        assertTrue(registry.interrupt("wf"))
+
+        assertTrue(exitReported.get())
+        assertTrue(registry.workflowIds().isEmpty())
+    }
+
+    @Test
+    fun exitingACancelledFutureKeepsTheExitingThreadsOwnInterrupt() {
+        // A future's registration exits on whatever thread completes the future, so exit must leave that
+        // thread's own interrupt flag alone.
+        val registration = registry.enter("wf", CompletableFuture<String>())
+        assertTrue(registry.interrupt("wf"))
+        Thread.currentThread().interrupt()
+        try {
+            assertTrue(registry.exit(registration))
+            assertTrue(Thread.currentThread().isInterrupted)
+        } finally {
+            Thread.interrupted()
+        }
     }
 
     @Test

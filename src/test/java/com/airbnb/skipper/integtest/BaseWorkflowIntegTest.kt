@@ -245,6 +245,13 @@ abstract class BaseWorkflowIntegTest {
             return CompletableFuture.completedFuture(result)
         }
 
+        @WorkflowMethod(returnType = String::class)
+        fun workflowWithNeverCompletingFutureAction(): CompletableFuture<String> {
+            val result = actions.neverCompletingFutureAction().join()
+            actions.executeMethod()
+            return CompletableFuture.completedFuture(result)
+        }
+
         @WorkflowMethod
         fun longRunningWorkflow(durationInSecs: Int): CompletableFuture<Void> {
             LockSupport.parkNanos(durationInSecs * 1_000_000_000L)
@@ -527,6 +534,12 @@ abstract class BaseWorkflowIntegTest {
         }
 
         @Execute(returnType = String::class)
+        fun neverCompletingFutureAction(): CompletableFuture<String> {
+            testClient.action("neverCompletingFutureAction")
+            return pendingFuture
+        }
+
+        @Execute(returnType = String::class)
         fun completableFutureExecuteMethod(): CompletableFuture<String> {
             testClient.action("completableFutureExecuteMethod")
             return CompletableFuture.completedFuture("Completable future method executed")
@@ -605,6 +618,13 @@ abstract class BaseWorkflowIntegTest {
 
         fun helperCallingFailingAction(): String {
             return failingNonRetryableAction()
+        }
+
+        companion object {
+            // The future neverCompletingFutureAction returns; a test swaps in a fresh one before it runs.
+            @Volatile
+            @JvmStatic
+            var pendingFuture = CompletableFuture<String>()
         }
     }
 
@@ -2105,6 +2125,29 @@ abstract class BaseWorkflowIntegTest {
             val thrown = assertThrows<Throwable> { future.get(10, TimeUnit.SECONDS) }
             val cause = if (thrown is java.util.concurrent.ExecutionException) thrown.cause else thrown
             assertThat(cause).isInstanceOf(CancelledWorkflow::class.java)
+            helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.CANCELLED)
+            verify(testClient, never()).action("executeMethod")
+        }
+
+        @Test
+        fun testCancelStopsTheWorkflowWaitingOnAReturnedFuture() {
+            // The action's future never completes, so the workflow settles CANCELLED only if the cancel
+            // cancels that future. The next action never starts.
+            val pending = CompletableFuture<String>()
+            SampleActions.pendingFuture = pending
+            val workflow = workflowFactory<SampleWorkflow>(workflowId)
+            val future = workflow.workflowWithNeverCompletingFutureAction()
+            // Wait until the executor has registered the future: it chains onto the future only after that.
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (pending.numberOfDependents == 0 && System.nanoTime() < deadline) Thread.sleep(10)
+            assertThat(pending.numberOfDependents).isGreaterThan(0)
+
+            skipperEngine.cancelWorkflow(workflowId, "cancelled while waiting on a future")
+
+            val thrown = assertThrows<Throwable> { future.get(10, TimeUnit.SECONDS) }
+            val cause = if (thrown is java.util.concurrent.ExecutionException) thrown.cause else thrown
+            assertThat(cause).isInstanceOf(CancelledWorkflow::class.java)
+            assertThat(pending.isCancelled).isTrue()
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.CANCELLED)
             verify(testClient, never()).action("executeMethod")
         }
