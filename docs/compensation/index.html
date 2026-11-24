@@ -79,6 +79,13 @@ using <code>EVENTUAL_CHECKPOINT</code> can also be missed. Their checkpoints are
 and are lost if the worker dies first or the cancel arrives just as the run saves them. A cancelled
 instance does not re-run its actions, so those results are lost. Use <code>IMMEDIATE_CHECKPOINT</code> on
 compensable actions where that matters.</p>
+<p>A run that outlasts <code>schedulerTaskExecutionTimeout</code> can be started a second time while the first is
+still going (see <a href="/docs/reference/configuration/#long-running-workflow-runs">Long-running workflow runs</a>).
+If the instance is cancelled meanwhile, one run can start compensation while the other is still
+inside an action. Compensation reads the checkpoints once, when it starts. Nothing the other run does
+after that is compensated: neither the action it is in nor any action it starts later. Keep the
+<code>automatic_lease_renewal</code> feature gate on and <code>schedulerTaskExecutionTimeout</code> above the longest a
+workflow runs between waits.</p>
 <p>Cancelling an already cancelled instance only re-requests its compensation; the new reason is
 dropped and <code>onCancelled</code> does not fire again. Compensation on cancel needs the
 <code>INFLIGHT_CANCELLATION_CHECKPOINTS</code> feature gate on from the cancel until the instance reaches its
