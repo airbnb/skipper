@@ -34,33 +34,14 @@ internal class FairShareFetcher(
         if (due.size() <= 1) {
             return fetchAny(slots, partition)
         }
-        return fetchShares(FairShare.split(slots, due.asJava(), this::weightOf, random), partition, topUpTo = slots)
-    }
-
-    /**
-     * Fetches for the queues that run fewer tasks than their reserved share, while the process is
-     * [over] its concurrency [limit]. Fetching is otherwise paused at that point, which would let
-     * one queue that fills the process keep every other queue out. See [FairShare.splitReserved].
-     *
-     * @param admitted the tasks this process has taken on and not finished, by queue.
-     */
-    fun fetchReserved(
-        fetchSize: Int,
-        over: Int,
-        limit: Int,
-        admitted: Map<String, Int>,
-        partition: BucketRange?,
-    ): List<Task<Any>> {
-        val due = scheduler.dueQueues()
-        val shares = FairShare.splitReserved(minOf(fetchSize, over), limit, admitted, due.asJava(), this::weightOf, random)
-        return fetchShares(shares, partition, topUpTo = 0)
+        return fetchShares(FairShare.split(slots, due.asJava(), this::weightOf, random), partition, slots)
     }
 
     private fun weightOf(queue: String): Int = weights[queue] ?: FairShare.DEFAULT_WEIGHT
 
     /**
-     * Fetches each queue of [shares] up to its share, then fills up to [topUpTo] tasks from
-     * whatever is ready.
+     * Fetches each queue of [shares] up to its share, then fills up to [slots] tasks from whatever
+     * is ready.
      *
      * A fetch leases the tasks it returns, so a failure part of the way must not lose the tasks
      * already leased: they are delivered, and the rest is left for the next round. A failure before
@@ -70,15 +51,15 @@ internal class FairShareFetcher(
     private fun fetchShares(
         shares: Map<String, Int>,
         partition: BucketRange?,
-        topUpTo: Int,
+        slots: Int,
     ): List<Task<Any>> {
         var tasks = List.empty<Task<Any>>()
         try {
             for ((queue, share) in shares) {
                 tasks = tasks.appendAll(scheduler.fetch(share, partition, queue))
             }
-            if (tasks.size() < topUpTo) {
-                tasks = tasks.appendAll(fetchAny(topUpTo - tasks.size(), partition))
+            if (tasks.size() < slots) {
+                tasks = tasks.appendAll(fetchAny(slots - tasks.size(), partition))
             }
         } catch (e: Exception) {
             if (tasks.isEmpty) {

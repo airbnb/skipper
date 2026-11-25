@@ -126,7 +126,7 @@ class SkipperSchedulerManager
                     val task: Task<Any> = schedulerQueue.take(type)
                     // From here the task holds a slot, and the run gives it back when it is done.
                     val run =
-                        AdmittedRun(schedulerQueue, task.queue) { holdSlotUntil ->
+                        AdmittedRun(schedulerQueue) { holdSlotUntil ->
                             try {
                                 handleTask(task, holdSlotUntil)
                             } finally {
@@ -185,23 +185,27 @@ class SkipperSchedulerManager
                     try {
                         val free = freeSlots()
                         if (free <= 0) {
-                            // Full: fetching now would lease tasks this process cannot start, except
-                            // for the queues that are owed their reserved share. If there are none,
-                            // check again shortly. Polling rather than waking on every finished task
-                            // lets several slots free up, so they are fetched as one batch.
-                            val reserved = fetchReservedShares(-free)
-                            deliver(reserved)
-                            if (reserved.isEmpty) {
-                                metrics.counter(METRICS_COMPONENT, "fetchSkippedAtCapacity").inc()
-                                Thread.sleep(CAPACITY_POLL_INTERVAL.toMillis())
-                            }
+                            // Full: fetching now would lease tasks this process cannot start. Check
+                            // again shortly. Polling rather than waking on every finished task lets
+                            // several slots free up, so they are fetched as one batch.
+                            metrics.counter(METRICS_COMPONENT, "fetchSkippedAtCapacity").inc()
+                            Thread.sleep(CAPACITY_POLL_INTERVAL.toMillis())
                             continue
                         }
                         val requested = Math.min(getMaxTasks(), free)
                         val tasks = fetchTasksWithOptionalPartitioning(requested)
                         log.debug("fetched {} tasks from scheduler", tasks.size())
                         metrics.counter(METRICS_COMPONENT, "fetchedTasks").inc()
-                        deliver(tasks)
+                        tasks.forEach { task ->
+                            log.debug("delivering task={}", task)
+                            if (!schedulerQueue.add(task)) {
+                                log.info(
+                                    "attempted to add task to the queue but the task was already" +
+                                        " present. task={}",
+                                    task,
+                                )
+                            }
+                        }
                         if (tasks.size() < Math.min(free, DEFAULT_MAX_FETCH_SIZE)) {
                             // Few tasks came back, so little is ready: wait a second before asking
                             // again rather than slam the db.
@@ -231,51 +235,6 @@ class SkipperSchedulerManager
             } catch (ex: Throwable) {
                 throw SneakyThrow.sneakyThrow(ex)
             }
-        }
-
-        /** Hands fetched tasks to the in-memory queue, which admits them and has them run. */
-        private fun deliver(tasks: List<Task<Any>>) {
-            tasks.forEach { task ->
-                log.debug("delivering task={}", task)
-                if (!schedulerQueue.add(task)) {
-                    log.info(
-                        "attempted to add task to the queue but the task was already present. task={}",
-                        task,
-                    )
-                }
-            }
-        }
-
-        /**
-         * Fetches for the fair-share queues that are owed slots while the process is [over] its limit.
-         *
-         * The process only goes over its limit through tasks scheduled for in-memory execution, which
-         * are always admitted. Without this, one workflow class that keeps the process over the limit
-         * that way would stop fetching for every other class for as long as it kept going.
-         *
-         * 1. Exactly at the limit, nothing is fetched: fetched tasks alone never take the process
-         *    past it, and the next slot to free up is shared out by the normal fetch.
-         * 2. Over the limit, queues running fewer tasks than their reserved share fetch up to what
-         *    they are missing, and at most [over] in one round. See [FairShare.splitReserved].
-         */
-        private fun fetchReservedShares(over: Int): List<Task<Any>> {
-            if (over <= 0 || !featureGate.isEnabled(FeatureGate.Keys.FAIR_SHARE_FETCH)) {
-                return List.empty()
-            }
-            val tasks =
-                fetchWithOptionalPartitioning { partition ->
-                    fairShareFetcher.fetchReserved(
-                        getMaxTasks(),
-                        over,
-                        effectiveMaxConcurrentTasks(),
-                        schedulerQueue.admittedByQueue,
-                        partition,
-                    )
-                }
-            if (!tasks.isEmpty) {
-                metrics.counter(METRICS_COMPONENT, "fetchedReservedShareTasks").inc(tasks.size().toLong())
-            }
-            return tasks
         }
 
         /**

@@ -109,10 +109,8 @@ class SkipperConfig(
      * are more such classes than tasks in a fetch, the fetch picks among them at random, by weight.
      * A class with nothing ready takes no share, and what it leaves goes to the others.
      *
-     * With [schedulerMaxConcurrentTasks] set, each class also has that limit divided by weight
-     * reserved for it. If workflows started in this process push it past the limit, classes running
-     * fewer tasks than their reserved part are still fetched, so the process can then run up to
-     * about twice the limit.
+     * This only shapes what is fetched from the persistent scheduler. Workflows started in this
+     * process still run in memory straight away, as before.
      */
     var schedulerQueueWeights: Map<String, Int> = emptyMap(),
     /** The maximum number of times a task can be retried before it is considered failed. */

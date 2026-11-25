@@ -115,44 +115,6 @@ class SkipperSchedulerManagerConcurrencyTest {
     }
 
     @Test
-    fun testInMemoryFloodOfOneQueueDoesNotStopFetchingForAnother() {
-        whenever(featureGate.isEnabled(FeatureGate.Keys.FAIR_SHARE_FETCH)).thenReturn(true)
-        val handler = BlockingHandler()
-        manager = createManager(scheduler, handler, knobs, maxConcurrentTasks = 2).also { it.start() }
-
-        // One queue floods the process through in-memory executions, which are always admitted:
-        // four tasks against a limit of two, none of them finishing.
-        repeat(4) { schedulerQueue.add(readyTask("noisy")) }
-        assertTrue(handler.awaitStarted(4))
-
-        // More of the same queue waits in the scheduler, next to one task of another queue.
-        repeat(20) { scheduleReadyTask("noisy") }
-        scheduleReadyTask("quiet")
-
-        // The quiet queue is owed its reserved share (half of the limit), so its task is fetched
-        // although the process is over the limit. The noisy queue is past its share and gets none.
-        assertTrue(handler.awaitStarted(5), "the quiet queue's task should run while the noisy queue holds every slot")
-        Thread.sleep(2_500)
-        assertEquals(5, handler.started.get(), "nothing else is fetched while the process is over the limit")
-        assertEquals(mapOf("noisy" to 4, "quiet" to 1), schedulerQueue.admittedByQueue)
-        handler.release()
-    }
-
-    @Test
-    fun testWithFairShareOffAnInMemoryFloodStopsAllFetching() {
-        val handler = BlockingHandler()
-        manager = createManager(scheduler, handler, knobs, maxConcurrentTasks = 2).also { it.start() }
-
-        repeat(4) { schedulerQueue.add(readyTask("noisy")) }
-        assertTrue(handler.awaitStarted(4))
-        scheduleReadyTask("quiet")
-
-        Thread.sleep(2_500)
-        assertEquals(4, handler.started.get(), "with the gate off the quiet queue waits for the flood to end")
-        handler.release()
-    }
-
-    @Test
     fun testAsksOnlyForTheFreeSlots() {
         val mockScheduler = idleScheduler()
         val handler = BlockingHandler()
@@ -377,19 +339,18 @@ class SkipperSchedulerManagerConcurrencyTest {
         return true
     }
 
-    private fun scheduleReadyTask(queue: String = Task.DEFAULT_QUEUE) {
+    private fun scheduleReadyTask() {
         val id = UUID.randomUUID().toString()
         scheduler.schedule(
-            ScheduleRequest.builder<Any>().type(Task.Type.WORKFLOW).id(id).dedupToken(id).payload(null).queue(queue).build(),
+            ScheduleRequest.builder<Any>().type(Task.Type.WORKFLOW).id(id).dedupToken(id).payload(null).build(),
         )
     }
 
-    private fun readyTask(queue: String = Task.DEFAULT_QUEUE): Task<Any> {
+    private fun readyTask(): Task<Any> {
         val id = UUID.randomUUID().toString()
         return Task.builder<Any>()
             .id(id)
             .type(Task.Type.WORKFLOW)
-            .queue(queue)
             .dedupToken(id)
             .createdAt(Instant.now())
             .runAfter(Instant.EPOCH)
@@ -401,7 +362,6 @@ class SkipperSchedulerManagerConcurrencyTest {
     private fun idleScheduler(): Scheduler {
         val mockScheduler = mock<Scheduler>()
         whenever(mockScheduler.fetch<Any>(any<Int>())).thenReturn(List.empty())
-        whenever(mockScheduler.dueQueues()).thenReturn(List.empty())
         whenever(mockScheduler.getFailedTasks<Any>()).thenReturn(List.empty())
         return mockScheduler
     }

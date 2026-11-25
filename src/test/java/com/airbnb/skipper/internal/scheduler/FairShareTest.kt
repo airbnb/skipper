@@ -68,43 +68,4 @@ class FairShareTest {
         assertEquals(queues.toSet(), served.keys, "every queue was picked at least once")
         assertTrue(served.getValue("q1") > 10 * served.getValue("q2"), "the heavy queue is picked far more often: $served")
     }
-
-    @Test
-    fun testReservedSharesGoOnlyToQueuesBelowTheirShare() {
-        // Limit 10, equal weights, two queues: each has 5 reserved. "noisy" runs 12, "quiet" runs 2.
-        val shares =
-            FairShare.splitReserved(
-                slots = 10,
-                limit = 10,
-                admitted = mapOf("noisy" to 12, "quiet" to 2),
-                due = listOf("noisy", "quiet"),
-                weightOf = equalWeights,
-                random = random,
-            )
-        assertEquals(mapOf("quiet" to 3), shares)
-    }
-
-    @Test
-    fun testReservedShareCountsQueuesThatAreOnlyRunning() {
-        // "noisy" has nothing ready but fills the process; it still counts when dividing the limit.
-        val shares = FairShare.splitReserved(5, 8, mapOf("noisy" to 9), listOf("a", "b", "c"), equalWeights, random)
-        assertEquals(mapOf("a" to 2, "b" to 2, "c" to 1).values.sorted(), shares.values.sorted())
-        assertEquals(setOf("a", "b", "c"), shares.keys)
-    }
-
-    @Test
-    fun testReservedShareIsAtLeastOne() {
-        // 50 queues against a limit of 4: the limit divided by weight rounds to zero, yet each queue
-        // that runs nothing is owed one slot.
-        val due = (1..50).map { "q$it" }
-        val shares = FairShare.splitReserved(50, 4, mapOf("noisy" to 30), due, equalWeights, random)
-        assertEquals(due.toSet(), shares.keys)
-        assertTrue(shares.values.all { it == 1 })
-    }
-
-    @Test
-    fun testNoReservedShareWhenEveryQueueHasItsShare() {
-        val shares = FairShare.splitReserved(5, 4, mapOf("a" to 2, "b" to 3), listOf("a", "b"), equalWeights, random)
-        assertEquals(emptyMap<String, Int>(), shares)
-    }
 }

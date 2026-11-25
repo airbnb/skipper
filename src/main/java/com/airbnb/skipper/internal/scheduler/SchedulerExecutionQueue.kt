@@ -8,7 +8,6 @@ import io.vavr.control.Option
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Named
@@ -25,8 +24,7 @@ import org.slf4j.LoggerFactory
  * It also counts the tasks this process has taken on: a task is admitted when it is added to a
  * queue and stays admitted until [markFinished] is called for it, so the count covers tasks waiting
  * here and tasks being executed. The scheduler manager uses [admittedCount] to decide how many more
- * tasks it can fetch. The same count is kept per fair-share queue ([admittedByQueue]), which tells
- * the manager which queues run fewer tasks here than their share.
+ * tasks it can fetch.
  */
 @Singleton
 open class SchedulerExecutionQueue
@@ -45,9 +43,6 @@ open class SchedulerExecutionQueue
         private val queues: MutableMap<Task.Type, UniqueBlockingQueue<Task<*>>> = HashMap()
 
         private val admitted = AtomicInteger()
-
-        /** The admitted tasks of each fair-share queue that has any; they add up to [admitted]. */
-        private val admittedPerQueue = ConcurrentHashMap<String, Int>()
 
         init {
             for (type in Task.Type.values()) {
@@ -109,7 +104,6 @@ open class SchedulerExecutionQueue
                     .dedupToken(request.dedupToken)
                     .payload(request.payload)
                     .type(request.type)
-                    .queue(request.queue)
                     .retryCount(0)
                     .status(Task.Status.PENDING)
                     .shouldRefreshPayload(false)
@@ -165,35 +159,20 @@ open class SchedulerExecutionQueue
             // Count first: once the task is in the queue it can be taken, run and finished before this
             // thread continues, and finishing an uncounted task would take the count below zero.
             admitted.incrementAndGet()
-            admittedPerQueue.merge(task.queue, 1, Int::plus)
             val added = getQueue(task.type).add(task, task.id)
             if (!added) {
                 admitted.decrementAndGet()
-                releaseFrom(task.queue)
             }
             return added
         }
 
-        /**
-         * Releases the admission of a task taken from this queue, once it has finished executing.
-         *
-         * @param queue the fair-share queue of that task, see [Task.queue].
-         */
-        open fun markFinished(queue: String = Task.DEFAULT_QUEUE) {
+        /** Releases the admission of a task taken from this queue, once it has finished executing. */
+        open fun markFinished() {
             admitted.getAndUpdate {
                 check(it > 0) { "markFinished called with no admitted task" }
                 it - 1
             }
-            releaseFrom(queue)
         }
-
-        private fun releaseFrom(queue: String) {
-            admittedPerQueue.computeIfPresent(queue) { _, count -> if (count > 1) count - 1 else null }
-        }
-
-        /** [admittedCount] broken down by fair-share queue; queues with no admitted task are left out. */
-        open val admittedByQueue: Map<String, Int>
-            get() = HashMap(admittedPerQueue)
 
         /** Tasks added and not yet finished: those waiting in a queue plus those being executed. */
         open val admittedCount: Int

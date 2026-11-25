@@ -89,18 +89,6 @@ class FairShareFetcherTest {
         assertThrows(IllegalStateException::class.java) { fetcher.fetch(6, null) }
     }
 
-    @Test
-    fun testReservedFetchAsksOnlyTheQueuesBelowTheirShare() {
-        whenever(scheduler.dueQueues()).thenReturn(List.of("noisy", "quiet"))
-        whenever(scheduler.fetch<Any>(3, partition, "quiet")).thenReturn(List.of(task("q1", "quiet")))
-
-        // Limit 10 and two queues: 5 reserved each. "quiet" runs 2 and is owed 3; "noisy" runs 14.
-        val fetched = fetcher.fetchReserved(5, 6, 10, mapOf("noisy" to 14, "quiet" to 2), partition)
-        assertEquals(listOf("q1"), fetched.map { it.id }.asJava())
-        verify(scheduler, never()).fetch<Any>(any(), anyOrNull(), eq("noisy"))
-        verify(scheduler, never()).fetch<Any>(any<Int>())
-    }
-
     private fun task(
         id: String,
         queue: String,

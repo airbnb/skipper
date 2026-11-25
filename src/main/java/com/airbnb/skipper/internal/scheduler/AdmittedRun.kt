@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * A scheduler run of one task taken from [queue], which gives the task's slot back to the queue
- * exactly once. [taskQueue] is the task's fair-share queue, whose count the slot is held in.
+ * exactly once.
  *
  * Two places can give the slot back, and one flag decides which of them does:
  * 1. The body started. It gives the slot back when it exits, however it exits. Cancelling the run
@@ -24,7 +24,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class AdmittedRun private constructor(
     private val queue: SchedulerExecutionQueue,
-    private val taskQueue: String,
     private val releaseClaimed: AtomicBoolean,
     body: (holdSlotUntil: (CompletableFuture<*>) -> Unit) -> Unit,
 ) : FutureTask<Unit>(
@@ -34,20 +33,19 @@ internal class AdmittedRun private constructor(
                 try {
                     body { handled = it }
                 } finally {
-                    handled.whenComplete { _, _ -> queue.markFinished(taskQueue) }
+                    handled.whenComplete { _, _ -> queue.markFinished() }
                 }
             }
         },
     ) {
     constructor(
         queue: SchedulerExecutionQueue,
-        taskQueue: String = Task.DEFAULT_QUEUE,
         body: (holdSlotUntil: (CompletableFuture<*>) -> Unit) -> Unit,
-    ) : this(queue, taskQueue, AtomicBoolean(), body)
+    ) : this(queue, AtomicBoolean(), body)
 
     override fun done() {
         if (releaseClaimed.compareAndSet(false, true)) {
-            queue.markFinished(taskQueue)
+            queue.markFinished()
         }
     }
 

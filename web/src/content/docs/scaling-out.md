@@ -140,9 +140,7 @@ fetch size still waits a second after every fetch, as it does with no limit. A b
 per second. The `scheduler_max_concurrent_tasks` knob changes the limit at runtime.
 
 Workflows started in the process run in memory without waiting for a slot, because the caller may
-be waiting on the result. They count against the limit, so a burst of them pauses fetching, except for workflow classes
-that are below their reserved part of the limit (see
-[Fair share between workflow classes](#fair-share-between-workflow-classes)).
+be waiting on the result. They count against the limit, so a burst of them pauses fetching.
 
 A task keeps its slot until its handler finishes, even after the scheduler stops waiting for it at
 `schedulerTaskExecutionTimeout`. So when a slow dependency makes runs time out, the instance stops
@@ -185,13 +183,10 @@ A weight is a share, not an order, so a low weight slows a class down and never 
 3. A class with nothing ready takes no share, and a class with fewer tasks ready than its share
    leaves the difference to the others, so no part of a fetch goes unused while there is work.
 
-With `schedulerMaxConcurrentTasks` set, each class also has a part of that limit reserved for it,
-divided by weight among the classes that have tasks ready or running, and never less than one
-task. It matters when workflows started in memory push an instance past its limit. Fetching then
-continues for the classes that run fewer tasks than their reserved part, so a class that keeps
-the instance over the limit cannot lock the others out. In that state an instance can run up to
-about twice the limit. Exactly at the limit nothing is fetched, as before, and the next slot to
-free up is shared out by the normal fetch.
+Fair share shapes what is fetched from the scheduler's durable queue. Workflows started in the
+process still run in memory straight away and are not held back by it. With
+`schedulerMaxConcurrentTasks` set, an instance that is full still stops fetching for every class
+until a slot frees up, and that slot is then shared out by the next fetch.
 
 Tasks written before the upgrade are all in one queue named `default`, which shares with the
 workflow classes like any other queue until those tasks have run. Fair share needs the
@@ -202,7 +197,6 @@ turns it off and goes back to the random sample.
 
 | Metric | Meaning |
 |---|---|
-| `schedulerManager.fetchedReservedShareTasks` | Counts tasks fetched for a class's reserved part while the instance was over its limit. |
 | `mysqlScheduler.dueQueuesTime` / `sqliteScheduler.dueQueuesTime` | Time taken to list the queues with tasks ready, once per fetch. |
 
 ## Operational notes

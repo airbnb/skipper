@@ -54,35 +54,6 @@ internal object FairShare {
         return shares
     }
 
-    /**
-     * The slots that queues below their reserved share may take while the process is over its
-     * concurrency [limit].
-     *
-     * A queue's reserved share is its part of [limit] by weight, counted among the queues that have
-     * work ready or tasks running here, and never less than one. A queue that already runs that many
-     * tasks ([admitted]) gets nothing. The others split [slots], each up to what it is missing.
-     */
-    fun splitReserved(
-        slots: Int,
-        limit: Int,
-        admitted: Map<String, Int>,
-        due: Collection<String>,
-        weightOf: (String) -> Int,
-        random: Random,
-    ): Map<String, Int> {
-        val contenders = (due + admitted.filterValues { it > 0 }.keys).distinct()
-        val totalWeight = contenders.sumOf { weightOf(it).coerceAtLeast(1).toLong() }
-        val missing =
-            due
-                .distinct()
-                .associateWith { queue ->
-                    val reserved = (limit.toLong() * weightOf(queue).coerceAtLeast(1) / totalWeight).toInt().coerceAtLeast(1)
-                    reserved - (admitted[queue] ?: 0)
-                }
-                .filterValues { it > 0 }
-        return split(slots, missing.keys, weightOf, random).mapValues { (queue, share) -> minOf(share, missing.getValue(queue)) }
-    }
-
     /** Draws [count] different queues, each draw with a chance in proportion to the queue's weight. */
     private fun drawDistinct(
         count: Int,
