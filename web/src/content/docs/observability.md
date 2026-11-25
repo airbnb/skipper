@@ -168,18 +168,24 @@ description behind the **i** icon in its title saying what it counts.
 
 | Row | What it answers |
 |---|---|
-| Overview | Is the engine healthy right now: starts, completions, failures, action error ratio, task backlog, dead-letter queue, scheduler saturation, and how many instances are reporting. |
-| Workflows | Which workflow classes are starting, completing, failing, retrying or timing out, and how many signals are sent. |
-| Actions | Action throughput, which actions fail, and how long each takes (p50, p95, p99). |
-| Scheduler | Whether the fleet keeps up: backlog, task throughput, outcomes of handled tasks, per-instance concurrency against the limit, lease renewals, and latency of scheduler calls to the task table. |
+| Overview | Is the engine healthy right now: workflow starts, completions and failures, action error ratio, task backlog and dead-letter queue. |
+| Workflows | What workflow executions end in, and which workflow classes are failing. |
+| Actions | Which actions fail and how long each takes (p99). |
+| Scheduler | Whether the fleet keeps up: backlog and dead-letter queue over time, and the outcome of handled tasks. |
+| Workflow and action details | Starts by outcome, completions, retries and timeouts per workflow class, signals, and overall action throughput and latency. |
+| Scheduler details | Task throughput, per-instance concurrency against the limit, in-memory queue size, fetch and worker errors, lease renewals, lock conflicts, and latency of scheduler calls to the task table. |
 | Workflow store | Rate, errors and p99 latency of each store operation, and the size of persisted payloads. |
 | Timers, compensation and callbacks | Timers firing, compensation outcomes, and callback handlers that threw. |
-| Cluster and task partitioning | The task-ID range each member owns and the health of membership heartbeats. Collapsed; relevant with [task partitioning](/docs/scaling-out/). |
-| Cancellation, versioning and shutdown | In-flight cancellations, version gate violations and unexpected engine errors. Collapsed. |
+| Cluster and task partitioning | The task-ID range each member owns and the health of membership heartbeats. Relevant with [task partitioning](/docs/scaling-out/). |
+| Cancellation, versioning and shutdown | In-flight cancellations, version gate violations and unexpected engine errors. |
+
+The first four rows are open and fit on about one screen; they are the ones to watch. The other six
+are collapsed and open with a click on the row title when you need to dig into one area.
 
 Start with the Overview row. A growing **Task backlog** means tasks are due faster than the fleet
-handles them: check **Saturation** and the Scheduler row. Anything above zero in **Dead letters**
-is a workflow that stopped making progress until it is requeued from the admin UI. A rising
+handles them: check the Scheduler row, then **Concurrency by instance** under Scheduler details.
+Anything above zero in **Dead letters** is a workflow that stopped making progress until it is
+requeued from the admin UI. A rising
 **Failures** or **Action errors** value points you to the Workflows and Actions rows, which break
 the same numbers down by workflow class and by action.
 

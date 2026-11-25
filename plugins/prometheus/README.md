@@ -38,7 +38,7 @@ failing the engine.
 
 [`grafana/skipper-dashboard.json`](grafana/skipper-dashboard.json) is a ready-made Grafana dashboard
 over these metrics: workflow and action throughput, errors and latency, scheduler backlog,
-dead-letter queue and saturation, workflow store latency and errors, timers, compensation, and task
+dead-letter queue and concurrency, workflow store latency and errors, timers, compensation, and task
 partitioning. It is built for Grafana 10 or newer (tested on 13) and uses only the time series and
 stat panels and the Prometheus data source.
 
