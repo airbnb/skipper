@@ -5,7 +5,7 @@ only the integration they need and core stays free of backend-specific dependenc
 
 | Directory | Artifact | What it is |
 |---|---|---|
-| [`prometheus/`](prometheus) | `com.airbnb.skipper:skipper-metrics-prometheus` | `Metrics` implementation registering collectors with the Prometheus Java client |
+| [`prometheus/`](prometheus) | `com.airbnb.skipper:skipper-metrics-prometheus` | `Metrics` implementation registering collectors with the Prometheus Java client, plus a Grafana dashboard |
 
 Every plugin builds and is published with the root Gradle build (`./gradlew build` covers them), on
 the same version as `skipper-core`. Usage is documented in the

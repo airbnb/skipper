@@ -104,6 +104,117 @@ config.setMetrics(cfg -> new PrometheusMetrics(PrometheusRegistry.defaultRegistr
 Histogram bucket boundaries for timers and for value histograms are constructor parameters if the
 defaults (1 ms to 60 s, and powers of four from 1 to about 4 million) do not fit your workload.
 
+### Grafana dashboard
+
+A ready-made Grafana dashboard for these metrics ships next to the plugin:
+[`skipper-dashboard.json`](https://github.com/airbnb/skipper/blob/main/plugins/prometheus/grafana/skipper-dashboard.json).
+It is built for Grafana 10 or newer and uses only the time series and stat panels and the
+Prometheus data source, so there is nothing else to install.
+
+#### Before you import
+
+The dashboard reads what Prometheus has scraped from your service, so two things must already be
+in place:
+
+1. Your service installs `PrometheusMetrics` as shown above and serves the registry on a scrape
+   endpoint.
+2. Prometheus scrapes that endpoint, and Grafana has that Prometheus as a data source.
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: my-service
+    static_configs:
+      - targets: ["my-service-host:9400"]
+```
+
+The `job` and `instance` labels Prometheus attaches to every scrape are what the dashboard's
+**Job** and **Instance** filters select on.
+
+#### Import through the Grafana UI
+
+1. Download
+   [`skipper-dashboard.json`](https://raw.githubusercontent.com/airbnb/skipper/main/plugins/prometheus/grafana/skipper-dashboard.json).
+2. In Grafana, open **Dashboards**, then **New → Import**.
+3. Upload the file, or paste its contents into the JSON box, and click **Load**.
+4. Choose a folder if you want one and click **Import**.
+5. On the dashboard, pick your Prometheus data source in the **Data source** drop-down at the top
+   left. With a single Prometheus data source it is selected for you.
+
+#### Provision it as code
+
+To have Grafana load the dashboard from disk instead, point a
+[dashboard provider](https://grafana.com/docs/grafana/latest/administration/provisioning/#dashboards)
+at a directory and copy the file into it unchanged:
+
+```yaml
+# <grafana provisioning dir>/dashboards/skipper.yaml
+apiVersion: 1
+providers:
+  - name: skipper
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards/skipper
+```
+
+The dashboard chooses its data source through a dashboard variable, so the file has no data source
+ID to rewrite for either route.
+
+#### Using the dashboard
+
+The filters at the top narrow every panel: **Job** and **Instance** select which processes to look
+at, and **Workflow** limits the workflow panels to chosen workflow classes. Each panel has a
+description behind the **i** icon in its title saying what it counts.
+
+| Row | What it answers |
+|---|---|
+| Overview | Is the engine healthy right now: workflow starts, completions and failures, action error ratio, task backlog and dead-letter queue. |
+| Workflows | What workflow executions end in, and which workflow classes are failing. |
+| Actions | Which actions fail and how long each takes (p99). |
+| Scheduler | Whether the fleet keeps up: backlog and dead-letter queue over time, and the outcome of handled tasks. |
+| Workflow and action details | Starts by outcome, completions, retries and timeouts per workflow class, signals, and overall action throughput and latency. |
+| Scheduler details | Task throughput, per-instance concurrency against the limit, in-memory queue size, fetch and worker errors, lease renewals, lock conflicts, and latency of scheduler calls to the task table. |
+| Workflow store | Rate, errors and p99 latency of each store operation, and the size of persisted payloads. |
+| Timers, compensation and callbacks | Timers firing, compensation outcomes, and callback handlers that threw. |
+| Cluster and task partitioning | The task-ID range each member owns and the health of membership heartbeats. Relevant with [task partitioning](/docs/scaling-out/). |
+| Cancellation, versioning and shutdown | In-flight cancellations, version gate violations and unexpected engine errors. |
+
+The first four rows are open and fit on about one screen; they are the ones to watch. The other six
+are collapsed and open with a click on the row title when you need to dig into one area.
+
+Start with the Overview row. A growing **Task backlog** means tasks are due faster than the fleet
+handles them: check the Scheduler row, then **Concurrency by instance** under Scheduler details.
+Anything above zero in **Dead letters** is a workflow that stopped making progress until it is
+requeued from the admin UI. A rising
+**Failures** or **Action errors** value points you to the Workflows and Actions rows, which break
+the same numbers down by workflow class and by action.
+
+The same queries work as alert rules. Two that are worth having from day one:
+
+```promql
+# A task is in the dead-letter queue
+max(skipper_schedulerManager_failedTasksCount) > 0
+
+# The backlog has been above 1000 due tasks
+max(skipper_schedulerManager_backloggedTasksCount) > 1000
+```
+
+#### If panels are empty or need adapting
+
+- **Every panel says "No data".** Check that the **Data source** drop-down points at the Prometheus
+  that scrapes your service, and that `skipper_schedulerManager_maxTasks` returns a series there.
+  The **Job** and **Instance** filters are filled from that metric.
+- **Some panels are empty.** A series appears only once the engine has reported it, so panels for
+  errors, timers, compensation or partitioning stay empty until that happens for the first time.
+- **You changed the metric prefix.** The dashboard expects the default `skipper` prefix. Replace
+  `skipper_` throughout the file with your prefix before importing.
+- **You use your own store or scheduler.** The storage panels match the bundled MySQL and SQLite
+  implementations (`skipper_mysqlWorkflowStore_*`, `skipper_sqliteWorkflowStore_*` and the
+  matching scheduler names). A custom implementation reports under its own names and needs its own
+  panels.
+- **Latency looks coarse.** Latency panels are quantiles estimated from histogram buckets, so they
+  are only as precise as the `timerBuckets` passed to `PrometheusMetrics`.
+
 ### Your own backend
 
 Implement `Metrics` and install it the same way:
