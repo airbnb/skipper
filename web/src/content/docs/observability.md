@@ -104,6 +104,20 @@ config.setMetrics(cfg -> new PrometheusMetrics(PrometheusRegistry.defaultRegistr
 Histogram bucket boundaries for timers and for value histograms are constructor parameters if the
 defaults (1 ms to 60 s, and powers of four from 1 to about 4 million) do not fit your workload.
 
+### Grafana dashboard
+
+A ready-made Grafana dashboard for these metrics ships next to the plugin:
+[`skipper-dashboard.json`](https://github.com/airbnb/skipper/blob/main/plugins/prometheus/grafana/skipper-dashboard.json).
+It covers workflow and action throughput, errors and latency, the scheduler backlog, dead-letter
+queue and saturation, workflow store latency and errors, timers, compensation, and task
+partitioning, with filters for job, instance and workflow class.
+
+In Grafana, open **Dashboards → New → Import**, upload the file, and pick your Prometheus data
+source from the drop-down at the top of the dashboard. It expects the default `skipper` metric
+prefix and the bundled MySQL or SQLite storage; the
+[plugin README](https://github.com/airbnb/skipper/tree/main/plugins/prometheus#grafana-dashboard)
+has the details.
+
 ### Your own backend
 
 Implement `Metrics` and install it the same way:
