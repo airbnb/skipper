@@ -35,6 +35,14 @@ internal class TracingScheduler(
         partition: BucketRange?,
     ): List<Task<T>> = recordFetch { delegate.fetch(limit, partition) }
 
+    override fun dueQueues(): List<String> = delegate.dueQueues()
+
+    override fun <T> fetch(
+        limit: Int,
+        partition: BucketRange?,
+        queue: String?,
+    ): List<Task<T>> = recordFetch { delegate.fetch(limit, partition, queue) }
+
     /** One line per leased task, so a batch reads as the separate leases the model takes. */
     private fun <T> recordFetch(call: () -> List<Task<T>>): List<Task<T>> =
         recorder.record(

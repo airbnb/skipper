@@ -49,6 +49,11 @@ data class ScheduleRequest<T> internal constructor(
      * so it does not run out of retries before it runs again. Ignored when no lease is honoured.
      */
     val isResetRetryCountWhenHonoringLease: Boolean = false,
+    /**
+     * The fair-share queue of a task created by this request, see [Task.queue]. A request that
+     * overwrites an existing task leaves that task's queue as it is.
+     */
+    val queue: String = Task.DEFAULT_QUEUE,
 ) {
     fun toBuilder(): ScheduleRequestBuilder<T> =
         ScheduleRequestBuilder<T>()
@@ -62,6 +67,7 @@ data class ScheduleRequest<T> internal constructor(
             .honorActiveLeaseWhenOverwriting(isHonorActiveLeaseWhenOverwriting)
             .bumpVersionWhenHonoringLease(isBumpVersionWhenHonoringLease)
             .resetRetryCountWhenHonoringLease(isResetRetryCountWhenHonoringLease)
+            .queue(queue)
 
     class ScheduleRequestBuilder<T> internal constructor() {
         private var type: Task.Type? = null
@@ -74,6 +80,7 @@ data class ScheduleRequest<T> internal constructor(
         private var honorActiveLeaseWhenOverwriting: Boolean = false
         private var bumpVersionWhenHonoringLease: Boolean = false
         private var resetRetryCountWhenHonoringLease: Boolean = false
+        private var queue: String = Task.DEFAULT_QUEUE
 
         /**
          * @return `this`.
@@ -168,6 +175,12 @@ data class ScheduleRequest<T> internal constructor(
             return this
         }
 
+        /** The fair-share queue of the task, see [Task.queue]. */
+        fun queue(queue: String): ScheduleRequestBuilder<T> {
+            this.queue = queue
+            return this
+        }
+
         fun build(): ScheduleRequest<T> =
             ScheduleRequest(
                 type ?: throw NullPointerException("type is marked non-null but is null"),
@@ -181,6 +194,7 @@ data class ScheduleRequest<T> internal constructor(
                 honorActiveLeaseWhenOverwriting,
                 bumpVersionWhenHonoringLease,
                 resetRetryCountWhenHonoringLease,
+                queue,
             )
 
         override fun toString(): String =
@@ -190,7 +204,8 @@ data class ScheduleRequest<T> internal constructor(
                 ", inMemoryExecutionEnabled\$value=$inMemoryExecutionEnabled" +
                 ", honorActiveLeaseWhenOverwriting\$value=$honorActiveLeaseWhenOverwriting" +
                 ", bumpVersionWhenHonoringLease\$value=$bumpVersionWhenHonoringLease" +
-                ", resetRetryCountWhenHonoringLease\$value=$resetRetryCountWhenHonoringLease)"
+                ", resetRetryCountWhenHonoringLease\$value=$resetRetryCountWhenHonoringLease" +
+                ", queue\$value=$queue)"
     }
 
     companion object {

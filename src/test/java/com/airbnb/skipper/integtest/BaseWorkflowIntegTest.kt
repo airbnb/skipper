@@ -1813,6 +1813,9 @@ abstract class BaseWorkflowIntegTest {
             // Wait for the workflow to enter WAITING state first
             helper.waitForWorkflowToReachStatus(WorkflowInstance.Status.WAITING)
 
+            // The workflow's tasks are in the fair-share queue of its class.
+            assertThat(scheduler.getTask<Any>("$workflowId:timeout").get().queue).contains("SampleWorkflow")
+
             // Wait for the execution timeout (5s) to elapse in real wall-clock time
             // Add 1s buffer to ensure the EXECUTION_TIMEOUT task is ready
             helper.waitFor(6000)

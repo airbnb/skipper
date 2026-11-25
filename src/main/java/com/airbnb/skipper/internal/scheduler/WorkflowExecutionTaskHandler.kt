@@ -633,7 +633,7 @@ class WorkflowExecutionTaskHandler
             for (newTimer in updateResult._3) {
                 if (!newTimer.status.isTerminal) {
                     // If a timer was created, we'll schedule it for execution
-                    scheduleTimerTask(newTimer)
+                    scheduleTimerTask(newTimer, Task.queueOf(updateResult._1.workflowClass))
                 }
             }
             if (!updateResult._1.status.isTerminal()) {
@@ -690,7 +690,7 @@ class WorkflowExecutionTaskHandler
                 if (scheduler.getTask<Timer>(timer.getUniqueId()).isEmpty) {
                     log.warn("timer {} is ACTIVE but has no TIMER task; scheduling it again", timer.getUniqueId())
                     // Counted once the task exists: a schedule that throws is retried, not a repair.
-                    scheduleTimerTask(timer)
+                    scheduleTimerTask(timer, Task.queueOf(context.workflow.workflowClass))
                     metrics
                         .counter(
                             ImmutableMap.of("workflowClass", context.workflow.workflowClass.simpleName),
@@ -705,9 +705,12 @@ class WorkflowExecutionTaskHandler
          * Schedules [timer]'s TIMER task, leaving it alone if it already exists under an active lease
          * (no version bump), which the scheduler checks in the same write. Overlapping executions of
          * one workflow can both schedule a timer's task, a new one or a re-armed one, and a worker may
-         * already be running it.
+         * already be running it. The task goes to [queue], the fair-share queue of the timer's workflow.
          */
-        private fun scheduleTimerTask(timer: Timer) {
+        private fun scheduleTimerTask(
+            timer: Timer,
+            queue: String,
+        ) {
             val scheduledTask =
                 scheduler.schedule(
                     ScheduleRequest.builder<Timer>()
@@ -715,6 +718,7 @@ class WorkflowExecutionTaskHandler
                         .dedupToken(timer.getUniqueId())
                         .payload(timer)
                         .type(Task.Type.TIMER)
+                        .queue(queue)
                         .runAfter(timer.expiresAt)
                         .honorActiveLeaseWhenOverwriting(true)
                         .build(),

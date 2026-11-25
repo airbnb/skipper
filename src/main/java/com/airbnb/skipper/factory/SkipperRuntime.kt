@@ -402,6 +402,7 @@ class SkipperRuntime
                 config.gracefulShutdownTimeout,
                 inFlightCancelWatcher.get(),
                 config.schedulerMaxConcurrentTasks,
+                config.schedulerQueueWeights,
             )
         }
     }

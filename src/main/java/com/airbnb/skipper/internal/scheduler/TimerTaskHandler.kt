@@ -67,6 +67,7 @@ class TimerTaskHandler
                             .dedupToken(timer.workflowId)
                             .payload(null)
                             .type(Task.Type.WORKFLOW)
+                            .queue(task.queue)
                             .honorActiveLeaseWhenOverwriting(true)
                             .bumpVersionWhenHonoringLease(
                                 featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE),

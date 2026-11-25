@@ -167,6 +167,7 @@ open class SkipperEngine
                             .dedupToken(workflowInstance.workflowId)
                             .payload(workflowInstance.workflowId)
                             .type(Task.Type.EXECUTION_TIMEOUT)
+                            .queue(Task.queueOf(workflowInstance.workflowClass))
                             .runAfter(executionTimeout)
                             .build()
                     )
@@ -220,6 +221,7 @@ open class SkipperEngine
                 .dedupToken(workflowInstance.workflowId)
                 .payload(workflowInstance)
                 .type(Task.Type.WORKFLOW)
+                .queue(Task.queueOf(workflowInstance.workflowClass))
                 .honorActiveLeaseWhenOverwriting(true)
                 .bumpVersionWhenHonoringLease(
                     featureGate.isEnabled(FeatureGate.Keys.BUMP_TASK_VERSION_ON_HONORED_LEASE)
@@ -539,6 +541,7 @@ open class SkipperEngine
                         .dedupToken(workflowInstance.workflowId)
                         .payload(updatedWorkflowInstance)
                         .type(Task.Type.WORKFLOW)
+                        .queue(Task.queueOf(workflowInstance.workflowClass))
                         .inMemoryExecutionEnabled(inMemoryExecutionEnabled)
                         .honorActiveLeaseWhenOverwriting(true)
                         .bumpVersionWhenHonoringLease(
@@ -744,6 +747,7 @@ open class SkipperEngine
                     .dedupToken(instance.workflowId)
                     .payload(instance)
                     .type(Task.Type.WORKFLOW)
+                    .queue(Task.queueOf(instance.workflowClass))
                     .honorActiveLeaseWhenOverwriting(true)
                     .bumpVersionWhenHonoringLease(false)
                     .resetRetryCountWhenHonoringLease(true)
@@ -798,6 +802,7 @@ open class SkipperEngine
                     .dedupToken(taskId)
                     .payload(workflowInstance.workflowId)
                     .type(Task.Type.COMPENSATION)
+                    .queue(Task.queueOf(workflowInstance.workflowClass))
                     .runAfter(now.instant())
                     .inMemoryExecutionEnabled(false)
                     // A compensation already running keeps its lease, so a second request never

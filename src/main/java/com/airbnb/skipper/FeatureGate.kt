@@ -59,6 +59,14 @@ interface FeatureGate {
         TASK_PARTITIONING("task_partitioning"),
 
         /**
+         * Fetch scheduler tasks one fair-share queue at a time, each workflow class being its own
+         * queue, so that a workflow class with a huge backlog cannot keep the tasks of the others from
+         * being fetched. See [SkipperConfig.schedulerQueueWeights]. Turning it off goes back to one
+         * random sample of everything that is ready.
+         */
+        FAIR_SHARE_FETCH("fair_share_fetch"),
+
+        /**
          * Kill switch for signal persistence. When enabled for an app, signals annotated with
          * `@SignalMethod(persist = true)` are executed without being persisted, reverting to the
          * legacy behavior. Persistence is on by default for opted-in signals.

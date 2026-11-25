@@ -17,6 +17,11 @@ data class Task<TYPE>(
     val executionTimeout: Duration,
     val isShouldRefreshPayload: Boolean,
     val version: Int,
+    /**
+     * The fair-share queue this task belongs to. Tasks of one queue compete with each other for that
+     * queue's share of the scheduler; they cannot take the share of another queue. See [FairShare].
+     */
+    val queue: String = DEFAULT_QUEUE,
 ) {
     enum class Type {
         WORKFLOW,
@@ -63,6 +68,7 @@ data class Task<TYPE>(
             .executionTimeout(executionTimeout)
             .shouldRefreshPayload(isShouldRefreshPayload)
             .version(version)
+            .queue(queue)
 
     class TaskBuilder<TYPE> {
         private var id: String? = null
@@ -77,6 +83,7 @@ data class Task<TYPE>(
         private var executionTimeout: Duration? = null
         private var shouldRefreshPayload: Boolean = true
         private var version: Int = 0
+        private var queue: String = DEFAULT_QUEUE
 
         /**
          * @return `this`.
@@ -174,6 +181,14 @@ data class Task<TYPE>(
             return this
         }
 
+        /**
+         * @return `this`.
+         */
+        fun queue(queue: String): TaskBuilder<TYPE> {
+            this.queue = queue
+            return this
+        }
+
         fun build(): Task<TYPE> =
             Task(
                 id ?: throw NullPointerException("id is marked non-null but is null"),
@@ -193,6 +208,7 @@ data class Task<TYPE>(
                     ),
                 shouldRefreshPayload,
                 version,
+                queue,
             )
 
         override fun toString(): String =
@@ -200,10 +216,24 @@ data class Task<TYPE>(
                 ", retryCount=$retryCount, payload=$payload, dedupToken=$dedupToken, type=$type" +
                 ", status\$value=$status, statusMessage=$statusMessage" +
                 ", executionTimeout=$executionTimeout" +
-                ", shouldRefreshPayload\$value=$shouldRefreshPayload, version\$value=$version)"
+                ", shouldRefreshPayload\$value=$shouldRefreshPayload, version\$value=$version, queue\$value=$queue)"
     }
 
     companion object {
+        /** The queue of tasks that name none, and of every task stored before queues existed. */
+        const val DEFAULT_QUEUE = "default"
+
+        /** The longest queue name the task stores keep. */
+        private const val MAX_QUEUE_NAME_LENGTH = 255
+
+        /**
+         * The queue for the tasks of one workflow class: its runs, timers, timeouts and compensation.
+         * Each workflow class is its own queue, so a flood of one class is confined to that class's
+         * share.
+         */
+        @JvmStatic
+        fun queueOf(workflowClass: Class<*>): String = workflowClass.name.takeLast(MAX_QUEUE_NAME_LENGTH)
+
         @JvmStatic
         fun <TYPE> builder(): TaskBuilder<TYPE> = TaskBuilder()
     }

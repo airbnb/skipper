@@ -15,6 +15,7 @@ import com.airbnb.skipper.internal.cluster.BucketRange
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.common.SneakyThrow
 import com.airbnb.skipper.internal.scheduler.AdmittedRun
+import com.airbnb.skipper.internal.scheduler.FairShareFetcher
 import com.airbnb.skipper.internal.scheduler.LeaseRenewalManager
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
@@ -79,7 +80,11 @@ class SkipperSchedulerManager
          * `scheduler_max_concurrent_tasks` knob overrides it at runtime. See [freeSlots].
          */
         @param:Named(SCHEDULER_MAX_CONCURRENT_TASKS) private val maxConcurrentTasks: Int = NO_LIMIT,
+        /** The weight of each fair-share queue by name, see `SkipperConfig.schedulerQueueWeights`. */
+        queueWeights: kotlin.collections.Map<String, Int> = emptyMap(),
     ) {
+        private val fairShareFetcher = FairShareFetcher(scheduler, queueWeights)
+
         private val stop = AtomicBoolean(false)
 
         /** Futures of the long-running loops started by [start]; cancelled by [stop] to unblock them. */
@@ -232,6 +237,22 @@ class SkipperSchedulerManager
             }
         }
 
+        /**
+         * Fetches up to [slots] tasks, within [partition] when one is given.
+         *
+         * 1. With fair share on, each queue with tasks ready gets its share of [slots].
+         * 2. With it off, the tasks are a random sample of everything that is ready.
+         */
+        private fun fetchBatch(
+            slots: Int,
+            partition: BucketRange?,
+        ): List<Task<Any>> =
+            when {
+                featureGate.isEnabled(FeatureGate.Keys.FAIR_SHARE_FETCH) -> fairShareFetcher.fetch(slots, partition)
+                partition == null -> scheduler.fetch(slots)
+                else -> scheduler.fetch(slots, partition)
+            }
+
         /** The concurrency limit in force: the knob if set, else the configured value. */
         @VisibleForTesting
         fun effectiveMaxConcurrentTasks(): Int = knobs.getInteger(Knobs.Keys.SCHEDULER_MAX_CONCURRENT_TASKS).orElse(maxConcurrentTasks)
@@ -272,13 +293,20 @@ class SkipperSchedulerManager
          * available.
          */
         @VisibleForTesting
-        internal fun fetchTasksWithOptionalPartitioning(fetchSize: Int): List<Task<Any>> {
+        internal fun fetchTasksWithOptionalPartitioning(fetchSize: Int): List<Task<Any>> =
+            fetchWithOptionalPartitioning { partition -> fetchBatch(fetchSize, partition) }
+
+        /**
+         * Runs [fetch] with this member's partition, or with none when partitioning is off, cluster
+         * membership is not usable, or the partitioned fetch fails.
+         */
+        private fun fetchWithOptionalPartitioning(fetch: (BucketRange?) -> List<Task<Any>>): List<Task<Any>> {
             val partitioningEnabled =
                 featureGate.isEnabled(FeatureGate.Keys.TASK_PARTITIONING) &&
                     clusterMembershipManager.isRegistered
             if (!partitioningEnabled) {
                 // Fall back to regular fetch if partitioning is disabled
-                return scheduler.fetch(fetchSize)
+                return fetch(null)
             }
             try {
                 val currentMember = clusterMembershipManager.currentMemberId
@@ -286,14 +314,14 @@ class SkipperSchedulerManager
                     clusterMembershipManager.activeMemberIds
                 if (activeMembers.isEmpty) {
                     log.debug("No active members found, falling back to regular fetch")
-                    return scheduler.fetch(fetchSize)
+                    return fetch(null)
                 }
                 if (!activeMembers.contains(currentMember)) {
                     // Our own heartbeat has not landed (or has aged out while others' succeed): we cannot
                     // compute a partition, so fetch from the whole queue like the empty-list case rather
                     // than surface it as an error on every fetch.
                     log.debug("Current member {} not in active members, falling back to regular fetch", currentMember)
-                    return scheduler.fetch(fetchSize)
+                    return fetch(null)
                 }
                 // Calculate this member's bucket partition
                 val partition = partitioner.getBucketRangeForMember(currentMember, activeMembers)
@@ -303,7 +331,7 @@ class SkipperSchedulerManager
                     partition,
                     activeMembers.size(),
                 )
-                val tasks = scheduler.fetch<Any>(fetchSize, partition)
+                val tasks = fetch(partition)
                 metrics
                     .counter(ImmutableMap.of("partitioned", "true"), METRICS_COMPONENT, "fetchedTasks")
                     .inc()
@@ -317,7 +345,7 @@ class SkipperSchedulerManager
                         "fetchErrors",
                     )
                     .inc()
-                return scheduler.fetch(fetchSize)
+                return fetch(null)
             }
         }
 
