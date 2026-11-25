@@ -15,6 +15,7 @@ import com.airbnb.skipper.internal.cluster.BucketRange
 import com.airbnb.skipper.internal.cluster.ClusterMembershipManager
 import com.airbnb.skipper.internal.common.SneakyThrow
 import com.airbnb.skipper.internal.scheduler.AdmittedRun
+import com.airbnb.skipper.internal.scheduler.FairShareFetcher
 import com.airbnb.skipper.internal.scheduler.LeaseRenewalManager
 import com.airbnb.skipper.internal.scheduler.ScheduleRequest
 import com.airbnb.skipper.internal.scheduler.Scheduler
@@ -79,7 +80,11 @@ class SkipperSchedulerManager
          * `scheduler_max_concurrent_tasks` knob overrides it at runtime. See [freeSlots].
          */
         @param:Named(SCHEDULER_MAX_CONCURRENT_TASKS) private val maxConcurrentTasks: Int = NO_LIMIT,
+        /** The weight of each fair-share queue by name, see `SkipperConfig.schedulerQueueWeights`. */
+        queueWeights: kotlin.collections.Map<String, Int> = emptyMap(),
     ) {
+        private val fairShareFetcher = FairShareFetcher(scheduler, queueWeights)
+
         private val stop = AtomicBoolean(false)
 
         /** Futures of the long-running loops started by [start]; cancelled by [stop] to unblock them. */
@@ -121,7 +126,7 @@ class SkipperSchedulerManager
                     val task: Task<Any> = schedulerQueue.take(type)
                     // From here the task holds a slot, and the run gives it back when it is done.
                     val run =
-                        AdmittedRun(schedulerQueue) { holdSlotUntil ->
+                        AdmittedRun(schedulerQueue, task.queue) { holdSlotUntil ->
                             try {
                                 handleTask(task, holdSlotUntil)
                             } finally {
@@ -180,27 +185,23 @@ class SkipperSchedulerManager
                     try {
                         val free = freeSlots()
                         if (free <= 0) {
-                            // Full: fetching now would lease tasks this process cannot start. Check
-                            // again shortly. Polling rather than waking on every finished task lets
-                            // several slots free up, so they are fetched as one batch.
-                            metrics.counter(METRICS_COMPONENT, "fetchSkippedAtCapacity").inc()
-                            Thread.sleep(CAPACITY_POLL_INTERVAL.toMillis())
+                            // Full: fetching now would lease tasks this process cannot start, except
+                            // for the queues that are owed their reserved share. If there are none,
+                            // check again shortly. Polling rather than waking on every finished task
+                            // lets several slots free up, so they are fetched as one batch.
+                            val reserved = fetchReservedShares(-free)
+                            deliver(reserved)
+                            if (reserved.isEmpty) {
+                                metrics.counter(METRICS_COMPONENT, "fetchSkippedAtCapacity").inc()
+                                Thread.sleep(CAPACITY_POLL_INTERVAL.toMillis())
+                            }
                             continue
                         }
                         val requested = Math.min(getMaxTasks(), free)
                         val tasks = fetchTasksWithOptionalPartitioning(requested)
                         log.debug("fetched {} tasks from scheduler", tasks.size())
                         metrics.counter(METRICS_COMPONENT, "fetchedTasks").inc()
-                        tasks.forEach { task ->
-                            log.debug("delivering task={}", task)
-                            if (!schedulerQueue.add(task)) {
-                                log.info(
-                                    "attempted to add task to the queue but the task was already" +
-                                        " present. task={}",
-                                    task,
-                                )
-                            }
-                        }
+                        deliver(tasks)
                         if (tasks.size() < Math.min(free, DEFAULT_MAX_FETCH_SIZE)) {
                             // Few tasks came back, so little is ready: wait a second before asking
                             // again rather than slam the db.
@@ -231,6 +232,67 @@ class SkipperSchedulerManager
                 throw SneakyThrow.sneakyThrow(ex)
             }
         }
+
+        /** Hands fetched tasks to the in-memory queue, which admits them and has them run. */
+        private fun deliver(tasks: List<Task<Any>>) {
+            tasks.forEach { task ->
+                log.debug("delivering task={}", task)
+                if (!schedulerQueue.add(task)) {
+                    log.info(
+                        "attempted to add task to the queue but the task was already present. task={}",
+                        task,
+                    )
+                }
+            }
+        }
+
+        /**
+         * Fetches for the fair-share queues that are owed slots while the process is [over] its limit.
+         *
+         * The process only goes over its limit through tasks scheduled for in-memory execution, which
+         * are always admitted. Without this, one workflow class that keeps the process over the limit
+         * that way would stop fetching for every other class for as long as it kept going.
+         *
+         * 1. Exactly at the limit, nothing is fetched: fetched tasks alone never take the process
+         *    past it, and the next slot to free up is shared out by the normal fetch.
+         * 2. Over the limit, queues running fewer tasks than their reserved share fetch up to what
+         *    they are missing, and at most [over] in one round. See [FairShare.splitReserved].
+         */
+        private fun fetchReservedShares(over: Int): List<Task<Any>> {
+            if (over <= 0 || !featureGate.isEnabled(FeatureGate.Keys.FAIR_SHARE_FETCH)) {
+                return List.empty()
+            }
+            val tasks =
+                fetchWithOptionalPartitioning { partition ->
+                    fairShareFetcher.fetchReserved(
+                        getMaxTasks(),
+                        over,
+                        effectiveMaxConcurrentTasks(),
+                        schedulerQueue.admittedByQueue,
+                        partition,
+                    )
+                }
+            if (!tasks.isEmpty) {
+                metrics.counter(METRICS_COMPONENT, "fetchedReservedShareTasks").inc(tasks.size().toLong())
+            }
+            return tasks
+        }
+
+        /**
+         * Fetches up to [slots] tasks, within [partition] when one is given.
+         *
+         * 1. With fair share on, each queue with tasks ready gets its share of [slots].
+         * 2. With it off, the tasks are a random sample of everything that is ready.
+         */
+        private fun fetchBatch(
+            slots: Int,
+            partition: BucketRange?,
+        ): List<Task<Any>> =
+            when {
+                featureGate.isEnabled(FeatureGate.Keys.FAIR_SHARE_FETCH) -> fairShareFetcher.fetch(slots, partition)
+                partition == null -> scheduler.fetch(slots)
+                else -> scheduler.fetch(slots, partition)
+            }
 
         /** The concurrency limit in force: the knob if set, else the configured value. */
         @VisibleForTesting
@@ -272,13 +334,20 @@ class SkipperSchedulerManager
          * available.
          */
         @VisibleForTesting
-        internal fun fetchTasksWithOptionalPartitioning(fetchSize: Int): List<Task<Any>> {
+        internal fun fetchTasksWithOptionalPartitioning(fetchSize: Int): List<Task<Any>> =
+            fetchWithOptionalPartitioning { partition -> fetchBatch(fetchSize, partition) }
+
+        /**
+         * Runs [fetch] with this member's partition, or with none when partitioning is off, cluster
+         * membership is not usable, or the partitioned fetch fails.
+         */
+        private fun fetchWithOptionalPartitioning(fetch: (BucketRange?) -> List<Task<Any>>): List<Task<Any>> {
             val partitioningEnabled =
                 featureGate.isEnabled(FeatureGate.Keys.TASK_PARTITIONING) &&
                     clusterMembershipManager.isRegistered
             if (!partitioningEnabled) {
                 // Fall back to regular fetch if partitioning is disabled
-                return scheduler.fetch(fetchSize)
+                return fetch(null)
             }
             try {
                 val currentMember = clusterMembershipManager.currentMemberId
@@ -286,14 +355,14 @@ class SkipperSchedulerManager
                     clusterMembershipManager.activeMemberIds
                 if (activeMembers.isEmpty) {
                     log.debug("No active members found, falling back to regular fetch")
-                    return scheduler.fetch(fetchSize)
+                    return fetch(null)
                 }
                 if (!activeMembers.contains(currentMember)) {
                     // Our own heartbeat has not landed (or has aged out while others' succeed): we cannot
                     // compute a partition, so fetch from the whole queue like the empty-list case rather
                     // than surface it as an error on every fetch.
                     log.debug("Current member {} not in active members, falling back to regular fetch", currentMember)
-                    return scheduler.fetch(fetchSize)
+                    return fetch(null)
                 }
                 // Calculate this member's bucket partition
                 val partition = partitioner.getBucketRangeForMember(currentMember, activeMembers)
@@ -303,7 +372,7 @@ class SkipperSchedulerManager
                     partition,
                     activeMembers.size(),
                 )
-                val tasks = scheduler.fetch<Any>(fetchSize, partition)
+                val tasks = fetch(partition)
                 metrics
                     .counter(ImmutableMap.of("partitioned", "true"), METRICS_COMPONENT, "fetchedTasks")
                     .inc()
@@ -317,7 +386,7 @@ class SkipperSchedulerManager
                         "fetchErrors",
                     )
                     .inc()
-                return scheduler.fetch(fetchSize)
+                return fetch(null)
             }
         }
 

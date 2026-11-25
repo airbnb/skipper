@@ -98,6 +98,23 @@ class SkipperConfig(
      * runtime.
      */
     var schedulerMaxConcurrentTasks: Int = 0,
+    /**
+     * How large a share of the scheduler each workflow class gets while several have tasks ready,
+     * keyed by the fully qualified name of the workflow class. A class not listed has weight 1, so
+     * by default all classes share equally. A class of weight 10 gets about ten times the tasks of
+     * a class of weight 1 on every fetch.
+     *
+     * The weight is a share, not an order: every class with a task ready gets at least one task per
+     * fetch whatever its weight, so a low weight slows a class down and never stops it. When there
+     * are more such classes than tasks in a fetch, the fetch picks among them at random, by weight.
+     * A class with nothing ready takes no share, and what it leaves goes to the others.
+     *
+     * With [schedulerMaxConcurrentTasks] set, each class also has that limit divided by weight
+     * reserved for it. If workflows started in this process push it past the limit, classes running
+     * fewer tasks than their reserved part are still fetched, so the process can then run up to
+     * about twice the limit.
+     */
+    var schedulerQueueWeights: Map<String, Int> = emptyMap(),
     /** The maximum number of times a task can be retried before it is considered failed. */
     var schedulerTaskMaxRetries: Int = 100,
     /** The time to wait before retrying a task that failed unexpectedly. */

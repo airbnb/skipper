@@ -13,6 +13,8 @@ CREATE TABLE `${tablePrefix}scheduler_tasks` (
   `created_at` datetime(3) NOT NULL,
   `updated_at` datetime(3) NOT NULL,
   `version` int NOT NULL DEFAULT '0',
+  `queue_name` varchar(255) NOT NULL DEFAULT 'default',
   PRIMARY KEY (`owner`, `task_id`),
-  INDEX `${tablePrefix}scheduler_task_index_by_owner_and_status` (`owner`, `status`, `run_after`)
+  INDEX `${tablePrefix}scheduler_task_index_by_owner_and_status` (`owner`, `status`, `run_after`),
+  INDEX `${tablePrefix}scheduler_task_index_by_owner_and_queue` (`owner`, `queue_name`, `status`, `run_after`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

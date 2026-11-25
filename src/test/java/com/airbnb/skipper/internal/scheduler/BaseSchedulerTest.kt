@@ -34,6 +34,56 @@ abstract class BaseSchedulerTest {
     protected abstract fun scheduler(): Scheduler
 
     @Test
+    fun testQueueIsStoredAndKeptWhenTheTaskIsOverwritten() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH.plusSeconds(10))
+        val request = ScheduleRequest.builder<String>().id("queued").payload("p").type(Task.Type.WORKFLOW).dedupToken("queued")
+        assertEquals("orders", scheduler().schedule(request.queue("orders").build()).queue)
+        assertEquals("orders", scheduler().getTask<String>("queued").get().queue)
+
+        // A request that names another queue (or none) overwrites the task but not its queue.
+        assertEquals("orders", scheduler().schedule(request.queue("other").build()).queue)
+        assertEquals("orders", scheduler().getTask<String>("queued").get().queue)
+        assertEquals("orders", scheduler().fetch<String>(10).single().queue)
+    }
+
+    @Test
+    fun testTasksAreInTheDefaultQueueUnlessTheRequestNamesOne() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH.plusSeconds(10))
+        val task = scheduler().schedule(
+            ScheduleRequest.builder<String>().id("plain").payload("p").type(Task.Type.WORKFLOW).dedupToken("plain").build()
+        )
+        assertEquals(Task.DEFAULT_QUEUE, task.queue)
+        assertEquals(List.of(Task.DEFAULT_QUEUE), scheduler().dueQueues())
+    }
+
+    @Test
+    fun testFetchOfOneQueueLeavesTheOtherQueuesAlone() {
+        whenever(mockClock.instant()).thenReturn(Instant.EPOCH.plusSeconds(10))
+        for (queue in listOf("a", "b")) {
+            for (i in 1..3) {
+                val id = "$queue-$i"
+                scheduler().schedule(
+                    ScheduleRequest.builder<String>().id(id).payload("p").type(Task.Type.WORKFLOW).dedupToken(id).queue(queue).build()
+                )
+            }
+        }
+        assertEquals(setOf("a", "b"), scheduler().dueQueues().toJavaSet())
+
+        val fromA = scheduler().fetch<String>(2, null, "a")
+        assertEquals(2, fromA.size())
+        assertTrue(fromA.forAll { it.queue == "a" && it.status == Task.Status.RUNNING })
+
+        val everyBucket = BucketRange(0, BucketPartitioner.TOTAL_BUCKETS)
+        val fromB = scheduler().fetch<String>(10, everyBucket, "b")
+        assertEquals(3, fromB.size())
+        assertTrue(fromB.forAll { it.queue == "b" })
+
+        // One task of "a" is left, and it is the only queue still due.
+        assertEquals(List.of("a"), scheduler().dueQueues())
+        assertEquals(1, scheduler().fetch<String>(10, null, "a").size())
+    }
+
+    @Test
     fun test() {
         val t1 = Instant.EPOCH
         val t2 = Instant.EPOCH.plusSeconds(1)

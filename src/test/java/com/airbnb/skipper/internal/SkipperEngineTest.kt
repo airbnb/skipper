@@ -617,6 +617,7 @@ class SkipperEngineTest {
                             updatedWorkflowInstance.toBuilder().requestContext(REQUEST_CONTEXT).build(),
                         )
                         .type(Task.Type.WORKFLOW)
+                        .queue(Task.queueOf(updatedWorkflowInstance.workflowClass))
                         .honorActiveLeaseWhenOverwriting(true)
                         .bumpVersionWhenHonoringLease(gateValue)
                         .inMemoryExecutionEnabled(!gateValue)
@@ -676,6 +677,7 @@ class SkipperEngineTest {
                     .dedupToken("test-workflow-id")
                     .payload(updatedWorkflowInstance)
                     .type(Task.Type.WORKFLOW)
+                    .queue(Task.queueOf(updatedWorkflowInstance.workflowClass))
                     .honorActiveLeaseWhenOverwriting(true)
                     .inMemoryExecutionEnabled(true)
                     .build(),

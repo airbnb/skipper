@@ -140,7 +140,9 @@ fetch size still waits a second after every fetch, as it does with no limit. A b
 per second. The `scheduler_max_concurrent_tasks` knob changes the limit at runtime.
 
 Workflows started in the process run in memory without waiting for a slot, because the caller may
-be waiting on the result. They count against the limit, so a burst of them pauses fetching.
+be waiting on the result. They count against the limit, so a burst of them pauses fetching, except for workflow classes
+that are below their reserved part of the limit (see
+[Fair share between workflow classes](#fair-share-between-workflow-classes)).
 
 A task keeps its slot until its handler finishes, even after the scheduler stops waiting for it at
 `schedulerTaskExecutionTimeout`. So when a slow dependency makes runs time out, the instance stops
@@ -153,6 +155,55 @@ the instance is idle is the sign of one.
 | `schedulerManager.admittedTasks` | Gauge of the tasks this instance has taken on and not finished. |
 | `schedulerManager.maxConcurrentTasks` | Gauge of the limit in force; 0 means none. |
 | `schedulerManager.fetchSkippedAtCapacity` | Counts the fetch loop's checks while the instance is full. The loop checks every 100 ms, so its rate is about 10 per second times the share of time the instance spends full: a measure of time at capacity, not of skipped work. |
+
+## Fair share between workflow classes
+
+Every workflow class is its own queue in the scheduler: its runs, timers, timeouts and
+compensations. On each fetch the scheduler looks at which queues have tasks ready and gives each
+of them a share of the fetch, instead of taking a random sample of everything that is ready. A
+workflow class that suddenly has a million tasks ready therefore cannot keep the tasks of the
+other classes from being fetched: it only competes with itself.
+
+By default all classes share equally. Give a class a larger share with a weight, keyed by its
+fully qualified class name; a class you do not list has weight 1:
+
+```kotlin
+config.schedulerQueueWeights = mapOf(
+    "com.example.CheckoutWorkflow" to 10,
+    "com.example.ReportBackfillWorkflow" to 1,
+)
+```
+
+A weight is a share, not an order, so a low weight slows a class down and never stops it:
+
+1. Every class with a task ready gets one task of each fetch first, whatever its weight. Only
+   the rest of the fetch is split by weight. With the default fetch size of 5 and the two classes
+   above both flooded, checkout gets 4 tasks of every fetch and the backfill gets 1.
+2. When more classes have tasks ready than there are tasks in a fetch, each fetch picks among
+   them at random, by weight. Every class has a chance on every fetch, so each is served over a
+   few fetches. Raise `scheduler_fetch_count` if you have many workflow classes.
+3. A class with nothing ready takes no share, and a class with fewer tasks ready than its share
+   leaves the difference to the others, so no part of a fetch goes unused while there is work.
+
+With `schedulerMaxConcurrentTasks` set, each class also has a part of that limit reserved for it,
+divided by weight among the classes that have tasks ready or running, and never less than one
+task. It matters when workflows started in memory push an instance past its limit. Fetching then
+continues for the classes that run fewer tasks than their reserved part, so a class that keeps
+the instance over the limit cannot lock the others out. In that state an instance can run up to
+about twice the limit. Exactly at the limit nothing is fetched, as before, and the next slot to
+free up is shared out by the normal fetch.
+
+Tasks written before the upgrade are all in one queue named `default`, which shares with the
+workflow classes like any other queue until those tasks have run. Fair share needs the
+`V8__add_scheduler_task_queue` MySQL migration (see [Storage](/docs/storage/)); apply it before
+deploying the version that has it. Instances still on the previous version keep working against
+the migrated table, and their tasks go to the `default` queue. The `fair_share_fetch` feature key
+turns it off and goes back to the random sample.
+
+| Metric | Meaning |
+|---|---|
+| `schedulerManager.fetchedReservedShareTasks` | Counts tasks fetched for a class's reserved part while the instance was over its limit. |
+| `mysqlScheduler.dueQueuesTime` / `sqliteScheduler.dueQueuesTime` | Time taken to list the queues with tasks ready, once per fetch. |
 
 ## Operational notes
 

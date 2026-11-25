@@ -66,6 +66,33 @@ public interface Scheduler {
   }
 
   /**
+   * The names of the fair-share queues that have at least one task ready to be delivered, across
+   * all partitions. See {@link Task#getQueue()}.
+   *
+   * <p>A scheduler that does not keep tasks apart by queue returns an empty list, and is then
+   * fetched from with {@link #fetch(int)} and {@link #fetch(int, BucketRange)} only.
+   *
+   * @return The queues with a task ready to be delivered, in no particular order.
+   */
+  default List<String> dueQueues() {
+    return List.empty();
+  }
+
+  /**
+   * Fetches elements of one fair-share queue that are ready to be delivered. It is identical to
+   * {@link #fetch(int, BucketRange)} but only returns tasks of the given queue.
+   *
+   * @param limit The maximum number of tasks to fetch
+   * @param partition The bucket range to filter tasks by (null means no filtering)
+   * @param queue The queue to fetch from, one of {@link #dueQueues()}
+   * @return A list of tasks of the queue ready to be processed within the partition
+   * @param <T> The type of payload.
+   */
+  default <T> List<Task<T>> fetch(int limit, BucketRange partition, String queue) {
+    return List.empty();
+  }
+
+  /**
    * Remove all tasks based on their IDs.
    *
    * <p>In case these tasks have any task depending on them, those tasks will be up for processing

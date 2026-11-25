@@ -166,8 +166,8 @@ class SqliteScheduler
                 val insertSql =
                     "INSERT INTO $schedulerTasksTable (task_id, owner, run_after, payload, type," +
                         " dedup_token, execution_timeout_secs, status, retry_count," +
-                        " should_refresh_payload, version,created_at, updated_at) VALUES (?, ?, ?, ?," +
-                        " ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                        " should_refresh_payload, version,created_at, updated_at, queue_name) VALUES (?, ?, ?, ?," +
+                        " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 val now = clock.instant().truncatedTo(ChronoUnit.MILLIS)
                 val runAfter =
                     (request.runAfter ?: Instant.EPOCH).truncatedTo(ChronoUnit.MILLIS)
@@ -188,6 +188,7 @@ class SqliteScheduler
                             ps.setInt(++i, 1) // version
                             ps.setTimestamp(++i, Timestamp.from(now)) // created_at
                             ps.setTimestamp(++i, Timestamp.from(now)) // updated_at
+                            ps.setString(++i, request.queue)
                             val rowsInserted = ps.executeUpdate()
                             if (rowsInserted != 1) {
                                 throw InternalError("failed to insert new task with id: " + request.id)
@@ -204,6 +205,7 @@ class SqliteScheduler
                                 .executionTimeout(Duration.ofSeconds(request.executionTimeout.seconds))
                                 .shouldRefreshPayload(true)
                                 .version(1)
+                                .queue(request.queue)
                                 .build()
                         }
                     }
@@ -216,17 +218,55 @@ class SqliteScheduler
             }
         }
 
-        override fun <T> fetch(limit: Int): List<Task<T>> = transactionManager.retryOnTransientLockContention { fetchOnce(limit) }
+        override fun <T> fetch(limit: Int): List<Task<T>> = fetch(limit, null, null)
 
         override fun <T> fetch(
             limit: Int,
             partition: BucketRange?
+        ): List<Task<T>> = fetch(limit, partition, null)
+
+        override fun <T> fetch(
+            limit: Int,
+            partition: BucketRange?,
+            queue: String?,
         ): List<Task<T>> {
             if (partition == null) {
-                return fetch(limit)
+                return transactionManager.retryOnTransientLockContention { fetchOnce(limit, queue) }
             }
-            return transactionManager.retryOnTransientLockContention { fetchPartitionedOnce(limit, partition) }
+            return transactionManager.retryOnTransientLockContention { fetchPartitionedOnce(limit, partition, queue) }
         }
+
+        override fun dueQueues(): List<String> =
+            transactionManager.retryOnTransientLockContention {
+                val sql =
+                    "SELECT DISTINCT queue_name FROM $schedulerTasksTable " +
+                        "WHERE owner = ? AND status IN (?, ?) AND run_after <= ?"
+                try {
+                    transactionManager.getConnection().use { conn ->
+                        conn.autoCommit = true
+                        conn.prepareStatement(sql).use { ps ->
+                            metrics.timer(METRICS_COMPONENT, "dueQueuesTime").time().use { _ ->
+                                ps.setString(1, owner)
+                                ps.setString(2, Task.Status.PENDING.name)
+                                ps.setString(3, Task.Status.RUNNING.name)
+                                ps.setTimestamp(4, Timestamp.from(clock.instant()))
+                                val queues = java.util.ArrayList<String>()
+                                ps.executeQuery().use { rs ->
+                                    while (rs.next()) {
+                                        queues.add(rs.getString(1))
+                                    }
+                                }
+                                List.ofAll(queues)
+                            }
+                        }
+                    }
+                } catch (e: SQLException) {
+                    throw InternalError("Failed to list the queues with due tasks", e)
+                }
+            }
+
+        /** The SQL condition that keeps a fetch to one [queue], or nothing when no queue is given. */
+        private fun queueFilter(queue: String?): String = if (queue == null) "" else "AND queue_name = ? "
 
         /**
          * One attempt at [fetch]. Several Skipper instances sharing one SQLite database contend for
@@ -236,11 +276,15 @@ class SqliteScheduler
          * `UPDATE` (treating it like a lost optimistic race, so the task is left for the next fetch)
          * precisely so that a retry never discards leases already taken by this attempt.
          */
-        private fun <T> fetchOnce(limit: Int): List<Task<T>> {
+        private fun <T> fetchOnce(
+            limit: Int,
+            queue: String?,
+        ): List<Task<T>> {
             try {
                 val querySql =
                     "SELECT * FROM $schedulerTasksTable " +
                         "WHERE owner = ? AND status IN (?, ?) AND run_after <= ? " +
+                        queueFilter(queue) +
                         "ORDER BY RANDOM() LIMIT ?"
                 val updateSql =
                     "UPDATE $schedulerTasksTable SET status = ?, version = ?, run_after = ?, " +
@@ -260,6 +304,9 @@ class SqliteScheduler
                                 ps.setString(++i, Task.Status.PENDING.name)
                                 ps.setString(++i, Task.Status.RUNNING.name)
                                 ps.setTimestamp(++i, Timestamp.from(clock.instant()))
+                                if (queue != null) {
+                                    ps.setString(++i, queue)
+                                }
                                 ps.setInt(++i, limit)
                                 ps.executeQuery().use { rs ->
                                     while (rs.next()) {
@@ -285,7 +332,8 @@ class SqliteScheduler
         /** One attempt at the partitioned [fetch]; see [fetchOnce] for why it is retried. */
         private fun <T> fetchPartitionedOnce(
             limit: Int,
-            partition: BucketRange
+            partition: BucketRange,
+            queue: String?,
         ): List<Task<T>> {
             try {
                 // Java-side bucket filtering: run the base query WITHOUT the MySQL-only CRC32 predicate,
@@ -300,6 +348,7 @@ class SqliteScheduler
                 val querySql =
                     "SELECT * FROM $schedulerTasksTable " +
                         "WHERE owner = ? AND status IN (?, ?) AND run_after <= ? " +
+                        queueFilter(queue) +
                         "ORDER BY RANDOM() LIMIT ?"
                 val updateSql =
                     "UPDATE $schedulerTasksTable SET status = ?, version = ?, run_after = ?, " +
@@ -318,6 +367,9 @@ class SqliteScheduler
                                 ps.setString(++i, Task.Status.PENDING.name)
                                 ps.setString(++i, Task.Status.RUNNING.name)
                                 ps.setTimestamp(++i, Timestamp.from(clock.instant()))
+                                if (queue != null) {
+                                    ps.setString(++i, queue)
+                                }
                                 ps.setInt(++i, candidatePageSize)
                                 ps.executeQuery().use { rs ->
                                     while (rs.next() && candidates.size < limit) {
@@ -626,6 +678,7 @@ class SqliteScheduler
                     .executionTimeout(Duration.ofSeconds(rs.getInt("execution_timeout_secs").toLong()))
                     .shouldRefreshPayload(rs.getBoolean("should_refresh_payload"))
                     .version(rs.getInt("version"))
+                    .queue(rs.getString("queue_name"))
                     .build()
             } catch (
                 @Suppress("TooGenericExceptionCaught") `$ex`: Throwable
