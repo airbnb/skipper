@@ -184,229 +184,222 @@ open class ActionExecutor
                 )
             val span = executionMetricsCollector.createActionSpan(request)
             var interruptedByCancel = false
+            // Stopped when a synchronous action returns or throws, and when the future of an asynchronous
+            // one completes, so the time covers the action's work in both cases.
+            val timing = timer.time()
+            // What an asynchronous action failed with, before it is mapped to a Skipper error.
+            var asyncCause: Throwable? = null
             try {
-                timer.time().use { _ ->
-                    tracer.activateSpan(span).use { _ ->
-                        // Invoke the actual action implementation, this will call the client's action
-                        // code.
-                        // For Kotlin suspend functions, use SuspendSupport.invokeSuspendFunctionAsync
-                        // which
-                        // returns a CompletableFuture without blocking. The future naturally falls
-                        // through to
-                        // the existing CompletableFuture handling path below (line ~189) which creates
-                        // the
-                        // checkpoint, maps errors, increments iterations, and finishes the span in
-                        // whenComplete.
-                        // The args array has already had the Continuation stripped by the
-                        // Workflow.actions()
-                        // proxy handler, so we pass user args directly here.
-                        request.proxyMethod.isAccessible = true
-                        val result: Any?
-                        if (SuspendSupport.isSuspendFunction(request.proxyMethod)) {
-                            // Capture context for WITHIN-ACTION suspension: if the action's own suspend
-                            // function suspends internally (e.g., calls .await() on a downstream
-                            // service),
-                            // the Continuation.resumeWith in SuspendSupport restores context on the
-                            // completing thread. This is separate from the BETWEEN-ACTION propagation in
-                            // Workflow.actions() proxy handler, which restores context when the workflow
-                            // coroutine resumes after an action completes.
-                            var snapshot: ContextSnapshot
+                tracer.activateSpan(span).use { _ ->
+                    // Invoke the actual action implementation, this will call the client's action
+                    // code.
+                    // For Kotlin suspend functions, use SuspendSupport.invokeSuspendFunctionAsync
+                    // which
+                    // returns a CompletableFuture without blocking. The future naturally falls
+                    // through to
+                    // the existing CompletableFuture handling path below (line ~189) which creates
+                    // the
+                    // checkpoint, maps errors, increments iterations, and finishes the span in
+                    // whenComplete.
+                    // The args array has already had the Continuation stripped by the
+                    // Workflow.actions()
+                    // proxy handler, so we pass user args directly here.
+                    request.proxyMethod.isAccessible = true
+                    val result: Any?
+                    if (SuspendSupport.isSuspendFunction(request.proxyMethod)) {
+                        // Capture context for WITHIN-ACTION suspension: if the action's own suspend
+                        // function suspends internally (e.g., calls .await() on a downstream
+                        // service),
+                        // the Continuation.resumeWith in SuspendSupport restores context on the
+                        // completing thread. This is separate from the BETWEEN-ACTION propagation in
+                        // Workflow.actions() proxy handler, which restores context when the workflow
+                        // coroutine resumes after an action completes.
+                        var snapshot: ContextSnapshot
+                        try {
+                            snapshot = contextPropagator.capture()
+                        } catch (e: Throwable) {
+                            log.warn(
+                                "ContextPropagator.capture() failed, context propagation disabled for this action",
+                                e,
+                            )
+                            snapshot = ContextSnapshot.NOOP
+                        }
+                        val userArgs: Array<out Any?> =
+                            if (request.arg != null) request.arg else arrayOfNulls<Any?>(0)
+                        result =
+                            SuspendSupport.invokeSuspendFunctionAsync(
+                                request.proxyMethod,
+                                request.actionObject,
+                                snapshot,
+                                *userArgs,
+                            )
+                    } else {
+                        // Lets a cancel interrupt this thread while the action runs. Not for a
+                        // compensation: it runs while the workflow is CANCELLED and must finish.
+                        val registration =
+                            if (!request.isCompensatingAction &&
+                                featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT) == true
+                            ) {
+                                inFlightActions.enter(request.executionContext.workflow.workflowId)
+                            } else {
+                                null
+                            }
+                        result =
                             try {
-                                snapshot = contextPropagator.capture()
-                            } catch (e: Throwable) {
-                                log.warn(
-                                    "ContextPropagator.capture() failed, context propagation disabled for this action",
-                                    e,
-                                )
-                                snapshot = ContextSnapshot.NOOP
-                            }
-                            val userArgs: Array<out Any?> =
-                                if (request.arg != null) request.arg else arrayOfNulls<Any?>(0)
-                            result =
-                                SuspendSupport.invokeSuspendFunctionAsync(
-                                    request.proxyMethod,
-                                    request.actionObject,
-                                    snapshot,
-                                    *userArgs,
-                                )
-                        } else {
-                            // Lets a cancel interrupt this thread while the action runs. Not for a
-                            // compensation: it runs while the workflow is CANCELLED and must finish.
-                            val registration =
-                                if (!request.isCompensatingAction &&
-                                    featureGate?.isEnabled(FeatureGate.Keys.INFLIGHT_CANCELLATION_INTERRUPT) == true
-                                ) {
-                                    inFlightActions.enter(request.executionContext.workflow.workflowId)
+                                if (request.arg != null) {
+                                    request.proxyMethod.invoke(request.actionObject, *request.arg)
                                 } else {
-                                    null
+                                    request.proxyMethod.invoke(request.actionObject)
                                 }
-                            result =
-                                try {
-                                    if (request.arg != null) {
-                                        request.proxyMethod.invoke(request.actionObject, *request.arg)
-                                    } else {
-                                        request.proxyMethod.invoke(request.actionObject)
-                                    }
-                                } finally {
-                                    interruptedByCancel = registration != null && inFlightActions.exit(registration)
+                            } finally {
+                                interruptedByCancel = registration != null && inFlightActions.exit(registration)
+                            }
+                        if (interruptedByCancel) {
+                            // The cancel's interrupt arrived, but the action completed anyway.
+                            metrics
+                                .counter(
+                                    ImmutableMap.of(ACTION_CLASS_TAG, request.baseActionClass.simpleName),
+                                    METRIC_COMPONENT_NAME,
+                                    "inflightCancellationIgnored",
+                                )
+                                .inc()
+                            log.warn(
+                                "action {}#{} of cancelled workflow {} completed despite the interrupt",
+                                request.baseActionClass.simpleName,
+                                request.actionMethodName,
+                                request.executionContext.workflow.workflowId,
+                            )
+                        }
+                    }
+                    // TODO: a cancel cannot interrupt the work behind a returned future, because the
+                    //  action leaves InFlightActions when its method returns. Cancel the future instead.
+                    if (result is CompletableFuture<*>) {
+                        shouldIncrementIteration = false
+                        shouldAddCheckpoint = false
+                        isAsyncResult = true
+                        // If the result is a CompletableFuture, we'll create the checkpoint once the
+                        // CompletableFuture
+                        // completes.
+                        return result
+                            .exceptionally { e ->
+                                var err = e
+                                if (err is CompletionException) {
+                                    err = err.cause
                                 }
-                            if (interruptedByCancel) {
-                                // The cancel's interrupt arrived, but the action completed anyway.
-                                metrics
-                                    .counter(
-                                        ImmutableMap.of(ACTION_CLASS_TAG, request.baseActionClass.simpleName),
-                                        METRIC_COMPONENT_NAME,
-                                        "inflightCancellationIgnored",
-                                    )
-                                    .inc()
-                                log.warn(
-                                    "action {}#{} of cancelled workflow {} completed despite the interrupt",
-                                    request.baseActionClass.simpleName,
-                                    request.actionMethodName,
-                                    request.executionContext.workflow.workflowId,
+                                asyncCause = errorMapper.unwrapError(err)
+                                throw errorMapper.convertToSkipperError(
+                                    err,
+                                    request,
+                                    request.exceptionClassifier,
                                 )
                             }
-                        }
-                        // TODO: a cancel cannot interrupt the work behind a returned future, because the
-                        //  action leaves InFlightActions when its method returns. Cancel the future instead.
-                        if (result is CompletableFuture<*>) {
-                            shouldIncrementIteration = false
-                            shouldAddCheckpoint = false
-                            isAsyncResult = true
-                            // If the result is a CompletableFuture, we'll create the checkpoint once the
-                            // CompletableFuture
-                            // completes.
-                            return result
-                                .exceptionally { e ->
-                                    var err = e
-                                    if (err is CompletionException) {
-                                        err = err.cause
-                                    }
-                                    throw errorMapper.convertToSkipperError(
-                                        err,
-                                        request,
-                                        request.exceptionClassifier,
+                            .whenComplete { r, e ->
+                                var err = e
+                                val eitherResult: Either<Throwable, Any?>
+                                var isTransient = false
+                                if (err != null) {
+                                    err = errorMapper.unwrapError(err)
+                                    // Only non-retryable errors are considered as final results.
+                                    isTransient = err !is NonRetryableError
+                                    eitherResult = Either.left(err)
+                                    // Set error tags on span for async errors
+                                    span.setTag(
+                                        ExecutionMetricsCollector.TAG_ACTION_RESULT,
+                                        "error",
+                                    )
+                                    span.setTag(ExecutionMetricsCollector.TAG_ERROR, true)
+                                    span.log(
+                                        ImmutableMap.of(
+                                            ExecutionMetricsCollector.TAG_ERROR_OBJECT,
+                                            err,
+                                        )
+                                    )
+                                } else {
+                                    eitherResult = Either.right(r)
+                                    // Set success tag on span for async success
+                                    span.setTag(
+                                        ExecutionMetricsCollector.TAG_ACTION_RESULT,
+                                        "success",
                                     )
                                 }
-                                .whenComplete { r, e ->
-                                    var err = e
-                                    val eitherResult: Either<Throwable, Any?>
-                                    var isTransient = false
-                                    if (err != null) {
-                                        err = errorMapper.unwrapError(err)
-                                        // Only non-retryable errors are considered as final results.
-                                        isTransient = err !is NonRetryableError
-                                        eitherResult = Either.left(err)
-                                        // Set error tags on span for async errors
-                                        span.setTag(
-                                            ExecutionMetricsCollector.TAG_ACTION_RESULT,
-                                            "error",
-                                        )
-                                        span.setTag(ExecutionMetricsCollector.TAG_ERROR, true)
-                                        span.log(
-                                            ImmutableMap.of(
-                                                ExecutionMetricsCollector.TAG_ERROR_OBJECT,
-                                                err,
-                                            )
-                                        )
-                                    } else {
-                                        eitherResult = Either.right(r)
-                                        // Set success tag on span for async success
-                                        span.setTag(
-                                            ExecutionMetricsCollector.TAG_ACTION_RESULT,
-                                            "success",
-                                        )
-                                    }
-                                    // Finish the span after async action completes
-                                    span.finish()
-                                    if (!isTransient) {
-                                        request.incrementActionIteration()
-                                    }
-                                    var asyncCheckpointBuilder =
-                                        ActionCheckpoint.builder()
-                                            .checkpointTag(checkpointTag)
-                                            .executionStartTime(startTime)
-                                            .result(eitherResult)
-                                            .executionEndTime(
-                                                request.executionContext.clock.instant()
-                                            )
-                                            .isTransient(isTransient)
-                                            .resultIsAsync(true)
-                                    // Only store input for compensable actions
-                                    if (finalIsCompensable) {
-                                        asyncCheckpointBuilder =
-                                            asyncCheckpointBuilder.input(request.getFirstArgOrNull())
-                                    }
-                                    addCheckpoint(
-                                        request.executionContext,
-                                        asyncCheckpointBuilder.build(),
-                                        finalCheckpointMode,
-                                        request,
-                                    )
-                                    // Emit event for async action completion/failure
-                                    if (err != null) {
-                                        eventPublisher.publishEvent(
-                                            Event.create(
-                                                Event.Type.ACTION_FAILED,
-                                                request.executionContext.workflow.workflowId,
-                                                String.format(
-                                                    "%s.%s (async) - %s",
-                                                    request.baseActionClass.simpleName,
-                                                    request.actionMethodName,
-                                                    err.javaClass.simpleName,
-                                                ),
-                                            )
-                                        )
-                                    } else {
-                                        eventPublisher.publishEvent(
-                                            Event.create(
-                                                Event.Type.ACTION_COMPLETED,
-                                                request.executionContext.workflow.workflowId,
-                                                String.format(
-                                                    "%s.%s (async)",
-                                                    request.baseActionClass.simpleName,
-                                                    request.actionMethodName,
-                                                ),
-                                            )
-                                        )
-                                    }
+                                // Finish the span after async action completes
+                                span.finish()
+                                timing.stop()
+                                countActionResult(request, err, asyncCause)
+                                if (!isTransient) {
+                                    request.incrementActionIteration()
                                 }
-                        } else {
-                            actionCheckpointBuilder =
-                                actionCheckpointBuilder
-                                    .result(Either.right(result))
-                                    .executionEndTime(request.executionContext.clock.instant())
-                                    .isTransient(false)
-                        }
-                        metrics
-                            .counter(
-                                ImmutableMap.of(
-                                    ACTION_CLASS_TAG,
-                                    request.baseActionClass.simpleName,
-                                    ACTION_METHOD_TAG,
-                                    request.actionMethodName,
-                                    RESULT_TAG,
-                                    "success",
-                                ),
-                                METRIC_COMPONENT_NAME,
-                                ACTION_EXECUTION_RESULT,
-                            )
-                            .inc()
-                        // Emit event for successful action completion
-                        eventPublisher.publishEvent(
-                            Event.create(
-                                Event.Type.ACTION_COMPLETED,
-                                request.executionContext.workflow.workflowId,
-                                String.format(
-                                    "%s.%s",
-                                    request.baseActionClass.simpleName,
-                                    request.actionMethodName,
-                                ),
-                            )
-                        )
-                        span.setTag(ExecutionMetricsCollector.TAG_ACTION_RESULT, "success")
-                        return result
+                                var asyncCheckpointBuilder =
+                                    ActionCheckpoint.builder()
+                                        .checkpointTag(checkpointTag)
+                                        .executionStartTime(startTime)
+                                        .result(eitherResult)
+                                        .executionEndTime(
+                                            request.executionContext.clock.instant()
+                                        )
+                                        .isTransient(isTransient)
+                                        .resultIsAsync(true)
+                                // Only store input for compensable actions
+                                if (finalIsCompensable) {
+                                    asyncCheckpointBuilder =
+                                        asyncCheckpointBuilder.input(request.getFirstArgOrNull())
+                                }
+                                addCheckpoint(
+                                    request.executionContext,
+                                    asyncCheckpointBuilder.build(),
+                                    finalCheckpointMode,
+                                    request,
+                                )
+                                // Emit event for async action completion/failure
+                                if (err != null) {
+                                    eventPublisher.publishEvent(
+                                        Event.create(
+                                            Event.Type.ACTION_FAILED,
+                                            request.executionContext.workflow.workflowId,
+                                            String.format(
+                                                "%s.%s (async) - %s",
+                                                request.baseActionClass.simpleName,
+                                                request.actionMethodName,
+                                                err.javaClass.simpleName,
+                                            ),
+                                        )
+                                    )
+                                } else {
+                                    eventPublisher.publishEvent(
+                                        Event.create(
+                                            Event.Type.ACTION_COMPLETED,
+                                            request.executionContext.workflow.workflowId,
+                                            String.format(
+                                                "%s.%s (async)",
+                                                request.baseActionClass.simpleName,
+                                                request.actionMethodName,
+                                            ),
+                                        )
+                                    )
+                                }
+                            }
+                    } else {
+                        actionCheckpointBuilder =
+                            actionCheckpointBuilder
+                                .result(Either.right(result))
+                                .executionEndTime(request.executionContext.clock.instant())
+                                .isTransient(false)
                     }
+                    countActionResult(request)
+                    // Emit event for successful action completion
+                    eventPublisher.publishEvent(
+                        Event.create(
+                            Event.Type.ACTION_COMPLETED,
+                            request.executionContext.workflow.workflowId,
+                            String.format(
+                                "%s.%s",
+                                request.baseActionClass.simpleName,
+                                request.actionMethodName,
+                            ),
+                        )
+                    )
+                    span.setTag(ExecutionMetricsCollector.TAG_ACTION_RESULT, "success")
+                    return result
                 }
             } catch (e: Throwable) {
                 if (interruptedByCancel) {
@@ -441,24 +434,7 @@ open class ActionExecutor
                 // This is the error we want to report to metrics, we want to know the underlying error
                 // type and not the wrapper type.
                 val cause = if (e is InvocationTargetException) e.cause else e
-                metrics
-                    .counter(
-                        ImmutableMap.of(
-                            ACTION_CLASS_TAG,
-                            request.baseActionClass.simpleName,
-                            ACTION_METHOD_TAG,
-                            request.actionMethodName,
-                            RESULT_TAG,
-                            "error",
-                            ERROR_TAG,
-                            wrappedError.javaClass.simpleName,
-                            ERROR_CAUSE,
-                            cause!!.javaClass.simpleName,
-                        ),
-                        METRIC_COMPONENT_NAME,
-                        ACTION_EXECUTION_RESULT,
-                    )
-                    .inc()
+                countActionResult(request, wrappedError, cause)
                 // Emit event for action failure
                 eventPublisher.publishEvent(
                     Event.create(
@@ -481,6 +457,7 @@ open class ActionExecutor
                 // For async actions, the span is finished in the whenComplete handler
                 if (!isAsyncResult) {
                     span.finish()
+                    timing.stop()
                 }
                 if (shouldIncrementIteration) {
                     request.incrementActionIteration()
@@ -501,6 +478,31 @@ open class ActionExecutor
                     )
                 }
             }
+        }
+
+        /**
+         * Counts one finished execution of an action method, synchronous or asynchronous. On failure,
+         * [error] is the Skipper error the failure was mapped to and [cause] is what the action threw.
+         */
+        private fun countActionResult(
+            request: ExecuteActionRequest,
+            error: Throwable? = null,
+            cause: Throwable? = null,
+        ) {
+            val tags =
+                ImmutableMap
+                    .builder<String, String>()
+                    .put(ACTION_CLASS_TAG, request.baseActionClass.simpleName)
+                    .put(ACTION_METHOD_TAG, request.actionMethodName)
+            if (error == null) {
+                tags.put(RESULT_TAG, "success")
+            } else {
+                tags
+                    .put(RESULT_TAG, "error")
+                    .put(ERROR_TAG, error.javaClass.simpleName)
+                    .put(ERROR_CAUSE, (cause ?: error).javaClass.simpleName)
+            }
+            metrics.counter(tags.build(), METRIC_COMPONENT_NAME, ACTION_EXECUTION_RESULT).inc()
         }
 
         /**
